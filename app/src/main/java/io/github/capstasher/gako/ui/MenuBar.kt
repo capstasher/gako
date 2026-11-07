@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -30,6 +29,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.Redo
+import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Search
@@ -65,6 +66,13 @@ class MenuState(initial: List<String> = emptyList()) {
     var path by mutableStateOf(initial)
     var searching by mutableStateOf(false)
     var query by mutableStateOf("")
+    /** Raise the keyboard only when search is opened, not when returning to it. */
+    var focusSearch = false
+
+    fun openSearch() {
+        searching = true
+        focusSearch = true
+    }
 
     fun openRoot(key: String) {
         path = if (path.firstOrNull() == key) emptyList() else listOf(key)
@@ -94,23 +102,36 @@ fun rememberMenuState(): MenuState {
     return state
 }
 
+/** Groups open; actions run and leave you where you were, ready for the next one. */
 private fun runEntry(entry: MenuEntry, state: MenuState) {
     when (entry) {
         is MenuGroup -> state.push(entry.key)
-        is MenuAction -> if (entry.enabled) {
-            state.close()
-            entry.onClick()
-        }
+        is MenuAction -> if (entry.enabled) entry.onClick()
     }
 }
 
 // ---------------------------------------------------------------- compact (phones)
 
 /** Thumb-reach menus: a root bar at the very bottom, nested tiers slide up above it. */
+class History(val canUndo: Boolean, val canRedo: Boolean, val undo: () -> Unit, val redo: () -> Unit)
+
+@Composable
+private fun HistoryButton(undo: Boolean, history: History) {
+    val enabled = if (undo) history.canUndo else history.canRedo
+    IconButton(onClick = if (undo) history.undo else history.redo, enabled = enabled) {
+        Icon(
+            if (undo) Icons.AutoMirrored.Outlined.Undo else Icons.AutoMirrored.Outlined.Redo,
+            contentDescription = if (undo) "Undo" else "Redo",
+            tint = if (enabled) Gako.Parchment else Gako.Muted.copy(alpha = 0.35f),
+        )
+    }
+}
+
 @Composable
 fun BottomMenu(
     roots: List<MenuGroup>,
     state: MenuState,
+    history: History,
     onSearchPick: (OpInfo) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -127,16 +148,18 @@ fun BottomMenu(
                 Column(Modifier.fillMaxWidth()) {
                     Breadcrumb(trail, state)
                     if (state.searching) {
-                        SearchPane(current.searchable, state, onSearchPick, Modifier.heightIn(max = 260.dp))
+                        SearchPane(current.searchable, state, onSearchPick, Modifier.height(260.dp))
                     } else {
                         LazyRow(
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                            modifier = Modifier.fillMaxWidth().height(TIER_HEIGHT),
+                            contentPadding = PaddingValues(horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(2.dp),
                         ) {
                             if (current.searchable.isNotEmpty()) {
                                 item(key = "search") {
                                     Tile("Search", Icons.Outlined.Search, isGroup = false, enabled = true) {
-                                        state.searching = true
+                                        state.openSearch()
                                     }
                                 }
                             }
@@ -150,12 +173,14 @@ fun BottomMenu(
             }
         }
         HorizontalDivider(color = Gako.GoldDim.copy(alpha = 0.35f))
-        Row(Modifier.fillMaxWidth().height(64.dp)) {
+        Row(Modifier.fillMaxWidth().height(64.dp), verticalAlignment = Alignment.CenterVertically) {
+            HistoryButton(undo = true, history)
             roots.forEach { root ->
                 RootTab(root, selected = state.path.firstOrNull() == root.key, Modifier.weight(1f)) {
                     state.openRoot(root.key)
                 }
             }
+            HistoryButton(undo = false, history)
         }
     }
 }
@@ -209,11 +234,14 @@ private fun Tile(label: String, icon: androidx.compose.ui.graphics.vector.ImageV
             style = MaterialTheme.typography.labelSmall,
             color = Gako.Parchment.copy(alpha = alpha),
             textAlign = TextAlign.Center,
+            minLines = 2,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
     }
 }
+
+private val TIER_HEIGHT = 100.dp
 
 @Composable
 private fun RootTab(root: MenuGroup, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
@@ -247,7 +275,12 @@ fun SearchPane(
     modifier: Modifier = Modifier,
 ) {
     val focus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    LaunchedEffect(Unit) {
+        if (state.focusSearch) {
+            state.focusSearch = false
+            runCatching { focus.requestFocus() }
+        }
+    }
     val q = state.query.trim()
     val results = remember(q, ops) {
         if (q.isEmpty()) ops.sortedBy { it.title }
@@ -259,7 +292,7 @@ fun SearchPane(
         OutlinedTextField(
             value = state.query,
             onValueChange = { state.query = it },
-            placeholder = { Text("Search ${ops.size} operations") },
+            placeholder = { Text("Search") },
             singleLine = true,
             leadingIcon = { Icon(Icons.Outlined.Search, null) },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
@@ -271,20 +304,11 @@ fun SearchPane(
                 Row(
                     Modifier
                         .fillMaxWidth()
-                        .clickable { state.close(); onPick(op) }
+                        .clickable { onPick(op) }
                         .padding(horizontal = 16.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(op.title, style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            op.categories.joinToString(" · ") + "  —  " + op.name,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Gako.Muted,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
+                    Text(op.title, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                 }
             }
         }
@@ -294,16 +318,20 @@ fun SearchPane(
 // ---------------------------------------------------------------- wide (landscape, tablets, unfolded)
 
 @Composable
-fun SideRail(roots: List<MenuGroup>, state: MenuState, modifier: Modifier = Modifier) {
+fun SideRail(roots: List<MenuGroup>, state: MenuState, history: History, modifier: Modifier = Modifier) {
     Column(
         modifier.width(84.dp).fillMaxHeight().background(Gako.InkRaised).padding(vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         roots.forEach { root ->
             RootTab(root, selected = state.path.firstOrNull() == root.key, Modifier.height(64.dp).fillMaxWidth()) {
                 state.openRoot(root.key)
             }
         }
+        Spacer(Modifier.weight(1f))
+        HistoryButton(undo = true, history)
+        HistoryButton(undo = false, history)
     }
 }
 
@@ -325,7 +353,7 @@ fun SideSubmenu(
             LazyColumn(Modifier.weight(1f)) {
                 if (current.searchable.isNotEmpty()) {
                     item(key = "search") {
-                        SideRow("Search", Icons.Outlined.Search, false, true) { state.searching = true }
+                        SideRow("Search", Icons.Outlined.Search, false, true) { state.openSearch() }
                     }
                 }
                 items(current.children, key = { it.key }) { entry ->

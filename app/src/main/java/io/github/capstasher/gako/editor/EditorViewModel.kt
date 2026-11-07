@@ -3,12 +3,14 @@ package io.github.capstasher.gako.editor
 import android.app.ActivityManager
 import android.app.Application
 import android.content.ContentValues
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.ColorSpace
 import android.graphics.ImageDecoder
 import android.graphics.Matrix
 import android.net.Uri
 import android.os.Environment
+import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import androidx.compose.runtime.getValue
@@ -21,6 +23,9 @@ import io.github.capstasher.gako.engine.Engine
 import io.github.capstasher.gako.engine.OpDescription
 import io.github.capstasher.gako.engine.OpInfo
 import io.github.capstasher.gako.engine.Param
+import io.github.capstasher.gako.export.ExportFormat
+import io.github.capstasher.gako.export.ExportOptions
+import io.github.capstasher.gako.export.Exporter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -113,7 +118,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     fun open(uri: Uri) {
         if (busy != null) return
         cancelSession()
-        busy = Busy("Opening…")
+        busy = Busy("Opening")
         viewModelScope.launch {
             try {
                 val (bitmap, note) = withContext(Dispatchers.IO) { decode(uri) }
@@ -142,7 +147,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                 val tw = (w * s).toInt()
                 val th = (h * s).toInt()
                 decoder.setTargetSize(tw, th)
-                note = "Opened at $tw×$th (from $w×$h). Full-size editing comes with tiled documents in stage 2."
+                note = "Scaled to $tw×$th"
             }
         }
         val bitmap = if (decoded.config == Bitmap.Config.ARGB_8888) decoded
@@ -156,55 +161,157 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         }
     }.getOrNull()
 
-    enum class ExportFormat(val label: String, val ext: String, val mime: String, val format: Bitmap.CompressFormat, val quality: Int) {
-        Png("PNG", "png", "image/png", Bitmap.CompressFormat.PNG, 100),
-        Jpeg("JPEG", "jpg", "image/jpeg", Bitmap.CompressFormat.JPEG, 92),
-        Webp("WebP", "webp", "image/webp", Bitmap.CompressFormat.WEBP_LOSSLESS, 100),
+    private fun baseName() = documentName.substringBeforeLast('.').ifBlank { "untitled" }
+
+    // ---------------------------------------------------------------- export
+
+    /** GIMP's Export Image dialog: a name (its extension picks the type), a folder and options. */
+    class ExportSession(name: String, format: ExportFormat, options: ExportOptions) {
+        var name by mutableStateOf(name)
+        var format by mutableStateOf(format)
+        var options by mutableStateOf(options)
+
+        /** Typing an extension switches the file type, like GIMP's "By extension". */
+        fun rename(newName: String) {
+            name = newName
+            ExportFormat.forFileName(newName)?.let { format = it }
+        }
+
+        fun choose(f: ExportFormat) {
+            format = f
+            val base = name.substringBeforeLast('.').ifBlank { name }
+            name = "$base.${f.ext}"
+        }
     }
 
-    private fun exportBaseName() = documentName.substringBeforeLast('.').ifBlank { "untitled" } + "-gako"
+    /** null means the default, Pictures/GAKO. */
+    data class ExportFolder(val uri: Uri, val name: String)
 
-    fun export(format: ExportFormat) {
+    private val prefs = app.getSharedPreferences("export", 0)
+
+    var exportSession by mutableStateOf<ExportSession?>(null); private set
+    var exportFolder by mutableStateOf(
+        prefs.getString("folderUri", null)?.let { ExportFolder(Uri.parse(it), prefs.getString("folderName", "Folder") ?: "Folder") }
+    ); private set
+    var exportToFolder by mutableStateOf(prefs.getBoolean("toFolder", false) && exportFolder != null)
+
+    fun startExport() {
+        if (image == null || busy != null) return
+        cancelSession()
+        val format = runCatching { ExportFormat.valueOf(prefs.getString("format", "Png")!!) }.getOrDefault(ExportFormat.Png)
+        val options = ExportOptions(
+            quality = prefs.getInt("quality", 90),
+            webpLossless = prefs.getBoolean("webpLossless", false),
+            gifDither = prefs.getBoolean("gifDither", true),
+            tiffDeflate = prefs.getBoolean("tiffDeflate", true),
+            tgaRle = prefs.getBoolean("tgaRle", true),
+        )
+        exportSession = ExportSession("${baseName()}.${format.ext}", format, options)
+    }
+
+    fun cancelExport() {
+        exportSession = null
+    }
+
+    fun setExportFolder(tree: Uri) {
+        val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        runCatching { resolver.takePersistableUriPermission(tree, flags) }
+        val id = DocumentsContract.getTreeDocumentId(tree)
+        val label = id.substringAfter(':', id).ifBlank { "Storage" }
+        exportFolder = ExportFolder(tree, label)
+        exportToFolder = true
+        prefs.edit().putString("folderUri", tree.toString()).putString("folderName", label).apply()
+    }
+
+    fun runExport() {
+        val s = exportSession ?: return
         val bmp = image ?: return
         if (busy != null) return
-        busy = Busy("Exporting ${format.label}…")
+        val name = s.name.trim()
+        if (name.isEmpty()) { say("Give the file a name"); return }
+        val format = s.format
+        val fileName = if (ExportFormat.forFileName(name) == format) name else "$name.${format.ext}"
+        val folder = exportFolder.takeIf { exportToFolder }
+        prefs.edit()
+            .putString("format", format.name)
+            .putInt("quality", s.options.quality)
+            .putBoolean("webpLossless", s.options.webpLossless)
+            .putBoolean("gifDither", s.options.gifDither)
+            .putBoolean("tiffDeflate", s.options.tiffDeflate)
+            .putBoolean("tgaRle", s.options.tgaRle)
+            .putBoolean("toFolder", exportToFolder)
+            .apply()
+
+        busy = Busy("Exporting")
         viewModelScope.launch {
             try {
-                val name = withContext(Dispatchers.IO) {
-                    val fileName = "${exportBaseName()}.${format.ext}"
-                    val values = ContentValues().apply {
-                        put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
-                        put(MediaStore.Images.Media.MIME_TYPE, format.mime)
-                        put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/GAKO")
-                        put(MediaStore.Images.Media.IS_PENDING, 1)
-                    }
-                    val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-                        ?: error("MediaStore refused the file")
-                    resolver.openOutputStream(uri)?.use { bmp.compress(format.format, format.quality, it) }
-                        ?: error("Couldn't write the file")
-                    values.clear()
-                    values.put(MediaStore.Images.Media.IS_PENDING, 0)
-                    resolver.update(uri, values, null, null)
-                    fileName
+                val where = withContext(Dispatchers.IO) {
+                    val scratch = File(getApplication<Application>().cacheDir, "export")
+                    if (folder != null) writeToFolder(folder, fileName, format) { Exporter.encode(bmp, format, s.options, it, scratch) }
+                    else writeToPictures(fileName, format) { Exporter.encode(bmp, format, s.options, it, scratch) }
                 }
-                say("Saved Pictures/GAKO/$name")
+                exportSession = null
+                say("Exported $fileName to $where")
             } catch (t: Throwable) {
-                say("Export failed: ${t.message}")
+                say("Export failed: ${t.message ?: t.javaClass.simpleName}")
             } finally {
                 busy = null
             }
         }
     }
 
+    private fun writeToPictures(fileName: String, format: ExportFormat, write: (java.io.OutputStream) -> Unit): String {
+        fun insert(collection: Uri, relative: String, mime: String): Uri? = runCatching {
+            resolver.insert(collection, ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                put(MediaStore.MediaColumns.MIME_TYPE, mime)
+                put(MediaStore.MediaColumns.RELATIVE_PATH, relative)
+                put(MediaStore.MediaColumns.IS_PENDING, 1)
+            })
+        }.getOrNull()
+
+        // Images go to Pictures/GAKO; types the gallery doesn't understand land in Download/GAKO.
+        var where = "Pictures/GAKO"
+        val uri = (if (format.opaqueToSystem) null
+                   else insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, Environment.DIRECTORY_PICTURES + "/GAKO", format.mime))
+            ?: insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, Environment.DIRECTORY_DOWNLOADS + "/GAKO",
+                      if (format.opaqueToSystem) "application/octet-stream" else format.mime)
+                .also { where = "Download/GAKO" }
+            ?: error("Android refused to create the file")
+        try {
+            resolver.openOutputStream(uri, "w")?.use(write) ?: error("Couldn't open the file for writing")
+            resolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
+        } catch (t: Throwable) {
+            runCatching { resolver.delete(uri, null, null) }
+            throw t
+        }
+        return where
+    }
+
+    private fun writeToFolder(folder: ExportFolder, fileName: String, format: ExportFormat,
+                              write: (java.io.OutputStream) -> Unit): String {
+        val parent = DocumentsContract.buildDocumentUriUsingTree(folder.uri, DocumentsContract.getTreeDocumentId(folder.uri))
+        val mime = if (format.opaqueToSystem) "application/octet-stream" else format.mime
+        val doc = DocumentsContract.createDocument(resolver, parent, mime, fileName)
+            ?: error("Couldn't create the file in ${folder.name}")
+        try {
+            resolver.openOutputStream(doc, "w")?.use(write) ?: error("Couldn't open the file for writing")
+        } catch (t: Throwable) {
+            runCatching { DocumentsContract.deleteDocument(resolver, doc) }
+            throw t
+        }
+        return folder.name
+    }
+
     /** Writes a PNG for the share sheet and returns its content Uri. */
     suspend fun shareableUri(): Uri? {
         val bmp = image ?: return null
-        busy = Busy("Preparing…")
+        busy = Busy("Preparing")
         return try {
             withContext(Dispatchers.IO) {
                 val app = getApplication<Application>()
                 val dir = File(app.cacheDir, "shared").apply { deleteRecursively(); mkdirs() }
-                val file = File(dir, "${exportBaseName()}.png")
+                val file = File(dir, "${baseName()}.png")
                 file.outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
                 FileProvider.getUriForFile(app, "${app.packageName}.files", file)
             }
@@ -260,7 +367,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         val src = image ?: return
         if (busy != null || session != null) return
         viewModelScope.launch {
-            busy = Busy("Transforming…")
+            busy = Busy("Transforming")
             val out = withContext(Dispatchers.Default) {
                 Bitmap.createBitmap(src, 0, 0, src.width, src.height, matrix, true)
             }
@@ -276,6 +383,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         val src = image ?: run { say("Open an image first"); return }
         if (busy != null) return
         cancelSession()
+        exportSession = null
         viewModelScope.launch {
             val desc = Engine.describe(operation) ?: run { say("$operation isn't available"); return@launch }
             if (desc.params.isEmpty()) {

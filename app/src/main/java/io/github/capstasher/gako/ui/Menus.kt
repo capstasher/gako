@@ -153,10 +153,7 @@ fun buildMenus(vm: EditorViewModel, callbacks: MenuCallbacks): List<MenuGroup> {
     // ---- File
     val file = MenuGroup("file", "File", Icons.Outlined.FolderOpen, listOf(
         MenuAction("open", "Open…", Icons.Outlined.FolderOpen) { callbacks.openImage() },
-        MenuGroup("export", "Export", Icons.Outlined.SaveAlt,
-            EditorViewModel.ExportFormat.entries.map { f ->
-                MenuAction("export:${f.ext}", "As ${f.label}", Icons.Outlined.SaveAlt, enabled = hasImage) { vm.export(f) }
-            }),
+        MenuAction("export", "Export As…", Icons.Outlined.SaveAlt, enabled = hasImage) { vm.startExport() },
         MenuAction("share", "Share", Icons.Outlined.Share, enabled = hasImage) { callbacks.share() },
         MenuAction("about", "About", Icons.Outlined.Info) { callbacks.about() },
     ))
