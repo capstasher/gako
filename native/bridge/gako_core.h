@@ -1,0 +1,54 @@
+/* GAKO — GIMP Android Kanvas Operator
+ * Engine bridge: a small C API over babl/GEGL that the Android layer calls.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+#ifndef GAKO_CORE_H
+#define GAKO_CORE_H
+
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef void (*GakoProgressFunc) (double progress, void *user_data);
+
+/* Initialise babl + GEGL once. Paths may be NULL to use GEGL's defaults.
+ * Returns NULL on success, or a newly allocated error string (free with gako_free). */
+char *gako_core_init (const char *ops_dir,
+                      const char *babl_dir,
+                      const char *swap_dir,
+                      int         threads,
+                      int         cache_mb);
+
+/* JSON array describing every user-facing operation:
+ * [{ "name", "title", "description", "categories": [...], "kind": "filter"|"source"|"composer" }] */
+char *gako_core_list_operations (void);
+
+/* JSON object describing one operation and its editable properties. */
+char *gako_core_describe (const char *operation);
+
+/* Run `operation` over a premultiplied RGBA u8 image (Android ARGB_8888 memory layout)
+ * and write the result, cropped to the same size, into dst.
+ * params_json is an object of { property: value }.
+ * Returns 0 on success, 1 if cancelled, -1 on error (see *error, free with gako_free). */
+int gako_core_apply (const char       *operation,
+                     const char       *params_json,
+                     const uint8_t    *src,
+                     int               width,
+                     int               height,
+                     int               src_stride,
+                     uint8_t          *dst,
+                     int               dst_stride,
+                     volatile int     *cancel,
+                     GakoProgressFunc  progress,
+                     void             *progress_data,
+                     char            **error);
+
+void gako_free (void *p);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif
