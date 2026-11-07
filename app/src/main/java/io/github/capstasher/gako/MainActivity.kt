@@ -23,6 +23,10 @@ class MainActivity : ComponentActivity() {
         uri?.let(vm::open)
     }
 
+    private val folderPicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        uri?.let(vm::setExportFolder)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
@@ -38,6 +42,7 @@ class MainActivity : ComponentActivity() {
                     onPickImage = {
                         picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                     },
+                    onPickFolder = { folderPicker.launch(null) },
                     onShare = ::share,
                 )
             }

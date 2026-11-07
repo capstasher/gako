@@ -3,9 +3,6 @@ package io.github.capstasher.gako.ui
 import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -16,7 +13,6 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
@@ -25,22 +21,19 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.Redo
-import androidx.compose.material.icons.automirrored.outlined.Undo
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -50,20 +43,22 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import io.github.capstasher.gako.editor.EditorViewModel
 import io.github.capstasher.gako.editor.EditorViewModel.EngineState
 import io.github.capstasher.gako.ui.theme.EngravedLabel
 import io.github.capstasher.gako.ui.theme.Gako
-import io.github.capstasher.gako.ui.theme.Serif
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
-fun EditorScreen(vm: EditorViewModel, onPickImage: () -> Unit, onShare: (Uri) -> Unit) {
+fun EditorScreen(
+    vm: EditorViewModel,
+    onPickImage: () -> Unit,
+    onPickFolder: () -> Unit,
+    onShare: (Uri) -> Unit,
+) {
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val menu = rememberMenuState()
@@ -76,75 +71,60 @@ fun EditorScreen(vm: EditorViewModel, onPickImage: () -> Unit, onShare: (Uri) ->
         share = { scope.launch { vm.shareableUri()?.let(onShare) } },
         about = { showAbout = true },
     ))
+    val history = History(
+        canUndo = vm.canUndo && vm.session == null,
+        canRedo = vm.canRedo && vm.session == null,
+        undo = vm::undo,
+        redo = vm::redo,
+    )
     val session = vm.session
+    val export = vm.exportSession
 
-    BackHandler(enabled = session != null || menu.path.isNotEmpty()) {
-        if (session != null) vm.cancelSession() else menu.pop()
+    BackHandler(enabled = session != null || export != null || menu.path.isNotEmpty()) {
+        when {
+            session != null -> vm.cancelSession()
+            export != null -> vm.cancelExport()
+            else -> menu.pop()
+        }
     }
 
-    BoxWithConstraints(Modifier.fillMaxSize().background(Gako.Ink)) {
-        // Side layout when there's width to spare: landscape phones, tablets, unfolded foldables.
-        val wide = (maxWidth > maxHeight && maxWidth >= 600.dp) || maxWidth >= 840.dp
-        val panelMax = maxHeight * 0.45f
+    // Everything inherits light text; nothing falls back to black on ink.
+    CompositionLocalProvider(LocalContentColor provides Gako.Parchment) {
+        BoxWithConstraints(Modifier.fillMaxSize().background(Gako.Ink)) {
+            // Side layout when there's width to spare: landscape phones, tablets, unfolded foldables.
+            val wide = (maxWidth > maxHeight && maxWidth >= 600.dp) || maxWidth >= 840.dp
+            val panelMax = maxHeight * 0.5f
 
-        Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
-            if (wide) {
-                Row(Modifier.fillMaxSize()) {
-                    SideRail(roots, menu)
-                    if (session == null && menu.path.isNotEmpty()) {
-                        SideSubmenu(roots, menu, onSearchPick = { vm.startFilter(it.name) })
+            Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
+                if (wide) {
+                    Row(Modifier.fillMaxSize()) {
+                        SideRail(roots, menu, history)
+                        if (session == null && export == null && menu.path.isNotEmpty()) {
+                            SideSubmenu(roots, menu, onSearchPick = { vm.startFilter(it.name) })
+                        }
+                        CanvasArea(vm, onPickImage, Modifier.weight(1f).fillMaxHeight())
+                        when {
+                            session != null -> ParamPanel(session, vm, Modifier.width(360.dp).fillMaxHeight())
+                            export != null -> ExportPanel(export, vm, onPickFolder, Modifier.width(360.dp).fillMaxHeight())
+                        }
                     }
-                    Column(Modifier.weight(1f).fillMaxHeight()) {
-                        TopBar(vm)
+                } else {
+                    Column(Modifier.fillMaxSize()) {
                         CanvasArea(vm, onPickImage, Modifier.weight(1f))
-                    }
-                    if (session != null) {
-                        ParamPanel(session, vm, Modifier.width(360.dp).fillMaxHeight())
-                    }
-                }
-            } else {
-                Column(Modifier.fillMaxSize()) {
-                    TopBar(vm)
-                    CanvasArea(vm, onPickImage, Modifier.weight(1f))
-                    if (session != null) {
-                        ParamPanel(session, vm, Modifier.fillMaxWidth().heightIn(max = panelMax))
-                    } else {
-                        BottomMenu(roots, menu, onSearchPick = { vm.startFilter(it.name) })
+                        when {
+                            session != null -> ParamPanel(session, vm, Modifier.fillMaxWidth().heightIn(max = panelMax))
+                            export != null -> ExportPanel(export, vm, onPickFolder, Modifier.fillMaxWidth().heightIn(max = panelMax))
+                            else -> BottomMenu(roots, menu, history, onSearchPick = { vm.startFilter(it.name) })
+                        }
                     }
                 }
+
+                SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(bottom = 80.dp))
+                vm.busy?.let { CancelPill(it, vm::cancelBusy, Modifier.align(Alignment.TopCenter)) }
             }
-
-            SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(bottom = 80.dp))
         }
 
-        vm.busy?.let { BusyOverlay(it, vm::cancelBusy) }
-    }
-
-    if (showAbout) AboutDialog(vm) { showAbout = false }
-}
-
-@Composable
-private fun TopBar(vm: EditorViewModel) {
-    Row(
-        Modifier.fillMaxWidth().height(52.dp).padding(start = 16.dp, end = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text("GAKO", fontFamily = Serif, fontSize = 20.sp, letterSpacing = 5.sp, color = Gako.Gold)
-        Spacer(Modifier.width(12.dp))
-        Text(
-            if (vm.image != null) vm.documentName else "",
-            style = MaterialTheme.typography.bodySmall,
-            color = Gako.Muted,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-        IconButton(onClick = vm::undo, enabled = vm.canUndo && vm.session == null) {
-            Icon(Icons.AutoMirrored.Outlined.Undo, contentDescription = "Undo")
-        }
-        IconButton(onClick = vm::redo, enabled = vm.canRedo && vm.session == null) {
-            Icon(Icons.AutoMirrored.Outlined.Redo, contentDescription = "Redo")
-        }
+        if (showAbout) AboutDialog(vm) { showAbout = false }
     }
 }
 
@@ -184,20 +164,10 @@ private fun CanvasArea(vm: EditorViewModel, onPickImage: () -> Unit, modifier: M
 @Composable
 private fun EmptyState(engine: EngineState, onPickImage: () -> Unit) {
     Column(
-        Modifier
-            .widthIn(max = 360.dp)
-            .padding(24.dp)
-            .border(1.dp, Gako.GoldDim.copy(alpha = 0.6f), RoundedCornerShape(2.dp))
-            .padding(4.dp)
-            .border(0.5.dp, Gako.GoldDim.copy(alpha = 0.35f), RoundedCornerShape(2.dp))
-            .padding(horizontal = 28.dp, vertical = 32.dp),
+        Modifier.widthIn(max = 360.dp).padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("GAKO", fontFamily = Serif, fontSize = 40.sp, letterSpacing = 12.sp, color = Gako.Gold)
-        Text("GIMP ANDROID KANVAS OPERATOR", style = EngravedLabel.copy(fontSize = 10.sp, color = Gako.Muted),
-            textAlign = TextAlign.Center)
-        Spacer(Modifier.height(10.dp))
         Button(
             onClick = onPickImage,
             colors = ButtonDefaults.buttonColors(containerColor = Gako.Oxblood, contentColor = Gako.Parchment),
@@ -205,45 +175,30 @@ private fun EmptyState(engine: EngineState, onPickImage: () -> Unit) {
         ) {
             Icon(Icons.Outlined.FolderOpen, null)
             Spacer(Modifier.width(8.dp))
-            Text("Open an image")
+            Text("Open")
         }
-        Spacer(Modifier.height(4.dp))
-        when (engine) {
-            EngineState.Starting -> Text("Warming up the engine…", style = MaterialTheme.typography.labelMedium, color = Gako.Muted)
-            is EngineState.Ready -> Text("${engine.operations.size} GEGL operations ready",
-                style = MaterialTheme.typography.labelMedium, color = Gako.Muted)
-            is EngineState.Failed -> Text("Engine failed to start: ${engine.message}",
+        if (engine is EngineState.Failed) {
+            Text("Engine failed to start: ${engine.message}",
                 style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error,
                 textAlign = TextAlign.Center)
         }
     }
 }
 
+/** No progress bars. Only if something runs long does a small Cancel appear. */
 @Composable
-private fun BusyOverlay(busy: EditorViewModel.Busy, onCancel: () -> Unit) {
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.45f))
-            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {},
-        contentAlignment = Alignment.Center,
-    ) {
-        Surface(color = Gako.InkRaised, shape = RoundedCornerShape(8.dp), tonalElevation = 4.dp,
-            modifier = Modifier.widthIn(min = 240.dp, max = 320.dp)) {
-            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(busy.label, style = MaterialTheme.typography.titleMedium)
-                val p = busy.progress
-                if (p != null) {
-                    LinearProgressIndicator(progress = { p }, modifier = Modifier.fillMaxWidth(),
-                        color = Gako.Gold, trackColor = Gako.InkHigh)
-                } else {
-                    LinearProgressIndicator(Modifier.fillMaxWidth(), color = Gako.Gold, trackColor = Gako.InkHigh)
-                }
-                if (busy.cancellable) {
-                    TextButton(onClick = onCancel, modifier = Modifier.align(Alignment.End)) { Text("Cancel") }
-                }
-            }
-        }
+private fun CancelPill(busy: EditorViewModel.Busy, onCancel: () -> Unit, modifier: Modifier) {
+    if (!busy.cancellable) return
+    var visible by remember(busy.label) { mutableStateOf(false) }
+    LaunchedEffect(busy.label) {
+        delay(1500)
+        visible = true
+    }
+    if (visible) {
+        TextButton(
+            onClick = onCancel,
+            modifier = modifier.padding(top = 12.dp).background(Gako.Ink.copy(alpha = 0.85f), RoundedCornerShape(50)),
+        ) { Text("Cancel", color = Gako.Gold) }
     }
 }
 
@@ -254,15 +209,15 @@ private fun AboutDialog(vm: EditorViewModel, onDismiss: () -> Unit) {
         title = { Text("GAKO") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("GIMP Android Kanvas Operator — stage 1", style = MaterialTheme.typography.bodyMedium)
+                Text("GIMP Android Kanvas Operator", style = MaterialTheme.typography.bodyMedium)
                 Text(
                     "Image processing by GEGL and babl, the engine of GIMP. " +
                         "${vm.operations.size} operations loaded.",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Text(
-                    "GAKO is free software under the GNU GPL v3 or later. It is an independent " +
-                        "project, not made or endorsed by the GIMP team.",
+                    "Free software under the GNU GPL v3 or later. An independent project, " +
+                        "not made or endorsed by the GIMP team.",
                     style = MaterialTheme.typography.bodySmall, color = Gako.Muted,
                 )
             }

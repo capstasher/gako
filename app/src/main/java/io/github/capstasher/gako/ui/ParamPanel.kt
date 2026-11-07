@@ -25,7 +25,6 @@ import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Compare
 import androidx.compose.material.icons.outlined.RestartAlt
-import androidx.compose.material.icons.outlined.TouchApp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilterChip
@@ -34,7 +33,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
@@ -75,11 +73,8 @@ fun ParamPanel(session: EditorViewModel.FilterSession, vm: EditorViewModel, modi
             IconButton(onClick = vm::cancelSession) {
                 Icon(Icons.Outlined.Close, contentDescription = "Cancel", tint = Gako.Muted)
             }
-            Column(Modifier.weight(1f)) {
-                Text(session.op.title, style = MaterialTheme.typography.titleMedium, maxLines = 1,
-                    overflow = TextOverflow.Ellipsis)
-                Text(session.op.name, style = MaterialTheme.typography.labelSmall, color = Gako.Muted)
-            }
+            Text(session.op.title, style = MaterialTheme.typography.titleMedium, maxLines = 1,
+                overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
             IconButton(onClick = vm::resetParams) {
                 Icon(Icons.Outlined.RestartAlt, contentDescription = "Reset", tint = Gako.Muted)
             }
@@ -102,49 +97,25 @@ fun ParamPanel(session: EditorViewModel.FilterSession, vm: EditorViewModel, modi
             Spacer(Modifier.width(4.dp))
             FilledIconButton(
                 onClick = vm::applySession,
+                enabled = vm.busy == null,
                 colors = IconButtonDefaults.filledIconButtonColors(containerColor = Gako.Gold, contentColor = Gako.Ink),
             ) {
                 Icon(Icons.Outlined.Check, contentDescription = "Apply")
             }
         }
-        Box(Modifier.fillMaxWidth().height(2.dp)) {
-            if (session.previewing) {
-                LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp), color = Gako.Gold, trackColor = Color.Transparent)
-            } else {
-                HorizontalDivider(color = Gako.GoldDim.copy(alpha = 0.35f))
-            }
-        }
+        HorizontalDivider(color = Gako.GoldDim.copy(alpha = 0.35f))
         Column(
             Modifier
                 .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 8.dp),
         ) {
-            if (session.point != null) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 4.dp)) {
-                    Icon(Icons.Outlined.TouchApp, null, tint = Gako.GoldDim, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Tap the image to place the centre", style = MaterialTheme.typography.labelMedium, color = Gako.Muted)
-                }
-            }
             session.op.params.forEach { p ->
                 ParamControl(p, session.values[p.name]) { vm.setParam(p.name, it) }
-            }
-            if (session.op.unsupported > 0) {
-                Text(
-                    "${session.op.unsupported} more setting${if (session.op.unsupported == 1) "" else "s"} " +
-                        "can't be edited on a phone yet and keep their defaults.",
-                    style = MaterialTheme.typography.labelSmall, color = Gako.Muted,
-                    modifier = Modifier.padding(top = 8.dp),
-                )
             }
             session.error?.let {
                 Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(top = 8.dp))
-            }
-            if (session.op.description.isNotBlank()) {
-                Text(session.op.description, style = MaterialTheme.typography.bodySmall, color = Gako.Muted,
-                    modifier = Modifier.padding(top = 12.dp, bottom = 8.dp))
             }
         }
     }
@@ -272,10 +243,6 @@ private fun NumberDialog(p: Param.Number, value: Double, onDismiss: () -> Unit, 
                     style = MaterialTheme.typography.labelSmall, color = Gako.Muted,
                     modifier = Modifier.padding(top = 6.dp),
                 )
-                if (p.description.isNotBlank()) {
-                    Text(p.description, style = MaterialTheme.typography.bodySmall, color = Gako.Muted,
-                        modifier = Modifier.padding(top = 6.dp))
-                }
             }
         },
         confirmButton = {
