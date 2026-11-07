@@ -56,6 +56,12 @@ object Engine {
             val babl = linkModules(libDir, "libbablext_", File(context.filesDir, "babl-ext"))
             val swap = File(context.cacheDir, "gegl-swap").apply { deleteRecursively(); mkdirs() }
 
+            // glib and babl expect a Unix home and cache dir; babl keeps its conversion cache there.
+            Os.setenv("HOME", context.filesDir.path, true)
+            Os.setenv("XDG_CACHE_HOME", context.cacheDir.path, true)
+            Os.setenv("XDG_CONFIG_HOME", context.filesDir.path, true)
+            Os.setenv("TMPDIR", context.cacheDir.path, true)
+
             val memory = ActivityManager.MemoryInfo()
             context.getSystemService(ActivityManager::class.java).getMemoryInfo(memory)
             val cacheMb = (memory.totalMem / (1024 * 1024) / 8).toInt().coerceIn(128, 1024)

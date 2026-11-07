@@ -1,6 +1,8 @@
 package io.github.capstasher.gako.ui
 
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.RotateLeft
+import androidx.compose.material.icons.automirrored.outlined.RotateRight
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.AutoFixHigh
 import androidx.compose.material.icons.outlined.BlurOn
@@ -22,8 +24,6 @@ import androidx.compose.material.icons.outlined.Map
 import androidx.compose.material.icons.outlined.MoreHoriz
 import androidx.compose.material.icons.outlined.Opacity
 import androidx.compose.material.icons.outlined.Palette
-import androidx.compose.material.icons.outlined.RotateLeft
-import androidx.compose.material.icons.outlined.RotateRight
 import androidx.compose.material.icons.outlined.SaveAlt
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Share
@@ -164,8 +164,8 @@ fun buildMenus(vm: EditorViewModel, callbacks: MenuCallbacks): List<MenuGroup> {
     // ---- Image
     val image = MenuGroup("image", "Image", Icons.Outlined.Image, listOf(
         MenuGroup("transform", "Transform", Icons.Outlined.Sync, listOf(
-            MenuAction("rot-cw", "Rotate 90° ⟳", Icons.Outlined.RotateRight, hasImage) { vm.rotate(90f) },
-            MenuAction("rot-ccw", "Rotate 90° ⟲", Icons.Outlined.RotateLeft, hasImage) { vm.rotate(-90f) },
+            MenuAction("rot-cw", "Rotate 90° ⟳", Icons.AutoMirrored.Outlined.RotateRight, hasImage) { vm.rotate(90f) },
+            MenuAction("rot-ccw", "Rotate 90° ⟲", Icons.AutoMirrored.Outlined.RotateLeft, hasImage) { vm.rotate(-90f) },
             MenuAction("rot-180", "Rotate 180°", Icons.Outlined.Sync, hasImage) { vm.rotate(180f) },
             MenuAction("flip-h", "Flip Horizontally", Icons.Outlined.SwapHoriz, hasImage) { vm.flip(true) },
             MenuAction("flip-v", "Flip Vertically", Icons.Outlined.SwapVert, hasImage) { vm.flip(false) },
