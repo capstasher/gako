@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- GAKO mark: a gold ring around a brush nib. Kept inside the 66dp safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#D2A84E"
+        android:strokeWidth="2.6"
+        android:pathData="M54,27a27,27 0,1 1,0 54a27,27 0,1 1,0 -54z" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#D2A84E"
+        android:strokeWidth="1"
+        android:pathData="M54,31.5a22.5,22.5 0,1 1,0 45a22.5,22.5 0,1 1,0 -45z" />
+    <!-- nib -->
+    <path
+        android:fillColor="#D2A84E"
+        android:pathData="M66,37 C70,45 66,56 57,63 L47,71 L50,60 C53,50 58,42 66,37 Z" />
+    <path
+        android:fillColor="#5A1520"
+        android:pathData="M60.5,47.5 C59,52 56.5,56.5 52.5,61.5 L51.6,60.8 C55,56 57.6,51.6 59.4,47 Z" />
+    <path
+        android:fillColor="#D2A84E"
+        android:pathData="M44,74.5a2.2,2.2 0,1 1,0.01 0z" />
+</vector>

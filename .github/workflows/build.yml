@@ -1,0 +1,108 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Host tools
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q ninja-build pkg-config libglib2.0-dev-bin
+          pip install --user meson==1.12.1
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Pick NDK
+        id: ndk
+        run: |
+          echo "home=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_OUTPUT"
+          echo "version=$(basename "$ANDROID_NDK_LATEST_HOME")" >> "$GITHUB_OUTPUT"
+
+      - name: Restore native build
+        id: native-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            build/native/src
+            build/native/android-arm64
+          key: native-arm64-${{ steps.ndk.outputs.version }}-${{ hashFiles('native/versions.env', 'native/build-native.sh') }}
+
+      - name: Build engine (glib, json-glib, libpng, libjpeg-turbo, babl, GEGL) and bridge
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.home }}
+        run: native/build-native.sh android-arm64
+
+      - name: Save native build
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            build/native/src
+            build/native/android-arm64
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
+
+      - name: Stage jniLibs
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.home }}
+        run: native/stage-jnilibs.sh android-arm64 arm64-v8a
+
+      - name: Release signing key
+        env:
+          KEYSTORE_B64: ${{ secrets.GAKO_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/gako.jks"
+            echo "GAKO_KEYSTORE=$RUNNER_TEMP/gako.jks" >> "$GITHUB_ENV"
+          else
+            echo "No GAKO_KEYSTORE_B64 secret: signing with the repo's dev key (signing/gako-dev.jks)."
+          fi
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.11.1
+
+      - name: Build APK
+        env:
+          GAKO_KEYSTORE_PASSWORD: ${{ secrets.GAKO_KEYSTORE_PASSWORD }}
+        run: gradle --no-daemon --stacktrace :app:assembleRelease
+
+      - name: Collect APK
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/release/*.apk "dist/gako-${GITHUB_RUN_NUMBER}-arm64.apk"
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gako-apk
+          path: dist/*.apk
+
+      - name: Publish rolling "dev" pre-release
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete dev --yes --cleanup-tag 2>/dev/null || true
+          gh release create dev dist/*.apk --prerelease --target "$GITHUB_SHA" \
+            --title "GAKO dev build #${GITHUB_RUN_NUMBER}" \
+            --notes "Latest build of main ($GITHUB_SHA). Android 12+, arm64."

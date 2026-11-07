@@ -1,0 +1,124 @@
+package io.github.capstasher.gako.engine
+
+import android.app.ActivityManager
+import android.content.Context
+import android.graphics.Bitmap
+import android.system.Os
+import android.util.Log
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.File
+
+/**
+ * GIMP's image engine (babl + GEGL), reached through libgako.so.
+ * All calls are serialised; GEGL itself runs each one across several threads.
+ */
+object Engine {
+    private const val TAG = "GAKO"
+    private val lock = Mutex()
+    @Volatile private var ready = false
+
+    init {
+        System.loadLibrary("gako")
+    }
+
+    fun interface ProgressListener {
+        fun onProgress(fraction: Float)
+    }
+
+    sealed interface Result {
+        data class Ok(val bitmap: Bitmap) : Result
+        data object Cancelled : Result
+        data class Failed(val message: String) : Result
+    }
+
+    @JvmStatic private external fun nativeInit(
+        opsDir: String, bablDir: String, swapDir: String, threads: Int, cacheMb: Int,
+    ): String?
+    @JvmStatic private external fun nativeListOperations(): String
+    @JvmStatic private external fun nativeDescribe(operation: String): String?
+    @JvmStatic private external fun nativeApply(
+        operation: String, params: String, src: Bitmap, dst: Bitmap, listener: ProgressListener?,
+    ): Int
+    @JvmStatic private external fun nativeCancel()
+    @JvmStatic private external fun nativeLastError(): String?
+
+    /** Starts GEGL. Returns null on success or an error message. */
+    suspend fun start(context: Context): String? = withContext(Dispatchers.IO) {
+        lock.withLock {
+            if (ready) return@withLock null
+            val libDir = File(context.applicationInfo.nativeLibraryDir)
+            val ops = linkModules(libDir, "libgeglop_", File(context.filesDir, "gegl-ops"))
+            val babl = linkModules(libDir, "libbablext_", File(context.filesDir, "babl-ext"))
+            val swap = File(context.cacheDir, "gegl-swap").apply { deleteRecursively(); mkdirs() }
+
+            val memory = ActivityManager.MemoryInfo()
+            context.getSystemService(ActivityManager::class.java).getMemoryInfo(memory)
+            val cacheMb = (memory.totalMem / (1024 * 1024) / 8).toInt().coerceIn(128, 1024)
+            val threads = Runtime.getRuntime().availableProcessors().coerceIn(1, 8)
+
+            val error = nativeInit(ops.path, babl.path, swap.path, threads, cacheMb)
+            ready = error == null
+            Log.i(TAG, "GEGL started: threads=$threads cache=${cacheMb}MB error=$error")
+            error
+        }
+    }
+
+    /** GEGL and babl look for "<name>.so" in a directory; Android can only ship "lib*.so". */
+    private fun linkModules(libDir: File, prefix: String, dir: File): File {
+        dir.deleteRecursively()
+        dir.mkdirs()
+        libDir.listFiles()
+            ?.filter { it.name.startsWith(prefix) && it.name.endsWith(".so") }
+            ?.forEach { Os.symlink(it.absolutePath, File(dir, it.name.removePrefix(prefix)).absolutePath) }
+        return dir
+    }
+
+    suspend fun operations(): List<OpInfo> = withContext(Dispatchers.Default) {
+        lock.withLock {
+            val arr = JSONArray(nativeListOperations())
+            List(arr.length()) { i ->
+                val o = arr.getJSONObject(i)
+                OpInfo(
+                    name = o.getString("name"),
+                    title = o.optStringOrNull("title") ?: o.getString("name").substringAfter(':'),
+                    description = o.optStringOrNull("description") ?: "",
+                    categories = o.getJSONArray("categories").let { c -> List(c.length()) { c.getString(it) } },
+                    kind = OpKind.from(o.getString("kind")),
+                )
+            }
+        }
+    }
+
+    suspend fun describe(operation: String): OpDescription? = withContext(Dispatchers.Default) {
+        lock.withLock { nativeDescribe(operation)?.let { OpDescription.parse(it) } }
+    }
+
+    /** Runs [operation] over [src] and returns a new bitmap of the same size. */
+    suspend fun apply(
+        operation: String,
+        params: Map<String, Any?>,
+        src: Bitmap,
+        onProgress: (Float) -> Unit = {},
+    ): Result = withContext(Dispatchers.Default) {
+        lock.withLock {
+            val dst = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
+            val json = JSONObject().apply { params.forEach { (k, v) -> if (v != null) put(k, v) } }
+            when (nativeApply(operation, json.toString(), src, dst, ProgressListener { onProgress(it) })) {
+                0 -> Result.Ok(dst)
+                1 -> { dst.recycle(); Result.Cancelled }
+                else -> { dst.recycle(); Result.Failed(nativeLastError() ?: "Unknown engine error") }
+            }
+        }
+    }
+
+    /** Asks whatever is running right now to stop at the next chunk. */
+    fun cancel() = nativeCancel()
+}
+
+internal fun JSONObject.optStringOrNull(key: String): String? =
+    if (has(key) && !isNull(key)) getString(key) else null
