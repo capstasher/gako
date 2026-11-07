@@ -87,6 +87,17 @@ EOF
                  -DCMAKE_FIND_ROOT_PATH="$PREFIX")
     export PKG_CONFIG_LIBDIR="$PREFIX/lib/pkgconfig"
     unset PKG_CONFIG_PATH || true
+
+    # The NDK ships zlib (libz.so is a platform library) but no zlib.pc, which libpng.pc requires.
+    mkdir -p "$PREFIX/lib/pkgconfig"
+    ZLIB_VERSION=$(sed -n 's/#define ZLIB_VERSION "\(.*\)"/\1/p' "$TC/sysroot/usr/include/zlib.h" | head -1)
+    cat > "$PREFIX/lib/pkgconfig/zlib.pc" <<EOF
+Name: zlib
+Description: zlib from the Android NDK sysroot
+Version: ${ZLIB_VERSION:-1.2.13}
+Libs: -lz
+Cflags:
+EOF
     ;;
   host)
     export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
