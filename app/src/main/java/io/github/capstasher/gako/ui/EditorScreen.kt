@@ -21,11 +21,13 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
@@ -71,17 +73,20 @@ fun EditorScreen(
         share = { scope.launch { vm.shareableUri()?.let(onShare) } },
         about = { showAbout = true },
     ))
+    val idle = vm.session == null && vm.busy == null
     val history = History(
-        canUndo = vm.canUndo && vm.session == null,
-        canRedo = vm.canRedo && vm.session == null,
+        canUndo = vm.canUndo && idle,
+        canRedo = vm.canRedo && idle,
         undo = vm::undo,
         redo = vm::redo,
     )
     val session = vm.session
     val export = vm.exportSession
 
-    BackHandler(enabled = session != null || export != null || menu.path.isNotEmpty()) {
+    val busyCancellable = vm.busy?.cancellable == true
+    BackHandler(enabled = busyCancellable || session != null || export != null || menu.path.isNotEmpty()) {
         when {
+            busyCancellable -> vm.cancelBusy()
             session != null -> vm.cancelSession()
             export != null -> vm.cancelExport()
             else -> menu.pop()
@@ -120,7 +125,7 @@ fun EditorScreen(
                 }
 
                 SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(bottom = 80.dp))
-                vm.busy?.let { CancelPill(it, vm::cancelBusy, Modifier.align(Alignment.TopCenter)) }
+                vm.busy?.let { WorkingPill(it, vm::cancelBusy, Modifier.align(Alignment.TopCenter)) }
             }
         }
 
@@ -185,25 +190,43 @@ private fun EmptyState(engine: EngineState, onPickImage: () -> Unit) {
     }
 }
 
-/** No progress bars. Only if something runs long does a small Cancel appear. */
+/**
+ * No bars. If a job runs past a moment, a small pill says what it is, how far along, and ✕.
+ * Quick edits never show it.
+ */
 @Composable
-private fun CancelPill(busy: EditorViewModel.Busy, onCancel: () -> Unit, modifier: Modifier) {
-    if (!busy.cancellable) return
+private fun WorkingPill(busy: EditorViewModel.Busy, onCancel: () -> Unit, modifier: Modifier) {
     var visible by remember(busy.label) { mutableStateOf(false) }
     LaunchedEffect(busy.label) {
-        delay(1500)
+        delay(400)
         visible = true
     }
-    if (visible) {
-        TextButton(
-            onClick = onCancel,
-            modifier = modifier.padding(top = 12.dp).background(Gako.Ink.copy(alpha = 0.85f), RoundedCornerShape(50)),
-        ) { Text("Cancel", color = Gako.Gold) }
+    if (!visible) return
+    Row(
+        modifier
+            .padding(top = 12.dp)
+            .background(Gako.Ink.copy(alpha = 0.9f), RoundedCornerShape(50))
+            .padding(start = 16.dp, end = if (busy.cancellable) 4.dp else 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(busy.label, style = MaterialTheme.typography.labelLarge, color = Gako.Parchment,
+            modifier = Modifier.padding(vertical = 10.dp))
+        busy.progress?.let {
+            Spacer(Modifier.width(10.dp))
+            Text("${(it * 100).toInt()}%", style = MaterialTheme.typography.labelLarge, color = Gako.Gold)
+        }
+        if (busy.cancellable) {
+            IconButton(onClick = onCancel) {
+                Icon(Icons.Outlined.Close, contentDescription = "Stop", tint = Gako.Muted)
+            }
+        }
     }
 }
 
 @Composable
 private fun AboutDialog(vm: EditorViewModel, onDismiss: () -> Unit) {
+    var check by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) { check = vm.engineCheck() }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("GAKO") },
@@ -215,6 +238,7 @@ private fun AboutDialog(vm: EditorViewModel, onDismiss: () -> Unit) {
                         "${vm.operations.size} operations loaded.",
                     style = MaterialTheme.typography.bodySmall,
                 )
+                Text(check ?: "Checking engine speed…", style = MaterialTheme.typography.bodySmall, color = Gako.Gold)
                 Text(
                     "Free software under the GNU GPL v3 or later. An independent project, " +
                         "not made or endorsed by the GIMP team.",

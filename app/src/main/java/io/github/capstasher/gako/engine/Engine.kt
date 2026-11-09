@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.system.Os
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -21,6 +22,7 @@ object Engine {
     private const val TAG = "GAKO"
     private val lock = Mutex()
     @Volatile private var ready = false
+    var threads = 1; private set
 
     init {
         System.loadLibrary("gako")
@@ -65,7 +67,7 @@ object Engine {
             val memory = ActivityManager.MemoryInfo()
             context.getSystemService(ActivityManager::class.java).getMemoryInfo(memory)
             val cacheMb = (memory.totalMem / (1024 * 1024) / 8).toInt().coerceIn(128, 1024)
-            val threads = Runtime.getRuntime().availableProcessors().coerceIn(1, 8)
+            threads = Runtime.getRuntime().availableProcessors().coerceIn(1, 8)
 
             val error = nativeInit(ops.path, babl.path, swap.path, threads, cacheMb)
             ready = error == null
@@ -104,17 +106,31 @@ object Engine {
         lock.withLock { nativeDescribe(operation)?.let { OpDescription.parse(it) } }
     }
 
-    /** Runs [operation] over [src] and returns a new bitmap of the same size. */
+    /** What the engine is busy with right now, so a cancel only stops the job it was meant for. */
+    @Volatile private var runningTag: Any? = null
+
+    /**
+     * Runs [operation] over [src] and returns a new bitmap of the same size.
+     * [tag] identifies the job for [cancel].
+     */
     suspend fun apply(
         operation: String,
         params: Map<String, Any?>,
         src: Bitmap,
+        tag: Any? = null,
         onProgress: (Float) -> Unit = {},
     ): Result = withContext(Dispatchers.Default) {
         lock.withLock {
+            ensureActive()
             val dst = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
             val json = JSONObject().apply { params.forEach { (k, v) -> if (v != null) put(k, v) } }
-            when (nativeApply(operation, json.toString(), src, dst, ProgressListener { onProgress(it) })) {
+            runningTag = tag
+            val rc = try {
+                nativeApply(operation, json.toString(), src, dst, ProgressListener { onProgress(it) })
+            } finally {
+                runningTag = null
+            }
+            when (rc) {
                 0 -> Result.Ok(dst)
                 1 -> { dst.recycle(); Result.Cancelled }
                 else -> { dst.recycle(); Result.Failed(nativeLastError() ?: "Unknown engine error") }
@@ -122,8 +138,11 @@ object Engine {
         }
     }
 
-    /** Asks whatever is running right now to stop at the next chunk. */
-    fun cancel() = nativeCancel()
+    /** Stops the running job at its next chunk, if it's the one tagged [tag] (or any job if null). */
+    fun cancel(tag: Any? = null) {
+        val running = runningTag ?: return
+        if (tag == null || tag === running) nativeCancel()
+    }
 }
 
 internal fun JSONObject.optStringOrNull(key: String): String? =

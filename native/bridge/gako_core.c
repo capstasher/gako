@@ -47,6 +47,9 @@ gako_core_init (const char *ops_dir,
           g_setenv ("GEGL_CACHE_SIZE", buf, TRUE);
         }
       g_setenv ("GEGL_USE_OPENCL", "no", TRUE);
+      /* GEGL's default chunk is 1 Mpx, and progress/cancel are only seen between chunks:
+       * on a phone a heavy filter can spend a minute inside one. 128 kpx keeps both live. */
+      g_setenv ("GEGL_CHUNK_SIZE", "131072", FALSE);
 
       /* GAKO is GPLv3+, which lets GEGL load its GPL3-only operations
        * (emboss, cartoon, color-to-alpha, lens flare, ...). It skips them otherwise. */

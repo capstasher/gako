@@ -10,6 +10,7 @@ import android.graphics.ImageDecoder
 import android.graphics.Matrix
 import android.net.Uri
 import android.os.Environment
+import android.os.SystemClock
 import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.provider.OpenableColumns
@@ -48,16 +49,27 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     data class Busy(val label: String, val progress: Float? = null, val cancellable: Boolean = false)
 
-    /** An operation being tuned: parameters are previewed live on a downscaled proxy. */
+    /** A downscaled copy of the image used for previews, and its scale relative to the image. */
+    class Proxy(val bitmap: Bitmap, val scale: Double) {
+        val pixels: Double get() = bitmap.width.toDouble() * bitmap.height
+    }
+
+    /**
+     * An operation being tuned. Previews run on a quick [draft] first and, if the filter is fast
+     * enough, a sharper [fine] copy; heavy filters stay on the draft so the sliders stay live.
+     */
     class FilterSession(
         val op: OpDescription,
         values: Map<String, Any?>,
-        val proxy: Bitmap,
-        val proxyScale: Double,
+        val draft: Proxy,
+        val fine: Proxy,
     ) {
         var values by mutableStateOf(values)
-        var previewing by mutableStateOf(false)
+        /** Only true once a preview has been running long enough to be worth showing. */
+        var working by mutableStateOf(false)
         var error by mutableStateOf<String?>(null)
+        internal var generation = 0
+        internal var fineMs = -1L
 
         /** The x/y pair a tap on the canvas should set, if the op has one (lens flare centre, etc.). */
         val point: Pair<Param.Number, Param.Number>? = run {
@@ -116,7 +128,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     // ---------------------------------------------------------------- files
 
     fun open(uri: Uri) {
-        if (busy != null) return
+        if (blockedByBusy()) return
         cancelSession()
         busy = Busy("Opening")
         viewModelScope.launch {
@@ -196,7 +208,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var exportToFolder by mutableStateOf(prefs.getBoolean("toFolder", false) && exportFolder != null)
 
     fun startExport() {
-        if (image == null || busy != null) return
+        if (image == null || blockedByBusy()) return
         cancelSession()
         val format = runCatching { ExportFormat.valueOf(prefs.getString("format", "Png")!!) }.getOrDefault(ExportFormat.Png)
         val options = ExportOptions(
@@ -342,8 +354,15 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         canRedo = redoStack.isNotEmpty()
     }
 
+    /** True (and says why) if a long job is running, so taps never vanish silently. */
+    private fun blockedByBusy(): Boolean {
+        val b = busy ?: return false
+        say(if (b.cancellable) "Still working on ${b.label}. Tap ✕ to stop it." else "Still ${b.label.lowercase()}…")
+        return true
+    }
+
     fun undo() {
-        if (busy != null || session != null) return
+        if (blockedByBusy() || session != null) return
         val previous = undoStack.removeLastOrNull() ?: return
         image?.let { pushBounded(redoStack, it) }
         image = previous
@@ -351,7 +370,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun redo() {
-        if (busy != null || session != null) return
+        if (blockedByBusy() || session != null) return
         val next = redoStack.removeLastOrNull() ?: return
         image?.let { pushBounded(undoStack, it) }
         image = next
@@ -365,7 +384,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun transform(matrix: Matrix) {
         val src = image ?: return
-        if (busy != null || session != null) return
+        if (blockedByBusy() || session != null) return
         viewModelScope.launch {
             busy = Busy("Transforming")
             val out = withContext(Dispatchers.Default) {
@@ -378,24 +397,38 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------------------------------------------------------------- filters
 
+    private val descriptions = mutableMapOf<String, OpDescription>()
+    private var commitTag: Any? = null
+
+    private suspend fun describe(operation: String): OpDescription? =
+        descriptions[operation] ?: Engine.describe(operation)?.also { descriptions[operation] = it }
+
+    private suspend fun proxyOf(src: Bitmap, side: Int): Proxy {
+        val scale = minOf(1.0, side.toDouble() / max(src.width, src.height))
+        if (scale >= 1.0) return Proxy(src, 1.0)
+        val bmp = withContext(Dispatchers.Default) {
+            Bitmap.createScaledBitmap(src, (src.width * scale).roundToInt().coerceAtLeast(1),
+                (src.height * scale).roundToInt().coerceAtLeast(1), true)
+        }
+        return Proxy(bmp, bmp.width.toDouble() / src.width)
+    }
+
     /** Opens the parameter panel for [operation], or applies it straight away if it has no settings. */
     fun startFilter(operation: String) {
         val src = image ?: run { say("Open an image first"); return }
-        if (busy != null) return
+        if (blockedByBusy()) return
         cancelSession()
         exportSession = null
         viewModelScope.launch {
-            val desc = Engine.describe(operation) ?: run { say("$operation isn't available"); return@launch }
+            val desc = describe(operation) ?: run { say("$operation isn't available"); return@launch }
             if (desc.params.isEmpty()) {
                 runCommit(desc.title, operation, emptyMap(), src)
                 return@launch
             }
-            val scale = minOf(1.0, PROXY_SIDE.toDouble() / max(src.width, src.height))
-            val proxy = if (scale < 1.0) withContext(Dispatchers.Default) {
-                Bitmap.createScaledBitmap(src, (src.width * scale).roundToInt().coerceAtLeast(1),
-                    (src.height * scale).roundToInt().coerceAtLeast(1), true)
-            } else src
-            session = FilterSession(desc, desc.defaults(), proxy, proxy.width.toDouble() / src.width)
+            val fine = proxyOf(src, FINE_SIDE)
+            val draft = if (fine.bitmap.width <= DRAFT_SIDE && fine.bitmap.height <= DRAFT_SIDE) fine
+                        else proxyOf(fine.bitmap, DRAFT_SIDE).let { Proxy(it.bitmap, it.bitmap.width.toDouble() / src.width) }
+            session = FilterSession(desc, desc.defaults(), draft, fine)
             schedulePreview(immediate = true)
         }
     }
@@ -439,24 +472,48 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     private fun schedulePreview(immediate: Boolean = false) {
         val s = session ?: return
         previewJob?.cancel()
-        if (s.previewing) Engine.cancel()
+        Engine.cancel(tag = s)   // only ever stops this session's preview, never an Apply
+        val gen = ++s.generation
         previewJob = viewModelScope.launch {
             if (!immediate) delay(PREVIEW_DEBOUNCE_MS)
-            s.previewing = true
-            val result = Engine.apply(s.op.name, scaled(s.values, s.op, s.proxyScale), s.proxy)
-            s.previewing = false
-            when (result) {
-                is Engine.Result.Ok -> if (session === s) { preview = result.bitmap; s.error = null }
-                is Engine.Result.Failed -> s.error = result.message
-                Engine.Result.Cancelled -> Unit
+            val indicator = launch {
+                delay(PREVIEW_INDICATOR_MS)
+                if (s.generation == gen) s.working = true
             }
+            try {
+                val quick = s.fineMs in 0..FAST_PREVIEW_MS
+                if (s.draft !== s.fine && !quick) {
+                    val t0 = SystemClock.elapsedRealtime()
+                    if (!showPreview(s, gen, preview(s, s.draft))) return@launch
+                    val predicted = (SystemClock.elapsedRealtime() - t0) * (s.fine.pixels / s.draft.pixels)
+                    val expected = if (s.fineMs >= 0) s.fineMs.toDouble() else predicted
+                    if (expected > FINE_BUDGET_MS) return@launch   // heavy filter: the draft is the preview
+                }
+                val t1 = SystemClock.elapsedRealtime()
+                if (showPreview(s, gen, preview(s, s.fine))) s.fineMs = SystemClock.elapsedRealtime() - t1
+            } finally {
+                indicator.cancel()
+                if (s.generation == gen) s.working = false
+            }
+        }
+    }
+
+    private suspend fun preview(s: FilterSession, proxy: Proxy) =
+        Engine.apply(s.op.name, scaled(s.values, s.op, proxy.scale), proxy.bitmap, tag = s)
+
+    private fun showPreview(s: FilterSession, gen: Int, result: Engine.Result): Boolean {
+        if (s.generation != gen || session !== s) return false
+        return when (result) {
+            is Engine.Result.Ok -> { preview = result.bitmap; s.error = null; true }
+            is Engine.Result.Failed -> { s.error = result.message; false }
+            Engine.Result.Cancelled -> false
         }
     }
 
     fun cancelSession() {
         val s = session ?: return
         previewJob?.cancel()
-        if (s.previewing) Engine.cancel()
+        Engine.cancel(tag = s)
         session = null
         preview = null
     }
@@ -464,8 +521,9 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     fun applySession() {
         val s = session ?: return
         val src = image ?: return
+        if (blockedByBusy()) return
         previewJob?.cancel()
-        if (s.previewing) Engine.cancel()
+        Engine.cancel(tag = s)
         viewModelScope.launch {
             runCommit(s.op.title, s.op.name, s.values, src)
             if (session === s) session = null
@@ -473,9 +531,12 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun runCommit(title: String, operation: String, values: Map<String, Any?>, src: Bitmap) {
-        busy = Busy(title, 0f, cancellable = true)
-        val result = Engine.apply(operation, values, src) { p -> busy = busy?.copy(progress = p) }
+        val tag = Any()
+        commitTag = tag
+        busy = Busy(title, null, cancellable = true)
+        val result = Engine.apply(operation, values, src, tag) { p -> busy = busy?.copy(progress = p) }
         busy = null
+        commitTag = null
         when (result) {
             is Engine.Result.Ok -> commit(result.bitmap)
             is Engine.Result.Failed -> say("$title failed: ${result.message}")
@@ -484,14 +545,46 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun cancelBusy() {
-        if (busy?.cancellable == true) Engine.cancel()
+        if (busy?.cancellable == true) commitTag?.let { Engine.cancel(it) }
+    }
+
+    /** Times a plain Desaturate on a 3 MP test image, for the About screen. */
+    suspend fun engineCheck(): String {
+        if (busy != null || engine !is EngineState.Ready) return "Engine busy"
+        val w = 2048
+        val h = 1536
+        val test = withContext(Dispatchers.Default) {
+            Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).apply {
+                val row = IntArray(w)
+                for (y in 0 until h) {
+                    for (x in 0 until w) row[x] = android.graphics.Color.rgb(x * 255 / w, y * 255 / h, (x + y) and 0xFF)
+                    setPixels(row, 0, w, 0, y, w, 1)
+                }
+            }
+        }
+        val t0 = SystemClock.elapsedRealtime()
+        val r = Engine.apply("gegl:gray", emptyMap(), test)
+        val ms = SystemClock.elapsedRealtime() - t0
+        return when (r) {
+            is Engine.Result.Ok -> "Desaturate, 3 MP: ${"%.2f".format(ms / 1000.0)} s on ${Engine.threads} threads"
+            is Engine.Result.Failed -> "Engine check failed: ${r.message}"
+            Engine.Result.Cancelled -> "Engine check cancelled"
+        }
     }
 
     companion object {
         /** Stage-1 cap on opened images (Android won't draw a bitmap over 100 MB);
          *  stage 2 moves documents into tiled GEGL buffers. */
         const val MAX_PIXELS = 24_000_000L
-        const val PROXY_SIDE = 1600
+        /** Preview sizes: the sharp copy, and the quick draft heavy filters fall back to. */
+        const val FINE_SIDE = 1600
+        const val DRAFT_SIDE = 512
         const val PREVIEW_DEBOUNCE_MS = 60L
+        /** Below this, a filter skips the draft and goes straight to the sharp preview. */
+        const val FAST_PREVIEW_MS = 150L
+        /** Above this, a filter's preview stays on the draft. */
+        const val FINE_BUDGET_MS = 1200.0
+        /** A preview gets a small spinner only if it runs longer than this. */
+        const val PREVIEW_INDICATOR_MS = 600L
     }
 }
