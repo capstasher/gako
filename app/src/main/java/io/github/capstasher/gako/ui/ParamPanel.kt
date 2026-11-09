@@ -26,6 +26,7 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Compare
 import androidx.compose.material.icons.outlined.RestartAlt
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -73,8 +74,14 @@ fun ParamPanel(session: EditorViewModel.FilterSession, vm: EditorViewModel, modi
             IconButton(onClick = vm::cancelSession) {
                 Icon(Icons.Outlined.Close, contentDescription = "Cancel", tint = Gako.Muted)
             }
-            Text(session.op.title, style = MaterialTheme.typography.titleMedium, maxLines = 1,
-                overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                Text(session.op.title, style = MaterialTheme.typography.titleMedium, maxLines = 1,
+                    overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                if (session.working) {
+                    Spacer(Modifier.width(10.dp))
+                    CircularProgressIndicator(Modifier.size(14.dp), color = Gako.Gold, strokeWidth = 2.dp)
+                }
+            }
             IconButton(onClick = vm::resetParams) {
                 Icon(Icons.Outlined.RestartAlt, contentDescription = "Reset", tint = Gako.Muted)
             }

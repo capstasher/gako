@@ -25,7 +25,7 @@ android {
         minSdk = 31          // Android 12
         targetSdk = 35
         versionCode = buildNumber
-        versionName = "0.1.1-stage1+$buildNumber"
+        versionName = "0.1.2-stage1+$buildNumber"
         ndk { abiFilters += listOf("arm64-v8a") }
     }
 
