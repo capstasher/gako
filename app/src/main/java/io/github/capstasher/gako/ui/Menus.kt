@@ -64,6 +64,7 @@ import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material.icons.outlined.SwapVert
+import androidx.compose.material.icons.outlined.Straighten
 import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.outlined.Texture
 import androidx.compose.material.icons.outlined.Tune
@@ -257,6 +258,7 @@ fun buildMenus(vm: EditorViewModel, callbacks: MenuCallbacks): List<MenuGroup> {
             act("rot-cw", "Rotate 90° ⟳", Icons.AutoMirrored.Outlined.RotateRight) { vm.rotate(1) },
             act("rot-ccw", "Rotate 90° ⟲", Icons.AutoMirrored.Outlined.RotateLeft) { vm.rotate(3) },
             act("rot-180", "Rotate 180°", Icons.Outlined.Sync) { vm.rotate(2) },
+            act("rot-any", "Arbitrary Rotation…", Icons.Outlined.Straighten) { vm.dialog = Dialog.RotateImage },
             act("flip-h", "Flip Horizontally", Icons.Outlined.SwapHoriz) { vm.flip(true) },
             act("flip-v", "Flip Vertically", Icons.Outlined.SwapVert) { vm.flip(false) },
         )),

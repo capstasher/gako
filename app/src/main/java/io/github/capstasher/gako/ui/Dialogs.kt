@@ -31,6 +31,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -64,6 +66,7 @@ fun DialogHost(vm: EditorViewModel, dialog: Dialog) {
     when (dialog) {
         Dialog.NewImage -> NewImageDialog(vm, close)
         Dialog.CanvasSize -> if (d != null) CanvasSizeDialog(vm, d.width, d.height, close) else close()
+        Dialog.RotateImage -> if (d != null) RotateDialog(vm, close) else close()
         Dialog.ScaleImage -> if (d != null) SizeDialog("Scale Image", d.width, d.height, close) { w, h -> vm.scaleImage(w, h) } else close()
         Dialog.ScaleLayer -> d?.active?.let { a -> SizeDialog("Scale Layer", a.width, a.height, close) { w, h -> vm.scaleLayer(w, h) } } ?: close()
         is Dialog.RenameLayer -> d?.layer(dialog.id)?.let { l ->
@@ -110,6 +113,37 @@ private fun field(value: String, label: String, onChange: (String) -> Unit, modi
         keyboardOptions = KeyboardOptions(keyboardType = if (number) KeyboardType.Number else KeyboardType.Text),
         colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Gako.Gold, cursorColor = Gako.Gold, focusedLabelColor = Gako.Gold),
         modifier = modifier,
+    )
+}
+
+/** Image > Transform > Arbitrary Rotation: an angle (clockwise), optionally cropping the empty corners away. */
+@Composable
+private fun RotateDialog(vm: EditorViewModel, close: () -> Unit) {
+    var text by remember { mutableStateOf("0") }
+    var crop by remember { mutableStateOf(true) }
+    val angle = text.trim().replace(',', '.').toFloatOrNull()?.takeIf { it > -360f && it < 360f }
+    AlertDialog(
+        onDismissRequest = close,
+        title = { Text("Arbitrary Rotation") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                field(text, "Angle (°, clockwise)", { text = it }, Modifier.fillMaxWidth(), number = false)
+                Slider(value = (angle ?: 0f).coerceIn(-45f, 45f), onValueChange = { text = "%.1f".format(java.util.Locale.ROOT, it) },
+                    valueRange = -45f..45f,
+                    colors = SliderDefaults.colors(thumbColor = Gako.Gold, activeTrackColor = Gako.Gold, inactiveTrackColor = Gako.InkHigh))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Crop away the empty corners", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                    Switch(crop, { crop = it }, colors = SwitchDefaults.colors(checkedThumbColor = Gako.Ink, checkedTrackColor = Gako.Gold))
+                }
+                Text("To level a photo along a line in it, use the Measure tool's Straighten.",
+                    style = MaterialTheme.typography.bodySmall, color = Gako.Muted,
+                    modifier = Modifier.clickable { close(); vm.selectTool(io.github.capstasher.gako.tools.Tool.Measure) })
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = angle != null && angle != 0f, onClick = { close(); vm.rotateBy(angle!!, crop) }) { Text("Rotate") }
+        },
+        dismissButton = { TextButton(onClick = close) { Text("Cancel") } },
     )
 }
 
