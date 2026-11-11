@@ -99,7 +99,7 @@ ANDROID_NDK_HOME=/path/to/ndk native/build-native.sh android-x86_64
 ANDROID_NDK_HOME=/path/to/ndk native/stage-jnilibs.sh android-x86_64 x86_64
 gradle :app:assembleDebug -Pgako.abis=x86_64        # or arm64-v8a,x86_64
 gradle :app:testDebugUnitTest                         # JVM tests (curves, flood fill, layer-tree moves)
-gradle :app:connectedDebugAndroidTest -Pgako.abis=x86_64   # on a device/emulator: XCF/PSD/ORA round trips, warp, straighten
+scripts/devtest.sh                                    # on a device/emulator: file round trips, tools, UI flows (~13 s)
 ```
 
 See [docs/DEVELOPING.md](docs/DEVELOPING.md) for a map of the code and how it was tested.
