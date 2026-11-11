@@ -494,7 +494,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun newDocument(state: DocState, name: String, keepRecovery: Boolean = false) {
         if (!keepRecovery) clearRecovery()
-        input.path.clear()
+        input.path.load(state.paths.firstOrNull())
         metadata = null
         projectUri = null
         projectFormat = null
@@ -620,6 +620,9 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun baseName() = documentName.substringBeforeLast('.').ifBlank { "untitled" }
 
+    /** The document with the Paths tool's path in it, for writing files. */
+    private fun withPaths(d: DocState): DocState = d.copy(paths = input.path.toVector()?.let { listOf(it) } ?: emptyList())
+
     // ---------------------------------------------------------------- recovery
 
     private val recoveryFile get() = File(getApplication<Application>().filesDir, "recovery.xcf")
@@ -635,7 +638,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         if (d === savedForRecovery && revision == savedRevision) return
         // Copy pixels (and masks) a stroke might change while the write runs.
         val snapshot = runCatching {
-            d.copy(layers = d.layers.map { l ->
+            withPaths(d).copy(layers = d.layers.map { l ->
                 l.copy(bitmap = l.bitmap.copy(Bitmap.Config.ARGB_8888, false) ?: return,
                     mask = l.mask?.let { it.copy(Bitmap.Config.ARGB_8888, false) ?: return })
             })
@@ -722,13 +725,14 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         if (uri == null || format == null) { startExport(project = true); return }
         cancelSession(); cancelCurves(); if (text != null) commitText(); input.reset()
         busy = Busy("Saving")
+        val file = withPaths(d)
         viewModelScope.launch {
             try {
                 // Encode fully first, so a failure never leaves the project file half-written.
                 val scratch = File(getApplication<Application>().cacheDir, "export").apply { mkdirs() }
                 val tmp = File(scratch, "save.tmp")
                 withContext(Dispatchers.IO) {
-                    tmp.outputStream().buffered(1 shl 16).use { Exporter.encode(d, format, ExportOptions(), it, scratch) }
+                    tmp.outputStream().buffered(1 shl 16).use { Exporter.encode(file, format, ExportOptions(), it, scratch) }
                 }
                 val stream = withContext(Dispatchers.IO) { runCatching { resolver.openOutputStream(uri, "wt") }.getOrNull() }
                 if (stream == null) {
@@ -790,7 +794,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun runExport() {
         val s = exportSession ?: return
-        val d = doc ?: return
+        val d = doc?.let(::withPaths) ?: return
         if (busy != null) return
         val name = s.name.trim()
         if (name.isEmpty()) { say("Give the file a name"); return }

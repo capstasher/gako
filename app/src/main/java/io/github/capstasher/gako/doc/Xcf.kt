@@ -36,6 +36,7 @@ private object XcfProps {
     const val COMPRESSION = 17
     const val RESOLUTION = 19
     const val PARASITES = 21
+    const val VECTORS = 25
     const val GROUP_ITEM = 29
     const val FLOAT_OPACITY = 33
     const val TILE = 64
@@ -111,6 +112,31 @@ object XcfWriter {
             o.optDouble("outline", 0.0).toFloat(), o.optInt("outlineColor", -0x1000000))
     }.getOrNull()
 
+    /** PROP_VECTORS (version 1): each path one Bézier stroke of handle-anchor-handle triplets. */
+    private fun writePaths(b: Buf, paths: List<VectorPath>) {
+        val p = Buf()
+        p.u32(1)                       // version
+        p.u32(0)                       // active path
+        p.u32(paths.size)
+        for (v in paths) {
+            p.string(v.name)
+            p.u32(0); p.u32(1); p.u32(0)   // tattoo, visible, linked
+            p.u32(0)                   // parasites
+            p.u32(1)                   // strokes
+            p.u32(1)                   // Bézier stroke
+            p.u32(if (v.closed) 1 else 0)
+            p.u32(2)                   // floats per point: x, y
+            p.u32(v.anchors * 3)
+            for (i in 0 until v.anchors) {
+                val o = i * 6
+                p.u32(1); p.f32(v.points[o]); p.f32(v.points[o + 1])
+                p.u32(0); p.f32(v.points[o + 2]); p.f32(v.points[o + 3])
+                p.u32(1); p.f32(v.points[o + 4]); p.f32(v.points[o + 5])
+            }
+        }
+        b.u32(XcfProps.VECTORS); b.u32(p.size); b.bytes(p.data, p.size)
+    }
+
     /** Hierarchy → one level → zlib tiles. [bpp] 4 writes RGBA, 1 writes grey (the red channel). */
     private fun writeHierarchy(b: Buf, bmp: Bitmap, bpp: Int, deflater: Deflater, tileBuf: ByteArray, compressed: ByteArray) {
         val w = bmp.width
@@ -160,6 +186,7 @@ object XcfWriter {
         b.u32(150)                                         // 8-bit non-linear integer
         b.u32(XcfProps.COMPRESSION); b.u32(1); b.u8(2)     // zlib
         b.u32(XcfProps.RESOLUTION); b.u32(8); b.f32(72f); b.f32(72f)
+        if (doc.paths.isNotEmpty()) writePaths(b, doc.paths)
         b.u32(XcfProps.END); b.u32(0)
 
         val layers = doc.layers.asReversed()               // XCF lists the top layer first
@@ -260,6 +287,39 @@ object XcfReader {
             return String(b, 0, (n - 1).coerceAtLeast(0), Charsets.UTF_8)
         }
 
+        var paths: List<VectorPath> = emptyList()
+
+        /** PROP_VECTORS: keeps each path's first Bézier stroke. */
+        fun readPaths(): List<VectorPath> {
+            if (u32() != 1) return emptyList()
+            u32()                                  // active
+            val n = u32()
+            val out = ArrayList<VectorPath>()
+            repeat(n) {
+                val name = string()
+                u32(); u32(); u32()                // tattoo, visible, linked
+                val parasites = u32()
+                val strokes = u32()
+                repeat(parasites) { string(); u32(); val size = u32(); buf.position(buf.position() + size) }
+                var first: VectorPath? = null
+                repeat(strokes) {
+                    val type = u32()
+                    val closed = u32() != 0
+                    val nf = u32()
+                    val np = u32()
+                    val pts = ArrayList<Float>()
+                    repeat(np) {
+                        u32()                      // anchor or handle; the order says which
+                        val f = FloatArray(nf) { buf.float }
+                        pts += f[0]; pts += f[1]
+                    }
+                    if (first == null && type == 1 && np >= 3 && np % 3 == 0) first = VectorPath(name, pts.toFloatArray(), closed)
+                }
+                first?.let { out += it }
+            }
+            return out
+        }
+
         fun parse(): DocState {
             val head = ByteArray(14).also { buf.get(it) }
             val sig = String(head, 0, 9, Charsets.US_ASCII)
@@ -282,6 +342,7 @@ object XcfReader {
                 when (type) {
                     XcfProps.END -> break
                     XcfProps.COMPRESSION -> compression = buf.get().toInt()
+                    XcfProps.VECTORS -> paths = runCatching { readPaths() }.getOrDefault(emptyList())
                     XcfProps.COLORMAP -> {
                         val n = u32()
                         colormap = IntArray(n) {
@@ -302,7 +363,7 @@ object XcfReader {
             }
             if (layers.isEmpty()) error("This XCF file has no layers GAKO can show")
             val active = layers.lastOrNull { it.second }?.first ?: layers.last().first
-            return DocState(w, h, layers.map { it.first }, active.id)
+            return DocState(w, h, layers.map { it.first }, active.id, paths = paths)
         }
 
         fun readLayer(at: Long, baseType: Int): Pair<Layer, Boolean>? {

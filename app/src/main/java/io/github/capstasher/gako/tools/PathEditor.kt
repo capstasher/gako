@@ -144,6 +144,27 @@ class PathEditor {
         closed = !closed
     }
 
+    fun toVector(name: String = "Path"): io.github.capstasher.gako.doc.VectorPath? {
+        if (points.size < 2) return null
+        val f = FloatArray(points.size * 6)
+        points.forEachIndexed { i, p ->
+            f[i * 6] = p.inX; f[i * 6 + 1] = p.inY; f[i * 6 + 2] = p.x; f[i * 6 + 3] = p.y; f[i * 6 + 4] = p.outX; f[i * 6 + 5] = p.outY
+        }
+        return io.github.capstasher.gako.doc.VectorPath(name, f, closed)
+    }
+
+    /** Replaces the path with one from a file (or none). */
+    fun load(v: io.github.capstasher.gako.doc.VectorPath?) {
+        history.clear()
+        drag = null
+        if (v == null) { points = emptyList(); closed = false; return }
+        points = List(v.anchors) { i ->
+            val o = i * 6
+            PathPoint(v.points[o + 2], v.points[o + 3], v.points[o], v.points[o + 1], v.points[o + 4], v.points[o + 5])
+        }
+        closed = v.closed
+    }
+
     fun clear() {
         if (points.isEmpty()) return
         remember()
