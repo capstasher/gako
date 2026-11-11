@@ -156,6 +156,35 @@ class ToolInput(private val vm: EditorViewModel) {
     private var airJob: Job? = null
     private var lastPressure = 1f
     private var down = PointF()
+    /** How near (image pixels) a point must be to a guide to land on it (GIMP's Snap to Guides). */
+    private var snapTol = 0f
+
+    /** [x], [y] moved onto a guide within [snapTol], each axis on its own (GIMP's Snap to Guides). */
+    private fun snapToGuides(d: DocState, x: Float, y: Float): PointF {
+        var sx = x; var sy = y
+        var bx = snapTol; var by = snapTol
+        for (g in d.gimp.guides) {
+            val p = g.position.toFloat()
+            if (g.horizontal) { val dist = abs(y - p); if (dist <= by) { by = dist; sy = p } }
+            else { val dist = abs(x - p); if (dist <= bx) { bx = dist; sx = p } }
+        }
+        return PointF(sx, sy)
+    }
+
+    /** A move by ([dx], [dy]) of [box], nudged so an edge lands on a guide within [snapTol]. */
+    private fun snapMove(d: DocState, box: android.graphics.Rect, dx: Float, dy: Float): PointF {
+        var bx = snapTol; var by = snapTol
+        var ox = dx; var oy = dy
+        for (g in d.gimp.guides) {
+            val p = g.position.toFloat()
+            if (g.horizontal) for (edge in floatArrayOf(box.top + dy, box.bottom + dy)) {
+                val dist = abs(edge - p); if (dist <= by) { by = dist; oy = dy + (p - edge) }
+            } else for (edge in floatArrayOf(box.left + dx, box.right + dx)) {
+                val dist = abs(edge - p); if (dist <= bx) { bx = dist; ox = dx + (p - edge) }
+            }
+        }
+        return PointF(ox, oy)
+    }
     private var cloneOffset: PointF? = null
     private var mode = Drag.None
     private var cropAtDown = RectF()
@@ -296,9 +325,12 @@ class ToolInput(private val vm: EditorViewModel) {
 
     // ------------------------------------------------------------ gestures
 
-    fun down(x: Float, y: Float, pressure: Float, tol: Float) {
+    fun down(x0: Float, y0: Float, pressure: Float, tol: Float) {
         val d = doc ?: return
         if (vm.busy != null) return
+        snapTol = tol * 0.5f
+        // Rectangles and crops start on a guide when near one.
+        val (x, y) = if (tool == Tool.RectSelect || tool == Tool.EllipseSelect) snapToGuides(d, x0, y0).let { it.x to it.y } else x0 to y0
         down = PointF(x, y)
         lastPressure = pressure
         when (tool) {
@@ -381,9 +413,10 @@ class ToolInput(private val vm: EditorViewModel) {
         selStrokeRevision++
     }
 
-    fun move(x: Float, y: Float, pressure: Float) {
+    fun move(x0: Float, y0: Float, pressure: Float) {
         val d = doc ?: return
         lastPressure = pressure
+        val (x, y) = if (tool == Tool.RectSelect || tool == Tool.EllipseSelect || tool == Tool.Crop) snapToGuides(d, x0, y0).let { it.x to it.y } else x0 to y0
         when (tool) {
             Tool.Paintbrush, Tool.Pencil, Tool.Airbrush, Tool.Eraser, Tool.DodgeBurn, Tool.Clone, Tool.Heal, Tool.Smudge, Tool.Blur, Tool.FilterBrush -> {
                 val s = stroke ?: return
@@ -407,7 +440,13 @@ class ToolInput(private val vm: EditorViewModel) {
                 lassoRevision++
             }
             Tool.Gradient -> gradient = down to PointF(x, y)
-            Tool.Move -> moveDelta = PointF(x - down.x, y - down.y)
+            Tool.Move -> moveDelta = d.active?.let { a ->
+                val box = if (a.group) android.graphics.Rect().also { r ->
+                    val byId = io.github.capstasher.gako.doc.Tree.byId(d.layers)
+                    d.layers.filter { !it.group && io.github.capstasher.gako.doc.Tree.isInside(it, a.id, byId) }.forEach { r.union(it.bounds) }
+                } else a.bounds
+                snapMove(d, box, x - down.x, y - down.y)
+            } ?: PointF(x - down.x, y - down.y)
             Tool.ColorPicker -> pick(d, x, y)
             Tool.Crop -> dragCrop(d, x, y)
             Tool.Transform -> dragTransform(x, y)

@@ -60,7 +60,7 @@ operation) for Android, and puts a touch interface on top designed for one hand 
   (8/16-bit RGB or grey, masks, blend modes), ORA, and every image Android decodes; an XCF saved back keeps
   each layer's GIMP mode, blend space and composite mode, and everything GAKO doesn't edit: channels, the
   selection, guides, sample points, resolution, comments, ICC profile and metadata, colour tags, locks,
-  GIMP text layers (Image > Guides adds and removes guides); GIMP 3's layer effects (non-destructive
+  GIMP text layers (Image > Guides adds and removes guides; selections, crops and moves snap to them); GIMP 3's layer effects (non-destructive
   GEGL filters) are applied as GIMP draws them
 - Export PNG, JPEG, WebP, HEIF, TIFF, GIF, BMP, TGA, ICO, PPM, ORA and layered PSD, at full size or smaller;
   share; "Open with GAKO"

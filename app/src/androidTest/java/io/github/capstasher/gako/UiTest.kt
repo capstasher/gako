@@ -170,6 +170,37 @@ class UiTest {
         assertEquals(Color.BLACK, vm.doc!!.quickMask!!.bitmap.getPixel(200, 150))
     }
 
+    @Test fun guidesSnapSelectionsAndMoves() {
+        fresh()
+        rule.runOnUiThread {
+            vm.addGuide(horizontal = false, position = 100)
+            vm.addGuide(horizontal = true, position = 80)
+        }
+        tool(Tool.RectSelect)
+        rule.runOnUiThread {
+            // A drag from near both guides, within reach (tolerance 10 → 5 px), to well away.
+            vm.input.down(103f, 77f, 1f, 10f)
+            vm.input.move(250f, 200f, 1f)
+            vm.input.up()
+        }
+        idle()
+        assertEquals(android.graphics.Rect(100, 80, 250, 200), vm.doc!!.selection!!.bounds)
+        // A layer moved so its left edge comes within reach of the guide lands on it.
+        rule.runOnUiThread {
+            vm.selectNone()
+            val d = vm.doc!!
+            val l = Layer(Layer.newId(), "Box", Bitmaps.blank(40, 30, Color.RED), x = 10, y = 10)
+            vm.doc = d.copy(layers = d.layers + l, activeId = l.id)
+            vm.selectTool(Tool.Move)
+            vm.input.down(20f, 20f, 1f, 10f)
+            vm.input.move(108f, 20f, 1f)              // left edge at 98: snaps to 100
+            vm.input.up()
+        }
+        idle()
+        assertEquals(100, vm.doc!!.active!!.x)
+        assertEquals(10, vm.doc!!.active!!.y)
+    }
+
     @Test fun canvasShowsWhatGimpDraws() {
         fresh()
         // A GIMP 2.10+ (linear light) layer: black at 50% over white is 188 in GIMP (127 blended in sRGB).
