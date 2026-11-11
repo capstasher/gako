@@ -7,6 +7,7 @@ import android.graphics.Rect
 import io.github.capstasher.gako.doc.Bitmaps
 import io.github.capstasher.gako.doc.Compositor
 import io.github.capstasher.gako.doc.DocState
+import io.github.capstasher.gako.doc.GimpOps
 import io.github.capstasher.gako.doc.Layer
 import io.github.capstasher.gako.doc.LayerEffect
 import io.github.capstasher.gako.doc.LayerMode
@@ -32,7 +33,7 @@ object Effects {
 
     /**
      * Applies every layer's effects, first to last, and drops them from the layers. A layer with
-     * an effect GAKO can't run (a GIMP-only operation, an argument it can't pass) keeps its own
+     * an effect GAKO can't run (an operation it doesn't have, an argument it can't pass) keeps its own
      * pixels, so it's never half done. [operations]: the GEGL operations the engine has.
      */
     suspend fun apply(doc: DocState, operations: Set<String>): Outcome {
@@ -42,7 +43,11 @@ object Effects {
         val layers = doc.layers.map { l ->
             if (l.effects.isEmpty()) return@map l
             val active = l.effects.filter { it.active }
-            val cant = active.filter { it.operation !in operations || it.unsupported.isNotEmpty() }
+            // GAKO's own ports of GIMP's colour operations read only the arguments they need.
+            val cant = active.filter {
+                if (it.operation in GimpOps.supported) false
+                else it.operation !in operations || it.unsupported.isNotEmpty()
+            }
             if (cant.isNotEmpty()) {
                 skipped += cant.map { "“${label(it)}” on “${l.name}”" }
                 return@map l.copy(effects = emptyList())
@@ -65,7 +70,10 @@ object Effects {
     private suspend fun applyOne(l: Layer, e: LayerEffect, doc: DocState): Layer? {
         // An unclipped effect may draw past the layer, as far as the canvas.
         val grow = if (e.clip) null else Rect(-l.x, -l.y, doc.width - l.x, doc.height - l.y).apply { union(0, 0, l.width, l.height) }
-        val result = Engine.apply(e.operation, e.args, l.bitmap, growWithin = grow) as? Engine.Result.Ok ?: return null
+        val result = if (e.operation in GimpOps.supported) {
+            // GIMP's own colour operations (not in GEGL): GAKO's port of them.
+            Engine.Result.Ok(GimpOps.apply(e.operation, e.args, l.bitmap) ?: return null)
+        } else Engine.apply(e.operation, e.args, l.bitmap, growWithin = grow) as? Engine.Result.Ok ?: return null
         val fx = l.x + result.x
         val fy = l.y + result.y
         val area = Rect(l.bounds).apply { if (!e.clip) union(fx, fy, fx + result.bitmap.width, fy + result.bitmap.height) }

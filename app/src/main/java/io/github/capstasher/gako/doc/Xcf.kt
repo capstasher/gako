@@ -717,7 +717,8 @@ object XcfReader {
                             3 -> args[arg] = buf.float.toDouble()              // float
                             4 -> args[arg] = string()                          // string
                             8 -> color()?.let { args[arg] = it } ?: run { unsupported += arg }
-                            else -> unsupported += arg                         // GIMP config, gradient
+                            6 -> args[arg] = string()                          // GIMP's serialized config
+                            else -> unsupported += arg                         // gradient
                         }
                     }
                 }
