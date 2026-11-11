@@ -36,7 +36,8 @@ class TextSession(val layerId: Long?, x: Int, y: Int, info: TextInfo) {
                 info.italic -> Typeface.ITALIC
                 else -> Typeface.NORMAL
             }
-            return Typeface.create(family, style)
+            val file = info.fontFile?.let { Fonts.load(it) }
+            return Typeface.create(file ?: family, style)
         }
 
         fun layout(info: TextInfo, outline: Boolean = false): StaticLayout {

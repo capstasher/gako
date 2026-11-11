@@ -57,6 +57,10 @@ class MainActivity : ComponentActivity() {
         cameraUri?.let { outState.putParcelable("cameraUri", it) }
     }
 
+    private val fontPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let(vm::importFont)
+    }
+
     private val folderPicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let(vm::setExportFolder)
     }
@@ -85,6 +89,10 @@ class MainActivity : ComponentActivity() {
                             "image/openraster", "image/x-xcf", "application/x-xcf"))
                     },
                     onTakePhoto = ::takePhoto,
+                    onPickFont = {
+                        fontPicker.launch(arrayOf("font/*", "application/x-font-ttf", "application/x-font-otf",
+                            "application/font-sfnt", "application/vnd.ms-opentype", "application/octet-stream"))
+                    },
                     onPickFolder = { folderPicker.launch(null) },
                     onShare = ::share,
                 )

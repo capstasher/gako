@@ -1331,6 +1331,27 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Copies a font file the user picked into GAKO's fonts and uses it for the text being edited. */
+    fun importFont(uri: Uri) {
+        viewModelScope.launch {
+            val name = displayName(uri) ?: "Font.ttf"
+            val ext = name.substringAfterLast('.', "ttf").lowercase().takeIf { it in setOf("ttf", "otf") } ?: "ttf"
+            val dir = Fonts.userDir(getApplication<Application>().filesDir)
+            val file = File(dir, name.substringBeforeLast('.').replace(Regex("[^A-Za-z0-9 _-]"), "_") + "." + ext)
+            val ok = withContext(Dispatchers.IO) {
+                runCatching { resolver.openInputStream(uri)!!.use { input -> file.outputStream().use { input.copyTo(it) } } }.isSuccess &&
+                    Fonts.load(file.path) != null
+            }
+            if (!ok) {
+                file.delete()
+                say("That file isn't a font GAKO can use")
+                return@launch
+            }
+            text?.let { it.info = it.info.copy(fontFile = file.path) }
+            say("Added ${Fonts.pretty(file.nameWithoutExtension)}")
+        }
+    }
+
     fun commitText() {
         val t = text ?: return
         text = null

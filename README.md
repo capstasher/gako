@@ -24,7 +24,7 @@ operation) for Android, and puts a touch interface on top designed for one hand 
 
 **Tools** (one finger uses the tool, two fingers always pan and zoom)
 - Paint: paintbrush, pencil, airbrush, eraser, clone, heal, smudge, blur, dodge/burn, bucket fill, gradient
-  (linear/radial/mirrored, FG→BG or FG→transparent), text (re-editable, with outline), colour picker;
+  (linear/radial/mirrored, FG→BG or FG→transparent), text (re-editable, any installed or imported font, outline), colour picker;
   round, square or calligraphy brushes with angle, stroke smoothing, mirror symmetry (↔ ↕ ✚), stylus pressure
 - Paths: Bézier paths by tapping (corners) and dragging (curves); selection from path, stroke, fill;
   saved in XCF, so they open as paths in GIMP and back
