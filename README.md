@@ -45,7 +45,8 @@ operation) for Android, and puts a touch interface on top designed for one hand 
   share; "Open with GAKO"
 - Take a photo straight into GAKO; a photo's EXIF (camera, date, exposure) carries over to JPEG/PNG/WebP
   exports, its location only if you ask
-- Unsaved work is kept in a recovery file and restored if Android closes the app
+- Unsaved work is kept in a recovery file and restored if Android closes the app; the start screen lists
+  recent images with thumbnails
 
 **Phone-first UI**
 - GIMP's menus (File, Edit, Select, Image, Layers, Colours, Filters) along the bottom edge, nested for thumbs;

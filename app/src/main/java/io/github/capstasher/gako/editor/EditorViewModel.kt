@@ -169,6 +169,34 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         return Color.rgb(l, l, l)
     }
 
+    private val recentsStore = Recents(app)
+    /** Recently opened or saved images, newest first (for the start screen). */
+    var recents by mutableStateOf(recentsStore.list()); private set
+
+    private fun remember(uri: Uri, name: String, d: DocState) {
+        viewModelScope.launch(Dispatchers.IO) {
+            recentsStore.add(uri, name, d)
+            val list = recentsStore.list()
+            withContext(Dispatchers.Main) { recents = list }
+        }
+    }
+
+    fun forgetRecent(uri: Uri) {
+        recentsStore.remove(uri)
+        recents = recentsStore.list()
+    }
+
+    /** Opens a recent item; if it's gone or no longer readable, drops it from the list. */
+    fun openRecent(item: Recents.Item) {
+        val readable = runCatching { resolver.openInputStream(item.uri)?.close(); true }.getOrDefault(false)
+        if (!readable) {
+            say("“${item.name}” can't be opened any more")
+            forgetRecent(item.uri)
+            return
+        }
+        open(item.uri)
+    }
+
     private val messageChannel = Channel<String>(Channel.BUFFERED)
     val messages = messageChannel.receiveAsFlow()
 
@@ -561,6 +589,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                 } else {
                     newDocument(state, name)
                     metadata = pendingMetadata
+                    remember(uri, name, state)
                     val lower = name.lowercase()
                     projectFormat = when {
                         lower.endsWith(".xcf") -> ExportFormat.Xcf
@@ -756,6 +785,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 if (doc === d) dirty = false
                 clearRecovery()
+                remember(uri, documentName, d)
                 say("Saved $documentName")
             } catch (t: OutOfMemoryError) {
                 say("Not enough memory to save. Your file wasn't touched.")
@@ -851,6 +881,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                     projectFormat = format
                     documentName = fileName
                     dirty = false
+                    remember(uri, fileName, d)
                 }
                 say("${if (format.layered) "Saved" else "Exported"} $fileName to $where")
             } catch (t: OutOfMemoryError) {
