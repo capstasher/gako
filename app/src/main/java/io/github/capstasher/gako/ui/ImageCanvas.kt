@@ -467,8 +467,8 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
                     val others = android.graphics.Path()
                     vp.strokes.forEachIndexed { si, st -> if (pi != vm.pathIndex || si != vm.strokeIndex) st.addTo(others) }
                     if (others.isEmpty) return@forEachIndexed
-                    nc.drawPath(others, Paint(ink).apply { alpha = if (pi == vm.pathIndex) 160 else 90 })
-                    nc.drawPath(others, Paint(gold).apply { alpha = if (pi == vm.pathIndex && editingPaths) 200 else 90 })
+                    nc.drawPath(others, Paint(ink).apply { alpha = if (pi == vm.pathIndex) 160 else 120 })
+                    nc.drawPath(others, Paint(gold).apply { alpha = if (pi == vm.pathIndex && editingPaths) 200 else 150 })
                 }
             }
             // The Paths tool's path: always shown while it's the tool, faintly otherwise.
