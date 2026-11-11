@@ -45,6 +45,36 @@ int gako_core_apply (const char       *operation,
                      void             *progress_data,
                      char            **error);
 
+/* Like gako_core_apply, but renders the output rectangle (out_x, out_y, dst's size) of the result,
+ * in the input's coordinates, so filters that reach past the image (drop shadow, glow…) aren't cut off. */
+int gako_core_apply_rect (const char       *operation,
+                          const char       *params_json,
+                          const uint8_t    *src,
+                          int               width,
+                          int               height,
+                          int               src_stride,
+                          int               out_x,
+                          int               out_y,
+                          int               out_w,
+                          int               out_h,
+                          uint8_t          *dst,
+                          int               dst_stride,
+                          volatile int     *cancel,
+                          GakoProgressFunc  progress,
+                          void             *progress_data,
+                          char            **error);
+
+/* Where `operation` would draw, given a width×height input. Returns 0 and fills x/y/w/h, or -1. */
+int gako_core_bounds (const char *operation,
+                      const char *params_json,
+                      int         width,
+                      int         height,
+                      int        *x,
+                      int        *y,
+                      int        *w,
+                      int        *h,
+                      char      **error);
+
 void gako_free (void *p);
 
 #ifdef __cplusplus

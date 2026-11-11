@@ -33,7 +33,8 @@ object Engine {
     }
 
     sealed interface Result {
-        data class Ok(val bitmap: Bitmap) : Result
+        /** [x], [y]: where the result sits relative to the input (negative when a filter grew it). */
+        data class Ok(val bitmap: Bitmap, val x: Int = 0, val y: Int = 0) : Result
         data object Cancelled : Result
         data class Failed(val message: String) : Result
     }
@@ -44,8 +45,9 @@ object Engine {
     @JvmStatic private external fun nativeListOperations(): String
     @JvmStatic private external fun nativeDescribe(operation: String): String?
     @JvmStatic private external fun nativeApply(
-        operation: String, params: String, src: Bitmap, dst: Bitmap, listener: ProgressListener?,
+        operation: String, params: String, src: Bitmap, dst: Bitmap, outX: Int, outY: Int, listener: ProgressListener?,
     ): Int
+    @JvmStatic private external fun nativeBounds(operation: String, params: String, width: Int, height: Int): IntArray?
     @JvmStatic private external fun nativeCancel()
     @JvmStatic private external fun nativeLastError(): String?
 
@@ -118,25 +120,47 @@ object Engine {
         params: Map<String, Any?>,
         src: Bitmap,
         tag: Any? = null,
+        /** Let the result be bigger than [src] when the filter draws past its edges (drop shadow…). */
+        grow: Boolean = false,
         onProgress: (Float) -> Unit = {},
     ): Result = withContext(Dispatchers.Default) {
         lock.withLock {
             ensureActive()
-            val dst = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
-            val json = JSONObject().apply { params.forEach { (k, v) -> if (v != null) put(k, v) } }
+            val json = JSONObject().apply { params.forEach { (k, v) -> if (v != null) put(k, v) } }.toString()
+            var ox = 0
+            var oy = 0
+            var ow = src.width
+            var oh = src.height
+            if (grow) {
+                nativeBounds(operation, json, src.width, src.height)?.let { b ->
+                    val left = minOf(0, b[0]); val top = minOf(0, b[1])
+                    val right = maxOf(src.width, b[0] + b[2]); val bottom = maxOf(src.height, b[1] + b[3])
+                    val margin = MAX_GROW
+                    // Only grow by a sane amount: some operations draw an infinite plane.
+                    if (b[2] > 0 && b[3] > 0 && left >= -margin && top >= -margin &&
+                        right <= src.width + margin && bottom <= src.height + margin &&
+                        (right - left).toLong() * (bottom - top) <= MAX_GROWN_PIXELS) {
+                        ox = left; oy = top; ow = right - left; oh = bottom - top
+                    }
+                }
+            }
+            val dst = Bitmap.createBitmap(ow, oh, Bitmap.Config.ARGB_8888)
             runningTag = tag
             val rc = try {
-                nativeApply(operation, json.toString(), src, dst, ProgressListener { onProgress(it) })
+                nativeApply(operation, json, src, dst, ox, oy, ProgressListener { onProgress(it) })
             } finally {
                 runningTag = null
             }
             when (rc) {
-                0 -> Result.Ok(dst)
+                0 -> Result.Ok(dst, ox, oy)
                 1 -> { dst.recycle(); Result.Cancelled }
                 else -> { dst.recycle(); Result.Failed(nativeLastError() ?: "Unknown engine error") }
             }
         }
     }
+
+    private const val MAX_GROW = 2048
+    private const val MAX_GROWN_PIXELS = 30_000_000L
 
     /** Stops the running job at its next chunk, if it's the one tagged [tag] (or any job if null). */
     fun cancel(tag: Any? = null) {

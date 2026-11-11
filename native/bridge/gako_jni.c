@@ -194,11 +194,39 @@ report_progress (double fraction, void *data)
     }
 }
 
-/* Returns 0 = ok, 1 = cancelled, -1 = error (message via nativeLastError). */
+/* [x, y, w, h] of what the operation draws for a w×h input, or null on error. */
+JNIEXPORT jintArray JNICALL
+JNI_FN (nativeBounds) (JNIEnv *env, jclass klass,
+                       jstring operation, jstring params, jint width, jint height)
+{
+  char *op = dup_jstring (env, operation);
+  char *json = dup_jstring (env, params);
+  char *err = NULL;
+  int b[4] = { 0, 0, 0, 0 };
+  jintArray result = NULL;
+  (void) klass;
+
+  if (gako_core_bounds (op, json, width, height, &b[0], &b[1], &b[2], &b[3], &err) == 0)
+    {
+      result = (*env)->NewIntArray (env, 4);
+      if (result)
+        (*env)->SetIntArrayRegion (env, result, 0, 4, (const jint *) b);
+    }
+  else
+    set_last_error (err ? err : "unknown error");
+  gako_free (err);
+  g_free (op);
+  g_free (json);
+  return result;
+}
+
+/* Renders the operation over src and writes the output rectangle starting at (out_x, out_y),
+ * dst-sized, into dst. Returns 0 = ok, 1 = cancelled, -1 = error (see nativeLastError). */
 JNIEXPORT jint JNICALL
 JNI_FN (nativeApply) (JNIEnv *env, jclass klass,
                       jstring operation, jstring params,
                       jobject src_bitmap, jobject dst_bitmap,
+                      jint out_x, jint out_y,
                       jobject listener)
 {
   AndroidBitmapInfo src_info, dst_info;
@@ -218,10 +246,9 @@ JNI_FN (nativeApply) (JNIEnv *env, jclass klass,
       return -1;
     }
   if (src_info.format != ANDROID_BITMAP_FORMAT_RGBA_8888 ||
-      dst_info.format != ANDROID_BITMAP_FORMAT_RGBA_8888 ||
-      src_info.width != dst_info.width || src_info.height != dst_info.height)
+      dst_info.format != ANDROID_BITMAP_FORMAT_RGBA_8888)
     {
-      set_last_error ("Bitmaps must both be ARGB_8888 and the same size");
+      set_last_error ("Bitmaps must both be ARGB_8888");
       return -1;
     }
 
@@ -250,10 +277,11 @@ JNI_FN (nativeApply) (JNIEnv *env, jclass klass,
 
   op   = dup_jstring (env, operation);
   json = dup_jstring (env, params);
-  rc = gako_core_apply (op, json,
-                        src_px, (int) src_info.width, (int) src_info.height, (int) src_info.stride,
-                        dst_px, (int) dst_info.stride,
-                        &cancel_flag, report_progress, &ctx, &err);
+  rc = gako_core_apply_rect (op, json,
+                             src_px, (int) src_info.width, (int) src_info.height, (int) src_info.stride,
+                             out_x, out_y, (int) dst_info.width, (int) dst_info.height,
+                             dst_px, (int) dst_info.stride,
+                             &cancel_flag, report_progress, &ctx, &err);
 
   AndroidBitmap_unlockPixels (env, dst_bitmap);
   AndroidBitmap_unlockPixels (env, src_bitmap);
