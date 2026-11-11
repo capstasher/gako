@@ -23,6 +23,9 @@ editor's state); otherwise the script falls back to uiautomator (~2 s a look, vi
   scripts/ui.py start                      # launch GAKO
 
 Join several commands with "+":  scripts/ui.py tap Layers + tap "More layer actions" + text
+
+With several devices connected it uses $ANDROID_SERIAL if set, else the first booted one
+(scripts/ui.py -s emulator-5556 … picks one).
 """
 import json
 import os
@@ -37,18 +40,43 @@ PKG = "io.github.capstasher.gako"
 SHOTS = os.environ.get("GAKO_SHOTS", "/tmp/gako-shots")
 
 
-PORT = int(os.environ.get("GAKO_INSPECTOR_PORT", "7781"))
-_forwarded = False
+SERIAL = None          # the device everything goes to (see pick_device)
+_port = None
+
+
+def pick_device():
+    """$ANDROID_SERIAL, else the first device that's booted (adb refuses to guess between several)."""
+    global SERIAL
+    if SERIAL:
+        return
+    SERIAL = os.environ.get("ANDROID_SERIAL")
+    if SERIAL:
+        return
+    lines = subprocess.run(["adb", "devices"], capture_output=True, text=True).stdout.splitlines()[1:]
+    serials = [l.split()[0] for l in lines if l.strip().endswith("device")]
+    if not serials:
+        sys.exit("No device or emulator (scripts/emulator.sh start)")
+    SERIAL = serials[0]
 
 
 def inspector(request):
     """Ask the debug build's inspector (see app/src/debug/.../Inspector.kt); None if it isn't there."""
-    global _forwarded
-    if not _forwarded:
-        subprocess.run(["adb", "forward", f"tcp:{PORT}", "localabstract:gako-inspector"], capture_output=True)
-        _forwarded = True
+    global _port
+    if _port is None:
+        # Reuse this device's forward if adb already has one, else let adb pick a free local port.
+        listed = subprocess.run(["adb", "forward", "--list"], capture_output=True, text=True).stdout
+        for line in listed.splitlines():
+            parts = line.split()
+            if len(parts) == 3 and parts[0] == SERIAL and parts[2] == "localabstract:gako-inspector":
+                _port = int(parts[1].split(":")[1])
+        if _port is None:
+            out = subprocess.run(["adb", "-s", SERIAL, "forward", "tcp:0", "localabstract:gako-inspector"],
+                                 capture_output=True, text=True).stdout.strip()
+            if not out.isdigit():
+                return None
+            _port = int(out)
     try:
-        with socket.create_connection(("127.0.0.1", PORT), timeout=4) as s:
+        with socket.create_connection(("127.0.0.1", _port), timeout=4) as s:
             s.sendall((request + "\n").encode())
             data = b""
             while True:
@@ -66,7 +94,7 @@ def inspector(request):
 
 
 def adb(*args, check=False):
-    r = subprocess.run(["adb", *args], capture_output=True, text=True)
+    r = subprocess.run(["adb", "-s", SERIAL, *args], capture_output=True, text=True)
     if check and r.returncode != 0:
         sys.exit(f"adb {' '.join(args)} failed: {r.stderr.strip()}")
     return r.stdout
@@ -102,7 +130,7 @@ def screen():
     fast = inspector("ui")
     if fast is not None:
         return [Node(n["text"], n["desc"], n["click"], n["box"], n["win"]) for n in fast["nodes"]]
-    raw = subprocess.run(["adb", "exec-out", "uiautomator", "dump", "/dev/tty"], capture_output=True, text=True).stdout
+    raw = subprocess.run(["adb", "-s", SERIAL, "exec-out", "uiautomator", "dump", "/dev/tty"], capture_output=True, text=True).stdout
     raw = raw[: raw.rfind(">") + 1] if ">" in raw else raw
     try:
         root = ET.fromstring(raw)
@@ -247,7 +275,7 @@ def cmd(args):
     elif c == "shot":
         os.makedirs(SHOTS, exist_ok=True)
         out = os.path.join(SHOTS, (rest[0] if rest else time.strftime("%H%M%S")) + ".png")
-        png = subprocess.run(["adb", "exec-out", "screencap", "-p"], capture_output=True).stdout
+        png = subprocess.run(["adb", "-s", SERIAL, "exec-out", "screencap", "-p"], capture_output=True).stdout
         try:
             from PIL import Image
             import io
@@ -263,9 +291,13 @@ def cmd(args):
 
 
 def main(argv):
+    global SERIAL
     if not argv or argv[0] in ("-h", "--help"):
         print(__doc__)
         return
+    if argv[0] == "-s" and len(argv) > 2:
+        SERIAL, argv = argv[1], argv[2:]
+    pick_device()
     group = []
     for a in argv + ["+"]:
         if a == "+":

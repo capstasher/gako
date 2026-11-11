@@ -86,27 +86,38 @@ which drives the real screens (buttons found by label, the canvas touched at ima
 
 ### The fast loop
 
-- **Build with the Gradle daemon** (don't pass `--no-daemon`): a one-file rebuild drops from ~10 s to ~3 s.
-- **`scripts/devtest.sh [Class[#test] …]`** runs the tests with `am instrument` (~10 s for all of
-  them on an idle machine). It installs the app and test APKs with plain `adb install` (0.4 s, against
-  2.4 s through Gradle) and only when they changed: same file hash, and the device's install time
-  matches the last install (so a reinstall by anything else, or an emulator snapshot, is noticed).
-  It never uninstalls, so the app keeps its data. It waits for a restarting emulator, and with
-  several devices connected it splits the tests between them (`numShards`) and runs them in parallel.
+Measured on one fast desktop, idle; every script picks what the machine it runs on
+supports, so other machines get their own best setup.
+
+- **`scripts/emulator.sh start`** starts the test emulators and keeps them running (`stop`, `status`).
+  It finds the SDK and an AVD (or creates one for the host's CPU), tries GPU modes fastest first
+  (`host`, the real GPU, needs a desktop session on Linux; then the software `swangle_indirect` and
+  `swiftshader_indirect`) and remembers which one boots and draws, boots from a snapshot it saves the
+  first time (three emulators in ~8 s instead of ~30 s), runs as many as the CPU and free memory allow
+  (3 here, at most 4, 1 without hardware virtualisation), and restarts any that dies (the host-GPU
+  emulator can lose its GL context when the desktop is busy). Overrides: `GAKO_AVD`, `GAKO_EMU_GPU`,
+  `GAKO_EMULATORS`.
+- **`scripts/devtest.sh [Class[#test] …]`** runs the on-device tests across every connected device:
+  ~4 s for all 19 on three emulators (plus the 16 JVM unit tests alongside, on a full run), against
+  ~8 s on one. It splits the tests so each device gets about the same total time, from per-test
+  durations it records on every run (`app/build/devtest/timings.tsv`; without python3 it falls back
+  to Android's `numShards`). It builds only the ABIs the devices need (warm daemon, configuration
+  cache), installs with plain `adb` only when an APK changed (file hash plus the device's install
+  time, so reinstalls elsewhere and emulator snapshots are noticed), never uninstalls, and waits for
+  an emulator that's restarting.
 - **`scripts/ui.py`** drives the app over adb by what's on screen: `tap "Layers"`, `wait "Saved"`,
   `text`, `ls`, `state`, `img 120 80` / `drag` / `path` at image pixels, `open photo.jpg`,
-  `shot name`; join commands with `+`. No coordinates to guess. Debug builds answer from an
-  inspector inside the app (`app/src/debug/…/debug/Inspector.kt`, on the abstract socket
-  `gako-inspector`): ~0.1 s a look instead of uiautomator's ~2.3 s, image pixels mapped at any zoom
+  `shot name`; join commands with `+`; `-s SERIAL` (or `$ANDROID_SERIAL`) picks a device. Debug builds
+  answer from an inspector inside the app (`app/src/debug/…/debug/Inspector.kt`, abstract socket
+  `gako-inspector`): ~30 ms a look instead of uiautomator's ~2.3 s, image pixels mapped at any zoom
   or turn, and `state` prints the document, layers, selection, paths, tool and history. Release
   builds don't contain it (ui.py then falls back to uiautomator, view at Fit).
-- **`scripts/stress.sh [events] [seed]`** runs the monkey (touch, drag and pinch only) and prints any
-  crash or freeze with its stack.
-- **Emulator:** boot it once, then save a snapshot (`adb emu avd snapshot save ready`) and start from
-  it (`-snapshot ready -no-snapshot-save`): ~6 s instead of ~26 s. On a Linux desktop the host-GPU
-  emulator talks to the GPU through the X server (XWayland on Wayland) and can drop its GL context
-  when the desktop is busy; restarting from the snapshot keeps that cheap. `-gpu swangle_indirect`
-  never crashed but runs the UI tests ~6× slower; `-gpu swiftshader_indirect` crashes on some dialogs.
+- **`scripts/stress.sh [events] [seed]`** runs the monkey (touch, drag and pinch only) on every
+  device at once, each with its own seed and the full number of events, and prints any crash or
+  freeze with its stack: 3 × 3000 events in ~28 s.
+- **UI tests** (`UiTest`) start each test from a clean app (the previous test's autosave is
+  removed first). Most of their ~0.8 s each is the test framework launching and closing the activity;
+  sharing one activity between tests would be faster but would let tests affect each other.
 
 Stage 3 was tested on an Android 15 x86_64 emulator (Pixel 7 profile), driving it with
 `adb shell input` and screenshots, plus:
