@@ -90,6 +90,21 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
             .onSizeChanged { viewSize = it }
             // Keyed on the canvas size: the view state is recreated when it changes (crop, resize),
             // and the gesture handler must write to the new one.
+            // A hovering pen shows the brush's outline where it would paint.
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val e = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                        val c = e.changes.firstOrNull() ?: continue
+                        val pen = c.type == PointerType.Stylus || c.type == PointerType.Eraser
+                        vm.hover = when {
+                            !pen || c.pressed -> null
+                            e.type == androidx.compose.ui.input.pointer.PointerEventType.Exit -> null
+                            else -> c.position
+                        }
+                    }
+                }
+            }
             .pointerInput(doc.width, doc.height) {
                 fun toDoc(p: Offset): Offset {
                     val w = size.width.toFloat()
@@ -120,6 +135,10 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
                     var moved = false
                     var textStart: Pair<Int, Int>? = null
                     rawAngle = angle
+                    // Multi-finger taps: two fingers = undo, three = redo (if they barely move and lift quickly).
+                    var maxFingers = 1
+                    var multiTravel = 0f
+                    var multiZoom = 1f
                     first.consume()
 
                     // Long-press with a colour-painting tool picks the colour there (as in most phone painting apps).
@@ -149,6 +168,14 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
                         }
                         val pressed = ev.changes.filter { it.pressed }
                         if (pressed.isEmpty()) {
+                            val quick = ev.changes.first().uptimeMillis - downTime < MULTI_TAP_MS
+                            if (multi && quick && multiTravel < slop * 2 && multiZoom in 0.93f..1.07f && !modal) {
+                                when (maxFingers) {
+                                    2 -> vm.undo()
+                                    3 -> vm.redo()
+                                }
+                                break
+                            }
                             if (started) vm.input.up()
                             else if (!multi && !moved) {
                                 val p = toDoc(downPos)
@@ -182,6 +209,9 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
                         if (pressed.size >= 2) {
                             if (started) { vm.input.cancel(); started = false }
                             multi = true
+                            maxFingers = maxOf(maxFingers, pressed.size)
+                            multiTravel += ev.calculatePan().getDistance()
+                            multiZoom *= ev.calculateZoom()
                             val w = size.width.toFloat()
                             val h = size.height.toFloat()
                             val zoom = ev.calculateZoom()
@@ -469,6 +499,18 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
                 nc.drawLine(m.x, m.y + 8 * px, m.x, m.y + 24 * px, gold)
             }
             nc.restore()
+
+            // Brush outlines in screen space: the size preview at the centre, and under a hovering pen.
+            if (tool.paints || tool == Tool.SelectBrush) {
+                val r = vm.options.size / 2f * s
+                val ring = Paint().apply { style = Paint.Style.STROKE; isAntiAlias = true }
+                fun outline(x: Float, y: Float) {
+                    nc.drawCircle(x, y, r, ring.apply { color = android.graphics.Color.BLACK; strokeWidth = 3f })
+                    nc.drawCircle(x, y, r, ring.apply { color = android.graphics.Color.WHITE; strokeWidth = 1.2f })
+                }
+                if (vm.sizePreview) outline(size.width / 2, size.height / 2)
+                vm.hover?.let { outline(it.x, it.y) }
+            }
         }
     }
         // Zoom level; tap to switch between fitting the screen and 100%.
@@ -588,6 +630,7 @@ private fun drawCrop(nc: android.graphics.Canvas, r: RectF, d: DocState, px: Flo
 }
 
 private const val LONG_PRESS_MS = 550L
+private const val MULTI_TAP_MS = 280L
 
 /** 1, 2, 5, 10, 20, 50… pixels: the round number nearest [raw]. */
 private fun niceGridStep(raw: Float): Float {

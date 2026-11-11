@@ -108,6 +108,12 @@ fun ToolOptionsBar(vm: EditorViewModel) {
     }
     val numbers = base + (if (shaped) listOf(angle) else emptyList()) + (if (tool.paints) listOf(smooth) else emptyList())
 
+    // While the size slider is open, show the brush's actual size on the canvas.
+    val sizeOpen = expanded == "size"
+    androidx.compose.runtime.DisposableEffect(sizeOpen) {
+        vm.sizePreview = sizeOpen
+        onDispose { vm.sizePreview = false }
+    }
     Column(Modifier.fillMaxWidth().background(Gako.InkRaised)) {
         numbers.firstOrNull { it.key == expanded }?.let { n ->
             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
