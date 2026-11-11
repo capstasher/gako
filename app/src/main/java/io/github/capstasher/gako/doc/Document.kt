@@ -79,6 +79,11 @@ data class Layer(
     val parent: Long? = null,
     /** Groups: children shown in the Layers panel. */
     val expanded: Boolean = true,
+    /**
+     * The GIMP layer-mode number this layer had in the XCF it came from. Written back as long as it
+     * still reads as [mode], so a GIMP file keeps its (linear-light, or unsupported) modes.
+     */
+    val xcfMode: Int? = null,
 ) {
     /** The mask that affects how the layer looks right now. */
     val activeMask: Bitmap? get() = mask.takeIf { maskEnabled }

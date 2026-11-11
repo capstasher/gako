@@ -95,6 +95,9 @@ Stage 3 was tested on an Android 15 x86_64 emulator (Pixel 7 profile), driving i
   legacy modes (which it writes). The difference is large for semi-transparency: black at 50% over
   white is 188 in GIMP 3.2's Normal, 127 in GAKO (and in GIMP's Normal (legacy)). Doing it right needs
   a linear compositor for the screen too (AGSL on Android 13+, or tiled F16 compositing on the CPU).
+  Meanwhile `Layer.xcfMode` keeps each layer's GIMP mode number from the file and writes it back while
+  the mode is unchanged, so GIMP → GAKO → GIMP keeps the look in GIMP (and modes GAKO shows as Normal,
+  like Grain merge or Dissolve, survive).
 - Group masks aren't supported (groups have no mask); filters and painting work on layers, not groups.
 - Filters that grow a layer (drop shadow…) grow it only within the canvas.
 - During a stroke the canvas draws the pre-stroke copy plus 256 px tiles; other edits on huge layers

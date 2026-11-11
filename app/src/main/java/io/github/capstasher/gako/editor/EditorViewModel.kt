@@ -701,7 +701,14 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             return resolver.openInputStream(uri)!!.use { io.github.capstasher.gako.doc.PsdReader.read(it) } to null
         }
         if (lower.endsWith(".xcf") || mime == "image/x-xcf") {
-            return resolver.openInputStream(uri)!!.use { io.github.capstasher.gako.doc.XcfReader.read(it) } to null
+            val d = resolver.openInputStream(uri)!!.use { io.github.capstasher.gako.doc.XcfReader.read(it) }
+            // GIMP 2.10+ blends these in linear light, GAKO in sRGB: say so where it shows (opacity, modes).
+            val linear = d.layers.size > 1 && d.layers.any { l ->
+                !l.group && l.xcfMode?.let { io.github.capstasher.gako.doc.XcfProps.isLinear(it) } == true &&
+                    (l.opacity < 1f || l.mode != LayerMode.Normal)
+            }
+            return d to (if (linear) "GIMP blends some of these layers in linear light; here they blend in sRGB, " +
+                "so see-through parts can look darker. Saving keeps their GIMP modes." else null)
         }
         val (bitmap, note) = decode(uri)
         pendingMetadata = runCatching { resolver.openInputStream(uri)?.use { io.github.capstasher.gako.export.Metadata.read(it) } }.getOrNull()
