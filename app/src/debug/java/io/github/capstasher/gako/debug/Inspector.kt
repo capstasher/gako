@@ -136,6 +136,12 @@ object Inspector {
             .put("dirty", vm.dirty)
             .put("tool", vm.tool.name)
             .put("busy", vm.busy?.label ?: JSONObject.NULL)
+            // GIMP's exact composite on the canvas: whether it's in use and whether it's caught up.
+            .put("projection", JSONObject()
+                .put("needed", vm.projection.needed)
+                .put("current", vm.projection.frame?.let { it.doc === vm.doc && it.revision == vm.revision } == true)
+                .put("editing", vm.editingLive))
+            .put("quickMask", vm.quickMaskOn)
             .put("engine", vm.engine::class.simpleName)
             .put("canUndo", vm.canUndo).put("canRedo", vm.canRedo)
             .put("fg", hex(vm.fg)).put("bg", hex(vm.bg))
