@@ -73,13 +73,13 @@ class Projection(private val changes: PixelChanges) {
                         if (!r.isEmpty) {
                             frame = null
                             val part = withContext(Dispatchers.Default) { Compositor.composite(doc.layers, r.left, r.top, r.width(), r.height()) }
-                                ?: return
+                                ?: return                                  // (out of memory: try again next time)
                             Canvas(f!!.bitmap).drawBitmap(part, r.left.toFloat(), r.top.toFloat(), Paint().apply { blendMode = BlendMode.SRC })
                         }
                         frame = Frame(doc, revision, f!!.bitmap, seq)
                     }
                     PixelChanges.Change.Everywhere -> {
-                        val into = reuse(f?.bitmap, doc)
+                        val into = reuse(f?.bitmap, doc) ?: return     // no memory for it: the GPU drawing stays
                         frame = null
                         val bmp = withContext(Dispatchers.Default) { Compositor.composite(doc.layers, 0, 0, doc.width, doc.height, into) }
                             ?: return
@@ -92,7 +92,7 @@ class Projection(private val changes: PixelChanges) {
             if (small && start > 0 && below?.let { matches(it, doc, start) } != true) {
                 val seq = changes.now
                 val layers = doc.layers.subList(0, start).toList()
-                val into = reuse(below?.bitmap, doc)
+                val into = reuse(below?.bitmap, doc) ?: return
                 below = null
                 val bmp = withContext(Dispatchers.Default) { Compositor.composite(layers, 0, 0, doc.width, doc.height, into) }
                     ?: return
@@ -135,7 +135,7 @@ class Projection(private val changes: PixelChanges) {
     /** [old] cleared if it's the right size, else a new bitmap (null if there's no memory for one). */
     private fun reuse(old: Bitmap?, doc: DocState): Bitmap? =
         old?.takeIf { it.width == doc.width && it.height == doc.height && it.isMutable }?.also { it.eraseColor(0) }
-            ?: runCatching { Bitmaps.blank(doc.width, doc.height) }.getOrNull()
+            ?: try { Bitmaps.blank(doc.width, doc.height) } catch (e: OutOfMemoryError) { null }
 
     companion object {
         const val SETTLE_MS = 30L

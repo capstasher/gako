@@ -27,7 +27,20 @@ object Compositor {
      */
     fun composite(all: List<Layer>, x: Int, y: Int, w: Int, h: Int, into: Bitmap? = null, background: Int? = null): Bitmap? {
         val layers = if (all.any { it.quickMask }) all.filterNot { it.quickMask } else all
-        val out = into ?: Bitmaps.blank(w, h)
+        val out = into ?: try { Bitmaps.blank(w, h) } catch (e: OutOfMemoryError) { return null }
+        if (plain(layers)) {
+            // Only sRGB Normal layers: the Canvas gives GIMP's result, and it doesn't touch the layers'
+            // bitmaps (the native call's pixel locks mark them changed, so the GPU re-uploads them all).
+            val c = Canvas(out)
+            if (into != null) c.drawColor(0, BlendMode.SRC)
+            c.translate(-x.toFloat(), -y.toFloat())
+            if (background != null) c.drawColor(background)
+            val bounds = RectF(x.toFloat(), y.toFloat(), (x + w).toFloat(), (y + h).toFloat())
+            val save = c.saveLayer(bounds, null)
+            drawTree(c, layers, bounds) { cc, l -> drawLayer(cc, l, layerPaint(l)) }
+            c.restoreToCount(save)
+            return out
+        }
         val index = HashMap<Long, Int>(layers.size * 2)
         layers.forEachIndexed { i, l -> index[l.id] = i }
         val n = layers.size
@@ -53,7 +66,9 @@ object Compositor {
     }
 
     /** Whether the quick Canvas drawing shows [doc] exactly as GIMP would (only plain sRGB Normal layers). */
-    fun canvasIsExact(doc: DocState, layers: List<Layer> = doc.layers): Boolean = layers.all { l ->
+    fun canvasIsExact(doc: DocState, layers: List<Layer> = doc.layers): Boolean = plain(layers)
+
+    private fun plain(layers: List<Layer>): Boolean = layers.all { l ->
         !l.visible || l.quickMask || when {
             l.group -> l.gimpMode == 0 || (l.mode == LayerMode.PassThrough && l.opacity >= 1f)
             else -> l.gimpMode == 0 && l.activeMask == null
