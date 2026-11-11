@@ -272,14 +272,20 @@ object XcfWriter {
             val x = l.xcf
             // A GIMP text layer whose pixels GAKO changed: tell GIMP (it then keeps these pixels).
             val changed = x != null && !l.group && x.pixelsChanged(l.bitmap)
-            val gimpText = x?.parasites?.any { it.name == "gimp-text-layer" } == true
+            // Its text rewritten in GAKO: GIMP's old text settings would bring the old words back, so
+            // it goes to GIMP as an ordinary layer (GAKO's own text info keeps it editable here).
+            val retexted = x?.gimpText != null && l.text != null && l.text != x.gimpText
+            val gimpText = !retexted && x?.parasites?.any { it.name == GimpText.PARASITE } == true
             x?.props?.forEach { k ->
-                if (k.type == XcfProps.TEXT_LAYER_FLAGS && changed && k.data.size == 4) {
-                    b.prop(XcfProps.TEXT_LAYER_FLAGS, java.nio.ByteBuffer.wrap(k.data).int or 2)
-                } else b.raw(k)
+                when {
+                    k.type == XcfProps.TEXT_LAYER_FLAGS && retexted -> Unit
+                    k.type == XcfProps.TEXT_LAYER_FLAGS && changed && k.data.size == 4 ->
+                        b.prop(XcfProps.TEXT_LAYER_FLAGS, java.nio.ByteBuffer.wrap(k.data).int or 2)
+                    else -> b.raw(k)
+                }
             }
             if (changed && gimpText && x!!.props.none { it.type == XcfProps.TEXT_LAYER_FLAGS }) b.prop(XcfProps.TEXT_LAYER_FLAGS, 2)
-            val parasites = x?.parasites.orEmpty().toMutableList()
+            val parasites = x?.parasites.orEmpty().filter { !(retexted && it.name == GimpText.PARASITE) }.toMutableList()
             l.text?.let { t -> parasites += XcfParasite(TEXT_PARASITE, 1, textToString(t).toByteArray(Charsets.UTF_8)) }
             b.parasites(parasites)
             b.u32(XcfProps.END); b.u32(0)
@@ -657,18 +663,25 @@ object XcfReader {
             if (w <= 0 || h <= 0) return null
             val bmp = readHierarchy(hierarchy, type, baseType) ?: return null
             val maskBitmap = if (mask != 0L) readMask(mask) else null
+            val xcf = extras(info, bmp)          // first: a GIMP text layer's text goes into info.text
             return Layer(Layer.newId(), info.name.ifEmpty { "Layer" }, bmp, info.x, info.y, info.visible,
                 info.opacity, if (info.mode == LayerMode.PassThrough) LayerMode.Normal else info.mode,
                 legacy = info.legacy, blendSpace = info.blendSpace, compositeSpace = info.compositeSpace,
                 compositeMode = info.compositeMode, lockAlpha = info.lockAlpha, text = info.text,
                 mask = maskBitmap?.takeIf { it.width == bmp.width && it.height == bmp.height },
-                maskEnabled = info.applyMask, parent = parent, xcfMode = info.rawMode, xcf = extras(info, bmp),
+                maskEnabled = info.applyMask, parent = parent, xcfMode = info.rawMode, xcf = xcf,
                 effects = info.effects) to info.active
         }
 
-        fun extras(info: LayerInfo, bmp: Bitmap) =
-            if (info.kept.isEmpty() && info.parasites.isEmpty()) null
-            else XcfLayerData(info.kept.toList(), info.parasites.toList(), bmp, bmp.generationId)
+        fun extras(info: LayerInfo, bmp: Bitmap): XcfLayerData? {
+            if (info.kept.isEmpty() && info.parasites.isEmpty()) return null
+            // A GIMP text layer: its text for GAKO's text tool (GIMP's pixels stay until it's edited).
+            val isGimpText = info.parasites.any { it.name == GimpText.PARASITE }
+            val gimpText = info.parasites.firstOrNull { it.name == GimpText.PARASITE }?.let { GimpText.parse(it.data) }
+            if (info.text == null && gimpText != null) info.text = gimpText
+            return XcfLayerData(info.kept.toList(), info.parasites.toList(),
+                if (isGimpText && !info.group) XcfLayerData.checksum(bmp) else null, gimpText)
+        }
 
         /** A saved channel (or the selection, if it says so): its grey pixels and the properties GAKO keeps. */
         fun readChannel(at: Long, imageW: Int, imageH: Int): Pair<Channel, Boolean>? {

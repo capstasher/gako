@@ -26,7 +26,8 @@ enum class LayerMode(val label: String, val gimp: Int, val legacyGimp: Int?, val
     Multiply("Multiply", 30, 3, BlendMode.MULTIPLY, 2),
     Burn("Burn", 43, 17, BlendMode.COLOR_BURN, 2),
     LinearBurn("Linear burn", 53, null, BlendMode.COLOR_BURN, 2),
-    Overlay("Overlay", 23, 5, BlendMode.OVERLAY, 3),
+    // GIMP's legacy mode list uses the default Overlay (its old legacy one, 5, was Soft light).
+    Overlay("Overlay", 23, null, BlendMode.OVERLAY, 3),
     SoftLight("Soft light", 45, 19, BlendMode.SOFT_LIGHT, 3),
     HardLight("Hard light", 44, 18, BlendMode.HARD_LIGHT, 3),
     VividLight("Vivid light", 48, null, BlendMode.HARD_LIGHT, 3),
@@ -62,6 +63,7 @@ enum class LayerMode(val label: String, val gimp: Int, val legacyGimp: Int?, val
             entries.firstOrNull { it.gimp == n }?.let { return it to false }
             entries.firstOrNull { it.legacyGimp == n }?.let { return it to true }
             return when (n) {
+                5 -> SoftLight to true                 // "Overlay (legacy)": GIMP draws and reads it as Soft light
                 1, 2, 22 -> Normal to true          // dissolve, behind, colour erase (legacy)
                 else -> Normal to false             // behind, colour erase, erase, merge, split, replace, anti-erase
             }
@@ -495,11 +497,32 @@ class XcfProp(val type: Int, val data: ByteArray)
 class XcfParasite(val name: String, val flags: Int, val data: ByteArray)
 
 /**
- * A layer's XCF data GAKO doesn't use, and the pixels it came with: if those change, GIMP is
- * told (a GIMP text layer is then marked modified, so GIMP keeps GAKO's pixels).
+ * A layer's XCF data GAKO doesn't use. For a GIMP text layer, a checksum of the pixels it came with:
+ * if they change, GIMP is told (the layer is marked modified, so GIMP keeps GAKO's pixels).
  */
-class XcfLayerData(val props: List<XcfProp>, val parasites: List<XcfParasite>, val bitmap: Bitmap, val generation: Int) {
-    fun pixelsChanged(now: Bitmap) = now !== bitmap || now.generationId != generation
+class XcfLayerData(
+    val props: List<XcfProp>, val parasites: List<XcfParasite>,
+    val pixelSum: Long? = null,
+    /** GIMP's text settings as GAKO read them (a GIMP text layer), to tell when GAKO changed the text. */
+    val gimpText: TextInfo? = null,
+) {
+    fun pixelsChanged(now: Bitmap) = pixelSum != null && checksum(now) != pixelSum
+
+    companion object {
+        /** A CRC of a bitmap's size and pixels. */
+        fun checksum(b: Bitmap): Long {
+            val crc = java.util.zip.CRC32()
+            crc.update(b.width); crc.update(b.height)
+            val row = IntArray(b.width)
+            val bytes = java.nio.ByteBuffer.allocate(b.width * 4)
+            for (y in 0 until b.height) {
+                b.getPixels(row, 0, b.width, 0, y, b.width, 1)
+                bytes.clear(); bytes.asIntBuffer().put(row)
+                crc.update(bytes.array(), 0, b.width * 4)
+            }
+            return crc.value
+        }
+    }
 }
 
 /** A GIMP channel: a canvas-sized grey bitmap (red = value) and its XCF properties (colour, opacity…). */

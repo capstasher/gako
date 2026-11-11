@@ -32,7 +32,7 @@ operation) for Android, and puts a touch interface on top designed for one hand 
 
 **Tools** (one finger uses the tool, two fingers always pan and zoom)
 - Paint: paintbrush, pencil, airbrush, eraser, clone, heal, smudge, blur, dodge/burn, bucket fill, gradient
-  (linear/radial/mirrored, FG→BG or FG→transparent), text (re-editable, any installed or imported font, outline), colour picker;
+  (linear/radial/mirrored, FG→BG or FG→transparent), text (re-editable, any installed or imported font, outline; GIMP text layers open as editable text), colour picker;
   round, square or calligraphy brushes with angle, stroke smoothing, mirror symmetry (↔ ↕ ✚), stylus pressure;
   ★ Brushes: built-in brush presets plus your own saved ones;
   long-press with a brush, fill, gradient or text picks the colour under the finger

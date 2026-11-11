@@ -715,7 +715,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                     busy = Busy("Applying layer effects")
                     Engine.start(getApplication())
                     val ops = Engine.operations().map { it.name }.toSet()
-                    val outcome = io.github.capstasher.gako.engine.Effects.apply(loaded, ops)
+                    val outcome = withContext(Dispatchers.Default) { io.github.capstasher.gako.engine.Effects.apply(loaded, ops) }
                     outcome.doc to listOfNotNull(loadNote, outcome.note).joinToString("\n").ifEmpty { null }
                 } else loaded to loadNote
                 val d = doc
@@ -1266,8 +1266,15 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     fun rotateBy(degrees: Float, crop: Boolean) =
         docJob(if (crop) "Straighten" else "Rotate") { DocOps.rotateBy(it, degrees, crop) }
     fun flip(horizontal: Boolean) = docJob(if (horizontal) "Flip Horizontally" else "Flip Vertically") { DocOps.flip(it, horizontal) }
-    fun flattenImage() = docJob("Flatten Image") { DocOps.flatten(it, bg) }
-    fun mergeVisible() = docJob("Merge Visible Layers") { DocOps.mergeVisible(it) }
+    fun flattenImage() = docJob("Flatten Image") { keepingQuickMask(it) { d -> DocOps.flatten(d, bg) } }
+    fun mergeVisible() = docJob("Merge Visible Layers") { keepingQuickMask(it) { d -> DocOps.mergeVisible(d) } }
+
+    /** [op] on the image's layers alone; a Quick Mask (the selection being painted) stays on top, active. */
+    private fun keepingQuickMask(d: DocState, op: (DocState) -> DocState?): DocState? {
+        val qm = d.quickMask ?: return op(d)
+        val r = op(d.forFiles()) ?: return null
+        return r.copy(layers = r.layers + qm, activeId = qm.id)
+    }
     fun scaleImage(w: Int, h: Int) = docJob("Scale Image") { DocOps.scale(it, w, h) }
     fun canvasSize(w: Int, h: Int, dx: Int, dy: Int, resizeLayers: Boolean) =
         docJob("Canvas Size") { DocOps.canvasSize(it, w, h, dx, dy, resizeLayers) }
@@ -1511,6 +1518,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun mergeDown() {
         val d = doc ?: return
+        if (d.active?.quickMask == true) { say("The Quick Mask is the selection, not a layer: end it to use it"); return }
         if (d.active?.group == true) { mergeGroup(); return }
         if (DocOps.mergeTarget(d) == null) { say("There's no layer right below in the same group to merge into"); return }
         docJob("Merge Down") { DocOps.mergeDown(it) }

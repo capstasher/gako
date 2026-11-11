@@ -75,6 +75,9 @@ native/bridge/          C bridge over GEGL: list/describe/apply operations, boun
   and filter works on it unchanged; `Compositor` leaves it out of composites and draws it on screen as
   GIMP's red tint, `DocState.forFiles()` leaves it out of files, the Layers list hides it, and paint on
   it turns grey (as on masks). Turning it on and off are undo steps.
+- `Compositor.composite` uses the Canvas for plain stacks (only sRGB Normal layers): it gives GIMP's
+  result there, and the native call's pixel locks would mark every layer bitmap changed (Android's
+  unlock does), making the GPU upload them all again.
 - **The canvas** (`ImageCanvas`) draws plain images (only sRGB Normal layers, no masks:
   `Compositor.canvasIsExact`) on the GPU every frame, each layer through `Compositor.drawLayer`.
   Others show `Projection`: GIMP's composite, made in the background ~30 ms after the last change
@@ -184,7 +187,11 @@ Stage 3 was tested on an Android 15 x86_64 emulator (Pixel 7 profile), driving i
   GAKO's selection), guides (shown, Image > Guides), sample points (shown), resolution, units, image
   and item parasites (comment, ICC profile, metadata, grid, GIMP text layers), colour tags, locks,
   tattoos, item sets. Whole-image transforms move guides, sample points and channels with the layers.
-  A GIMP text layer whose pixels GAKO changes is saved marked modified, so GIMP keeps the pixels.
+  A GIMP text layer opens as GAKO text (`GimpText` reads GIMP's text settings: text, font family and
+  style, size, colour, justification), keeping GIMP's pixels until it's edited; one whose pixels GAKO
+  changes is saved marked modified (a pixel checksum tells, not the bitmap's generation, which every
+  native composite bumps), and one whose text GAKO rewrites goes back as an ordinary layer, so GIMP
+  can't bring back the old words.
   GIMP 3's layer effects (non-destructive filters, XCF 20+) are read and applied when the file opens
   (`engine/Effects.kt`): each GEGL operation with its saved arguments, blended back with the effect's
   mode and opacity through its mask, clipped or not, as GIMP draws them; they become part of the

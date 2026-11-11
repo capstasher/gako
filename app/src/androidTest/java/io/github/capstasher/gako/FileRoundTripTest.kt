@@ -85,6 +85,9 @@ class FileRoundTripTest {
             assertEquals(number, back.named("Group").gimpMode)
             assertEquals(legacy, back.named("Group").legacy)
         }
+        // GIMP's legacy list has the default Overlay; its old legacy Overlay (5) is drawn and read as Soft light.
+        assertEquals(23, Layer(1, "o", io.github.capstasher.gako.doc.Bitmaps.blank(1, 1), mode = LayerMode.Overlay, legacy = true).gimpMode)
+        assertEquals(LayerMode.SoftLight to true, LayerMode.ofGimp(5))
         // A mode GAKO draws as Normal (Dissolve) is written back while the layer stays Normal…
         val kept = doc.copy(layers = doc.layers.map { if (it.name == "Top") it.copy(xcfMode = 1) else it })
         val back1 = XcfReader.read(ByteArrayInputStream(ByteArrayOutputStream().also { XcfWriter.write(kept, it) }.toByteArray()))
@@ -121,10 +124,16 @@ class FileRoundTripTest {
             assertTrue("colour tag and lock", tagged.props.any { it.type == 34 } && tagged.props.any { it.type == 28 })
             assertEquals("kept", String(tagged.parasites.single { it.name == "gako-test-data" }.data))
             assertTrue("GIMP's text", d.named("Hi").xcf!!.parasites.any { it.name == "gimp-text-layer" })
+            // …which GAKO's text tool can edit.
+            assertEquals("Hi", d.named("Hi").text?.text)
+            assertEquals(12f, d.named("Hi").text!!.size, 0f)
+            assertEquals(android.graphics.Color.BLACK, d.named("Hi").text!!.color)
             assertEquals("Outline", d.paths.single().name)
             assertTrue(d.paths.single().strokes.single().closed)
         }
         check(original)
+        // Showing it composites every layer (which marks Android bitmaps changed): not an edit.
+        io.github.capstasher.gako.doc.Compositor.flatten(original)
         val again = XcfReader.read(ByteArrayInputStream(ByteArrayOutputStream().also { XcfWriter.write(original, it) }.toByteArray()))
         check(again)
         // Paint on GIMP's text layer: GIMP must be told it was modified (flag 2), so it keeps the pixels.
@@ -133,8 +142,14 @@ class FileRoundTripTest {
         again.named("Hi").bitmap.setPixel(0, 0, android.graphics.Color.RED)
         val bytes = ByteArrayOutputStream().also { XcfWriter.write(again, it) }.toByteArray()
         assertEquals(2, flags(XcfReader.read(ByteArrayInputStream(bytes))) and 2)
-        // For checking in GIMP itself (scripts/gimp_modes_oracle.py has the check).
+        // For checking in GIMP itself.
         java.io.File(ctx.targetContext.cacheDir, "fidelity-gako.xcf").writeBytes(bytes)
+        // Its text rewritten in GAKO: GIMP's old text settings go (else GIMP would bring back "Hi").
+        val hi = again.named("Hi")
+        val retexted = again.replace(hi.copy(text = hi.text!!.copy(text = "Hello")))
+        val back = XcfReader.read(ByteArrayInputStream(ByteArrayOutputStream().also { XcfWriter.write(retexted, it) }.toByteArray()))
+        assertEquals("Hello", back.named("Hi").text?.text)
+        assertTrue(back.named("Hi").xcf?.parasites.orEmpty().none { it.name == "gimp-text-layer" })
     }
 
     @Test fun quickMaskIsNeverSaved() {

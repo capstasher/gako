@@ -450,8 +450,22 @@ object GimpOps {
                 fun skip() { while (i < text.length && (text[i].isWhitespace() || text[i] == '\u0000')) i++ }
                 fun atom(): Any {
                     if (text[i] == '"') {
+                        // GimpConfig's escapes: \", \\, \n…, and \ooo octal bytes (binary data such as colours).
                         val sb = StringBuilder(); i++
-                        while (i < text.length && text[i] != '"') { if (text[i] == '\\' && i + 1 < text.length) i++; sb.append(text[i]); i++ }
+                        while (i < text.length && text[i] != '"') {
+                            if (text[i] == '\\' && i + 1 < text.length) {
+                                i++
+                                val c = text[i]
+                                if (c in '0'..'7') {
+                                    var v = 0; var n = 0
+                                    while (n < 3 && i < text.length && text[i] in '0'..'7') { v = v * 8 + (text[i] - '0'); i++; n++ }
+                                    sb.append(v.toChar())
+                                    continue
+                                }
+                                sb.append(when (c) { 'n' -> '\n'; 't' -> '\t'; 'r' -> '\r'; 'b' -> '\b'; 'f' -> '\u000c'; else -> c })
+                            } else sb.append(text[i])
+                            i++
+                        }
                         i++
                         return sb.toString()
                     }

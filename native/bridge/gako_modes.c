@@ -20,6 +20,7 @@
 #define EPSILON 1e-6f
 #define SAFE_DIV_MAX (1.0f / EPSILON)
 #define MAX_THREADS 16
+#define MAX_DEPTH 64        /* nested groups; beyond this the caller falls back to its own drawing */
 
 /* ---- colour spaces --------------------------------------------------------------------- */
 
@@ -799,6 +800,8 @@ item (const Job *job, Scratch *s, int i, int level, Acc *a, Rect tile, int *empt
         }
       /* The group's own pixels: its contents on transparency, or for a pass-through group on
        * a copy of what's below (then mixed back by its opacity). */
+      if (level + 1 >= job->levels)
+        return;                                   /* can't happen: the depth was checked */
       Acc g = { s->acc + (size_t) (level + 1) * PX * 4, SP_LIN };
       int gempty = 1;
       if (l->mode == GAKO_MODE_PASS_THROUGH)
@@ -927,11 +930,13 @@ mark (const GakoLayer *layers, int n, char *contributes, int i)
   return any;
 }
 
+/* How deep [i] is in groups; more than any real file has (or a loop) reads as too deep. */
 static int
-depth_of (const GakoLayer *layers, int i)
+depth_of (const GakoLayer *layers, int n, int i)
 {
   int d = 0;
-  for (int p = layers[i].parent; p >= 0 && d < 64; p = layers[p].parent) d++;
+  for (int p = layers[i].parent; p >= 0 && p < n; p = layers[p].parent)
+    if (++d > MAX_DEPTH) return MAX_DEPTH + 1;
   return d;
 }
 
@@ -953,8 +958,14 @@ gako_composite (const GakoLayer *layers, int n,
   /* Groups come after their contents, so one pass bottom to top decides every item. */
   for (int i = 0; i < n; i++)
     {
+      int depth = depth_of (layers, n, i);
+      if (depth > MAX_DEPTH)
+        {
+          free (contributes);
+          return -1;
+        }
       contributes[i] = (char) mark (layers, n, contributes, i);
-      if (depth_of (layers, i) + 2 > levels) levels = depth_of (layers, i) + 2;
+      if (depth + 2 > levels) levels = depth + 2;
     }
 
   job.layers = layers; job.n = n; job.contributes = contributes;
