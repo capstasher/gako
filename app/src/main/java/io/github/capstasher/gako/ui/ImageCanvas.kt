@@ -434,6 +434,27 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
                 EditorViewModel.Grid.Off -> Unit
             }
 
+            // ---- GIMP's guides (dashed blue lines across the image) and sample points (numbered crosses)
+            if (d.gimp.guides.isNotEmpty() || d.gimp.samplePoints.isNotEmpty()) {
+                val under = Paint().apply { color = android.graphics.Color.BLACK; strokeWidth = 1f * px }
+                val guide = Paint().apply {
+                    color = android.graphics.Color.rgb(0, 160, 255); strokeWidth = 1f * px
+                    pathEffect = DashPathEffect(floatArrayOf(6 * px, 6 * px), 0f)
+                }
+                for (g in d.gimp.guides) {
+                    val p = g.position.toFloat()
+                    if (g.horizontal) { nc.drawLine(0f, p, d.width.toFloat(), p, under); nc.drawLine(0f, p, d.width.toFloat(), p, guide) }
+                    else { nc.drawLine(p, 0f, p, d.height.toFloat(), under); nc.drawLine(p, 0f, p, d.height.toFloat(), guide) }
+                }
+                val mark = Paint().apply { color = android.graphics.Color.rgb(0, 160, 255); strokeWidth = 1.5f * px; isAntiAlias = true; textSize = 11f * px }
+                d.gimp.samplePoints.forEachIndexed { i, sp ->
+                    val cx = sp.x + 0.5f; val cy = sp.y + 0.5f; val r = 7f * px
+                    nc.drawLine(cx - r, cy, cx - 2 * px, cy, mark); nc.drawLine(cx + 2 * px, cy, cx + r, cy, mark)
+                    nc.drawLine(cx, cy - r, cx, cy - 2 * px, mark); nc.drawLine(cx, cy + 2 * px, cx, cy + r, mark)
+                    nc.drawText("${i + 1}", cx + 3 * px, cy + 12 * px, mark)
+                }
+            }
+
             // ---- overlays
             val ink = Paint().apply { style = Paint.Style.STROKE; strokeWidth = 1.5f * px; color = android.graphics.Color.BLACK; isAntiAlias = true }
             val dash = Paint(ink).apply { color = android.graphics.Color.WHITE; pathEffect = DashPathEffect(floatArrayOf(5 * px, 5 * px), 0f) }

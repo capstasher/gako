@@ -118,6 +118,8 @@ data class Layer(
      * as [mode] and [legacy], so modes GAKO draws as Normal (Dissolve, Behind…) survive a round trip.
      */
     val xcfMode: Int? = null,
+    /** GIMP's layer data GAKO doesn't use (colour tag, locks, tattoo, parasites…), kept for XCF. */
+    val xcf: XcfLayerData? = null,
     /**
      * Use the mode's legacy form, as GIMP 2.8 and older did: blended and composited in sRGB, which
      * is what most phone apps (and Photoshop) do. Otherwise GIMP 2.10+'s, which composites in linear
@@ -393,6 +395,8 @@ data class DocState(
     val selection: Selection? = null,
     /** Paths that came with the file (and go back into it on save). */
     val paths: List<VectorPath> = emptyList(),
+    /** GIMP's guides, sample points, channels and other image data (see [GimpExtras]). */
+    val gimp: GimpExtras = GimpExtras(),
 ) {
     val active: Layer? get() = layers.firstOrNull { it.id == activeId } ?: layers.lastOrNull()
     val activeIndex: Int get() = layers.indexOfFirst { it.id == activeId }.takeIf { it >= 0 } ?: layers.lastIndex
@@ -464,5 +468,70 @@ object Bitmaps {
         val shader = android.graphics.BitmapShader(mask, android.graphics.Shader.TileMode.DECAL, android.graphics.Shader.TileMode.DECAL)
         if (x != 0f || y != 0f) shader.setLocalMatrix(android.graphics.Matrix().apply { setTranslate(x, y) })
         c.drawPaint(Paint().apply { this.shader = shader; blendMode = BlendMode.DST_IN })
+    }
+}
+
+/** An XCF property kept as it was read: GIMP data GAKO doesn't use but mustn't lose. */
+class XcfProp(val type: Int, val data: ByteArray)
+
+/** An XCF parasite (named data attached to an image or item: comments, ICC profiles, GIMP text…). */
+class XcfParasite(val name: String, val flags: Int, val data: ByteArray)
+
+/**
+ * A layer's XCF data GAKO doesn't use, and the pixels it came with: if those change, GIMP is
+ * told (a GIMP text layer is then marked modified, so GIMP keeps GAKO's pixels).
+ */
+class XcfLayerData(val props: List<XcfProp>, val parasites: List<XcfParasite>, val bitmap: Bitmap, val generation: Int) {
+    fun pixelsChanged(now: Bitmap) = now !== bitmap || now.generationId != generation
+}
+
+/** A GIMP channel: a canvas-sized grey bitmap (red = value) and its XCF properties (colour, opacity…). */
+class Channel(val name: String, val bitmap: Bitmap, val props: List<XcfProp>)
+
+/** A guide line: horizontal at y = [position], or vertical at x = [position]. */
+data class Guide(val horizontal: Boolean, val position: Int)
+
+/** A GIMP sample point at ([x], [y]); [pickMode] is how GIMP reads it (pixel, average…). */
+data class SamplePoint(val x: Int, val y: Int, val pickMode: Int = 0)
+
+/**
+ * The parts of a GIMP image GAKO keeps for the round trip back to GIMP: guides and sample points,
+ * saved channels, and image properties it doesn't use (resolution, units, parasites such as the
+ * comment, ICC profile and metadata, the grid, item sets). Whole-image transforms move guides,
+ * sample points and channels along with the layers ([mapped]).
+ */
+data class GimpExtras(
+    val guides: List<Guide> = emptyList(),
+    val samplePoints: List<SamplePoint> = emptyList(),
+    val channels: List<Channel> = emptyList(),
+    val props: List<XcfProp> = emptyList(),
+) {
+    val isEmpty get() = guides.isEmpty() && samplePoints.isEmpty() && channels.isEmpty() && props.isEmpty()
+
+    /** Moved onto a [w]×[h] canvas through [m] (old canvas → new). Guides that end up slanted go. */
+    fun mapped(m: android.graphics.Matrix, w: Int, h: Int): GimpExtras {
+        if (guides.isEmpty() && samplePoints.isEmpty() && channels.isEmpty()) return this
+        val g = guides.mapNotNull { guide ->
+            val p = guide.position.toFloat()
+            val pts = if (guide.horizontal) floatArrayOf(0f, p, 1000f, p) else floatArrayOf(p, 0f, p, 1000f)
+            m.mapPoints(pts)
+            when {
+                kotlin.math.abs(pts[1] - pts[3]) < 0.01f -> Guide(true, kotlin.math.round(pts[1]).toInt()).takeIf { it.position in 0..h }
+                kotlin.math.abs(pts[0] - pts[2]) < 0.01f -> Guide(false, kotlin.math.round(pts[0]).toInt()).takeIf { it.position in 0..w }
+                else -> null
+            }
+        }
+        val s = samplePoints.mapNotNull { sp ->
+            val pt = floatArrayOf(sp.x + 0.5f, sp.y + 0.5f)
+            m.mapPoints(pt)
+            val x = kotlin.math.floor(pt[0]).toInt(); val y = kotlin.math.floor(pt[1]).toInt()
+            if (x in 0 until w && y in 0 until h) sp.copy(x = x, y = y) else null
+        }
+        val c = channels.map { ch ->
+            val out = Bitmaps.blank(w, h, android.graphics.Color.BLACK)
+            Canvas(out).drawBitmap(ch.bitmap, m, Paint().apply { isFilterBitmap = true })
+            Channel(ch.name, out, ch.props)
+        }
+        return copy(guides = g, samplePoints = s, channels = c)
     }
 }

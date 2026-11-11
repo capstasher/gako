@@ -29,6 +29,10 @@ import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.outlined.PhotoSizeSelectLarge
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.LibraryAdd
+import androidx.compose.material.icons.outlined.BorderClear
+import androidx.compose.material.icons.outlined.BorderInner
+import androidx.compose.material.icons.outlined.BorderOuter
+import androidx.compose.material.icons.outlined.BorderVertical
 import androidx.compose.material.icons.outlined.GridOn
 import androidx.compose.material.icons.outlined.SaveAs
 import androidx.compose.material.icons.outlined.Replay
@@ -262,6 +266,11 @@ fun buildMenus(vm: EditorViewModel, callbacks: MenuCallbacks): List<MenuGroup> {
             act("rot-any", "Arbitrary Rotation…", Icons.Outlined.Straighten) { vm.dialog = Dialog.RotateImage },
             act("flip-h", "Flip Horizontally", Icons.Outlined.SwapHoriz) { vm.flip(true) },
             act("flip-v", "Flip Vertically", Icons.Outlined.SwapVert) { vm.flip(false) },
+        )),
+        MenuGroup("guides", "Guides", Icons.Outlined.BorderInner, listOf(
+            act("guide-new", "New Guide…", Icons.Outlined.BorderVertical) { vm.dialog = Dialog.NewGuide },
+            act("guide-sel", "New Guides from Selection", Icons.Outlined.BorderOuter, hasSelection) { vm.guidesFromSelection() },
+            act("guide-clear", "Remove all Guides", Icons.Outlined.BorderClear, vm.doc?.gimp?.guides?.isNotEmpty() == true) { vm.removeGuides() },
         )),
         act("grid", vm.grid.label, Icons.Outlined.GridOn) { vm.cycleGrid() },
         act("canvas-size", "Canvas Size…", Icons.Outlined.AspectRatio) { vm.dialog = Dialog.CanvasSize },

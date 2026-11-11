@@ -13,7 +13,9 @@ app/src/main/java/io/github/capstasher/gako/
     DocOps.kt      whole-image operations: rotate, flip, crop, canvas size, scale, merge, flatten
     Selections.kt  masks: from paths, combine, invert, outline (marching ants), flood fill, by colour
     OraFile.kt     OpenRaster read/write (layers; masks are baked in)
-    Xcf.kt         GIMP XCF writer (v10, zlib) and reader (v0–v20+, all precisions, RLE/zlib, masks, paths)
+    Xcf.kt         GIMP XCF writer (v10, zlib) and reader (v0–v20+, all precisions, RLE/zlib, masks, paths
+                   old and new, channels, the selection, guides, sample points); what GAKO doesn't use
+                   is kept and written back (DocState.gimp, Layer.xcf)
     PsdReader.kt   Photoshop PSD/PSB reader (layers, masks, modes; groups flattened)
     PsdWriter.kt   layered PSD export (RLE, masks, modes, Unicode names)
   editor/
@@ -142,7 +144,10 @@ supports, so other machines get their own best setup.
 Stage 3 was tested on an Android 15 x86_64 emulator (Pixel 7 profile), driving it with
 `adb shell input` and screenshots, plus:
 
-- **XCF against real GIMP 3.2** (`gimp-console --batch-interpreter=python-fu-eval`): files GAKO
+- **XCF against real GIMP 3.2** (`gimp-console --batch-interpreter=python-fu-eval`): a GIMP 3.2 file with
+  guides, a sample point, a channel, a selection, a comment, 300 dpi, a tagged locked layer, a text
+  layer and a GIMP 3 path item (`assets/gimp/fidelity.xcf`) comes back from GAKO with all of it, as GIMP
+  itself reads it (and `FileRoundTripTest` checks it on every run). Files GAKO
   writes open in GIMP with layers, offsets, modes, masks and the text parasite intact, and GIMP's
   flattened render matches GAKO's export within 0.1% RMSE. Files GIMP writes (8-bit and 16-bit
   linear, masks, groups, hidden layers, multiply at 80%) open in GAKO looking the same.
@@ -166,3 +171,9 @@ Stage 3 was tested on an Android 15 x86_64 emulator (Pixel 7 profile), driving i
   one the tool edits; one past the end means "new"). Path edits aren't undo steps of their own (the tool
   has Undo point); rename/duplicate/reorder/delete are. No guides.
 - ORA bakes masks (the format has none); XCF keeps them.
+- XCF keeps what GAKO doesn't edit (`GimpExtras`, `XcfLayerData`): saved channels, the selection (as
+  GAKO's selection), guides (shown, Image > Guides), sample points (shown), resolution, units, image
+  and item parasites (comment, ICC profile, metadata, grid, GIMP text layers), colour tags, locks,
+  tattoos, item sets. Whole-image transforms move guides, sample points and channels with the layers.
+  A GIMP text layer whose pixels GAKO changes is saved marked modified, so GIMP keeps the pixels.
+  Not kept yet: GIMP 3's layer effects (non-destructive filters), which the layers show without.

@@ -4,6 +4,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import io.github.capstasher.gako.TestImages.document
 import io.github.capstasher.gako.TestImages.maxDiff
 import io.github.capstasher.gako.doc.DocState
+import io.github.capstasher.gako.doc.Guide
 import io.github.capstasher.gako.doc.Layer
 import io.github.capstasher.gako.doc.LayerMode
 import io.github.capstasher.gako.doc.OraFile
@@ -93,6 +94,47 @@ class FileRoundTripTest {
         val back2 = XcfReader.read(ByteArrayInputStream(ByteArrayOutputStream().also { XcfWriter.write(changed, it) }.toByteArray()))
         assertEquals(LayerMode.Screen, back2.named("Top").mode)
         assertEquals(4, back2.named("Top").gimpMode)
+    }
+
+    /**
+     * A file GIMP 3.2 made (`assets/gimp/fidelity.xcf`, XCF 19) with guides, a sample point, a saved
+     * channel, a selection, a comment, 300 dpi, a colour-tagged locked layer with its own parasite, a
+     * GIMP text layer and a path stored as a GIMP 3 path item: GAKO keeps all of it through a save,
+     * and marks the text layer modified once its pixels change.
+     */
+    @Test fun xcfFromGimpKeepsWhatGakoDoesntEdit() {
+        val ctx = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+        val original = ctx.context.assets.open("gimp/fidelity.xcf").use { XcfReader.read(it) }
+        fun check(d: DocState) {
+            assertEquals(setOf(Guide(true, 10), Guide(false, 30), Guide(true, 40)), d.gimp.guides.toSet())
+            assertEquals(listOf(12 to 34), d.gimp.samplePoints.map { it.x to it.y })
+            val ch = d.gimp.channels.single()
+            assertEquals("Saved", ch.name)
+            assertEquals(40, (ch.bitmap.getPixel(10, 5) shr 16) and 255)
+            assertTrue("channel colour and opacity kept", ch.props.any { it.type == 16 } && ch.props.any { it.type == 6 })
+            val sel = d.selection
+            assertNotNull("the selection", sel)
+            assertEquals(android.graphics.Rect(8, 8, 40, 32), sel!!.bounds)
+            assertTrue("300 dpi", d.gimp.props.any { it.type == 19 && java.nio.ByteBuffer.wrap(it.data).float == 300f })
+            assertTrue("the comment", d.gimp.props.any { it.type == 21 && String(it.data, Charsets.ISO_8859_1).contains("Made by GIMP") })
+            val tagged = d.named("Tagged").xcf!!
+            assertTrue("colour tag and lock", tagged.props.any { it.type == 34 } && tagged.props.any { it.type == 28 })
+            assertEquals("kept", String(tagged.parasites.single { it.name == "gako-test-data" }.data))
+            assertTrue("GIMP's text", d.named("Hi").xcf!!.parasites.any { it.name == "gimp-text-layer" })
+            assertEquals("Outline", d.paths.single().name)
+            assertTrue(d.paths.single().strokes.single().closed)
+        }
+        check(original)
+        val again = XcfReader.read(ByteArrayInputStream(ByteArrayOutputStream().also { XcfWriter.write(original, it) }.toByteArray()))
+        check(again)
+        // Paint on GIMP's text layer: GIMP must be told it was modified (flag 2), so it keeps the pixels.
+        fun flags(d: DocState) = d.named("Hi").xcf!!.props.firstOrNull { it.type == 26 }?.let { java.nio.ByteBuffer.wrap(it.data).int } ?: 0
+        assertEquals(0, flags(again) and 2)
+        again.named("Hi").bitmap.setPixel(0, 0, android.graphics.Color.RED)
+        val bytes = ByteArrayOutputStream().also { XcfWriter.write(again, it) }.toByteArray()
+        assertEquals(2, flags(XcfReader.read(ByteArrayInputStream(bytes))) and 2)
+        // For checking in GIMP itself (scripts/gimp_modes_oracle.py has the check).
+        java.io.File(ctx.targetContext.cacheDir, "fidelity-gako.xcf").writeBytes(bytes)
     }
 
     @Test fun psdKeepsLayersGroupsAndMasks() {
