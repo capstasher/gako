@@ -172,7 +172,7 @@ class ToolInput(private val vm: EditorViewModel) {
         down = PointF(x, y)
         lastPressure = pressure
         when (tool) {
-            Tool.Paintbrush, Tool.Pencil, Tool.Airbrush, Tool.Eraser, Tool.DodgeBurn, Tool.Clone -> beginStroke(d, x, y, pressure)
+            Tool.Paintbrush, Tool.Pencil, Tool.Airbrush, Tool.Eraser, Tool.DodgeBurn, Tool.Clone, Tool.Smudge, Tool.Blur -> beginStroke(d, x, y, pressure)
             Tool.RectSelect, Tool.EllipseSelect -> dragRect = RectF(x, y, x, y)
             Tool.FreeSelect -> {
                 lassoPoints = arrayListOf(PointF(x, y))
@@ -199,7 +199,7 @@ class ToolInput(private val vm: EditorViewModel) {
         val d = doc ?: return
         lastPressure = pressure
         when (tool) {
-            Tool.Paintbrush, Tool.Pencil, Tool.Airbrush, Tool.Eraser, Tool.DodgeBurn, Tool.Clone -> {
+            Tool.Paintbrush, Tool.Pencil, Tool.Airbrush, Tool.Eraser, Tool.DodgeBurn, Tool.Clone, Tool.Smudge, Tool.Blur -> {
                 stroke?.let { it.moveTo(x, y, pressure); vm.pixelsChanged() }
             }
             Tool.RectSelect, Tool.EllipseSelect -> dragRect = RectF(min(down.x, x), min(down.y, y), max(down.x, x), max(down.y, y))
@@ -221,7 +221,7 @@ class ToolInput(private val vm: EditorViewModel) {
         val d = doc ?: return
         airJob?.cancel()
         when (tool) {
-            Tool.Paintbrush, Tool.Pencil, Tool.Airbrush, Tool.Eraser, Tool.DodgeBurn, Tool.Clone -> {
+            Tool.Paintbrush, Tool.Pencil, Tool.Airbrush, Tool.Eraser, Tool.DodgeBurn, Tool.Clone, Tool.Smudge, Tool.Blur -> {
                 val s = stroke ?: return
                 stroke = null
                 s.finish(strokeLabel)?.let { vm.record(it) }
@@ -286,7 +286,7 @@ class ToolInput(private val vm: EditorViewModel) {
         val d = doc ?: return
         if (vm.busy != null) return
         when (tool) {
-            Tool.Paintbrush, Tool.Pencil, Tool.Airbrush, Tool.Eraser, Tool.DodgeBurn -> {
+            Tool.Paintbrush, Tool.Pencil, Tool.Airbrush, Tool.Eraser, Tool.DodgeBurn, Tool.Smudge, Tool.Blur -> {
                 beginStroke(d, x, y, 1f)
                 up()
             }
