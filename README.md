@@ -40,7 +40,8 @@ operation) for Android, and puts a touch interface on top designed for one hand 
   File > Save overwrites the project file, and New/Open ask before discarding unsaved work
 - Open XCF from any GIMP version (all precisions, RLE/zlib, masks, groups), Photoshop PSD/PSB with layers
   (8/16-bit RGB or grey, masks, blend modes), ORA, and every image Android decodes
-- Export PNG, JPEG, WebP, HEIF, TIFF, GIF, BMP, TGA, ICO, PPM, ORA, at full size or smaller; share; "Open with GAKO"
+- Export PNG, JPEG, WebP, HEIF, TIFF, GIF, BMP, TGA, ICO, PPM, ORA and layered PSD, at full size or smaller;
+  share; "Open with GAKO"
 - Take a photo straight into GAKO; a photo's EXIF (camera, date, exposure) carries over to JPEG/PNG/WebP
   exports, its location only if you ask
 - Unsaved work is kept in a recovery file and restored if Android closes the app

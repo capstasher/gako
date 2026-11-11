@@ -1,0 +1,156 @@
+package io.github.capstasher.gako.doc
+
+import android.graphics.Bitmap
+import java.io.ByteArrayOutputStream
+import java.io.DataOutputStream
+import java.io.OutputStream
+
+/**
+ * Photoshop .psd with layers: 8-bit RGB, RLE-compressed, each layer with its position, name,
+ * opacity, visibility, blend mode and layer mask, plus the flattened image for viewers that only
+ * read that.
+ */
+object PsdWriter {
+
+    private val modes = mapOf(
+        LayerMode.Normal to "norm", LayerMode.Multiply to "mul ", LayerMode.Screen to "scrn", LayerMode.Overlay to "over",
+        LayerMode.SoftLight to "sLit", LayerMode.HardLight to "hLit", LayerMode.Dodge to "div ", LayerMode.Burn to "idiv",
+        LayerMode.Darken to "dark", LayerMode.Lighten to "lite", LayerMode.Addition to "lddg", LayerMode.Difference to "diff",
+        LayerMode.Exclusion to "smud", LayerMode.Hue to "hue ", LayerMode.Saturation to "sat ", LayerMode.Color to "colr",
+        LayerMode.Luminosity to "lum ",
+    )
+
+    fun write(doc: DocState, out: OutputStream) {
+        val o = DataOutputStream(out.buffered(1 shl 16))
+        o.writeBytes("8BPS"); o.writeShort(1); o.write(ByteArray(6))
+        o.writeShort(4)                              // R, G, B and transparency
+        o.writeInt(doc.height); o.writeInt(doc.width)
+        o.writeShort(8); o.writeShort(3)             // 8-bit RGB
+        o.writeInt(0)                                // colour mode data
+        o.writeInt(0)                                // image resources
+
+        // Layer and mask information.
+        val info = ByteArrayOutputStream()
+        val li = DataOutputStream(info)
+        li.writeShort(-doc.layers.size)              // negative: the merged image's alpha is transparency
+        val channelData = ArrayList<List<ByteArray>>()
+        for (l in doc.layers) {
+            val planes = planesOf(l.bitmap)
+            val mask = l.mask?.let { redPlane(it) }
+            val encoded = (planes.map { rle(it, l.width, l.height) }) + listOfNotNull(mask?.let { rle(it, l.width, l.height) })
+            channelData += encoded
+            li.writeInt(l.y); li.writeInt(l.x); li.writeInt(l.y + l.height); li.writeInt(l.x + l.width)
+            li.writeShort(encoded.size)
+            val ids = intArrayOf(-1, 0, 1, 2) + if (mask != null) intArrayOf(-2) else intArrayOf()
+            for ((k, id) in ids.withIndex()) { li.writeShort(id); li.writeInt(encoded[k].size) }
+            li.writeBytes("8BIM")
+            li.writeBytes(modes[l.mode] ?: "norm")
+            li.writeByte((l.opacity * 255).toInt().coerceIn(0, 255))
+            li.writeByte(0)                          // clipping
+            li.writeByte(if (l.visible) 0 else 2)    // flags: hidden
+            li.writeByte(0)
+            val extra = ByteArrayOutputStream()
+            val ex = DataOutputStream(extra)
+            if (mask != null) {
+                ex.writeInt(20)
+                ex.writeInt(l.y); ex.writeInt(l.x); ex.writeInt(l.y + l.height); ex.writeInt(l.x + l.width)
+                ex.writeByte(255)                    // outside the mask: shown
+                ex.writeByte(if (l.maskEnabled) 0 else 2)
+                ex.writeShort(0)                     // padding
+            } else ex.writeInt(0)
+            ex.writeInt(0)                           // blending ranges
+            val name = l.name.toByteArray(Charsets.ISO_8859_1).let { if (it.size > 255) it.copyOf(255) else it }
+            ex.writeByte(name.size); ex.write(name)
+            repeat((4 - (name.size + 1) % 4) % 4) { ex.writeByte(0) }
+            // The real (Unicode) name.
+            val uni = ByteArrayOutputStream().also { u ->
+                DataOutputStream(u).apply { writeInt(l.name.length); l.name.forEach { writeChar(it.code) } }
+            }.toByteArray()
+            ex.writeBytes("8BIM"); ex.writeBytes("luni"); ex.writeInt(uni.size); ex.write(uni)
+            ex.flush()
+            li.writeInt(extra.size()); li.write(extra.toByteArray())
+        }
+        for (chans in channelData) for (c in chans) li.write(c)
+        li.flush()
+        var layerInfo = info.toByteArray()
+        if (layerInfo.size % 2 != 0) layerInfo += 0
+        o.writeInt(4 + layerInfo.size + 4)           // whole section
+        o.writeInt(layerInfo.size)
+        o.write(layerInfo)
+        o.writeInt(0)                                // global layer mask info
+
+        // The flattened image: one RLE block for all four planes.
+        val flat = Compositor.flatten(doc)
+        val (fa, fr, fg, fb) = planesOf(flat)
+        val rows = listOf(fr, fg, fb, fa).map { rleRows(it, doc.width, doc.height) }
+        o.writeShort(1)
+        for (r in rows) for (row in r) o.writeShort(row.size)
+        for (r in rows) for (row in r) o.write(row)
+        o.flush()
+    }
+
+    /** A, R, G, B planes (unpremultiplied), in Photoshop's channel order -1, 0, 1, 2. */
+    private fun planesOf(b: Bitmap): List<ByteArray> {
+        val w = b.width
+        val h = b.height
+        val a = ByteArray(w * h); val r = ByteArray(w * h); val g = ByteArray(w * h); val bl = ByteArray(w * h)
+        val row = IntArray(w)
+        for (y in 0 until h) {
+            b.getPixels(row, 0, w, 0, y, w, 1)
+            for (x in 0 until w) {
+                val p = row[x]; val i = y * w + x
+                a[i] = (p ushr 24).toByte(); r[i] = (p shr 16).toByte(); g[i] = (p shr 8).toByte(); bl[i] = p.toByte()
+            }
+        }
+        // The flattened image wants R, G, B, A; layers want A, R, G, B — callers pick.
+        return listOf(a, r, g, bl)
+    }
+
+    private fun redPlane(b: Bitmap): ByteArray {
+        val w = b.width
+        val out = ByteArray(w * b.height)
+        val row = IntArray(w)
+        for (y in 0 until b.height) {
+            b.getPixels(row, 0, w, 0, y, w, 1)
+            for (x in 0 until w) out[y * w + x] = (row[x] shr 16).toByte()
+        }
+        return out
+    }
+
+    /** A channel's data: compression 1, the row byte counts, then the PackBits rows. */
+    private fun rle(plane: ByteArray, w: Int, h: Int): ByteArray {
+        val rows = rleRows(plane, w, h)
+        val bos = ByteArrayOutputStream()
+        val d = DataOutputStream(bos)
+        d.writeShort(1)
+        for (r in rows) d.writeShort(r.size)
+        for (r in rows) d.write(r)
+        d.flush()
+        return bos.toByteArray()
+    }
+
+    private fun rleRows(plane: ByteArray, w: Int, h: Int): List<ByteArray> = List(h) { y -> packBits(plane, y * w, w) }
+
+    /** PackBits: runs of 2–128 equal bytes, literals of 1–128. */
+    private fun packBits(src: ByteArray, start: Int, n: Int): ByteArray {
+        val out = ByteArrayOutputStream(n / 2 + 8)
+        var i = 0
+        while (i < n) {
+            var run = 1
+            while (i + run < n && run < 128 && src[start + i + run] == src[start + i]) run++
+            if (run >= 2) {
+                out.write(1 - run)
+                out.write(src[start + i].toInt())
+                i += run
+            } else {
+                var lit = 1
+                while (i + lit < n && lit < 128 &&
+                    !(i + lit + 1 < n && src[start + i + lit] == src[start + i + lit + 1])) lit++
+                out.write(lit - 1)
+                out.write(src, start + i, lit)
+                i += lit
+            }
+        }
+        return out.toByteArray()
+    }
+}
