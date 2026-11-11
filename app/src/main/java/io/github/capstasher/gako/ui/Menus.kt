@@ -28,6 +28,7 @@ import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.outlined.PhotoSizeSelectLarge
 import androidx.compose.material.icons.outlined.Save
+import androidx.compose.material.icons.outlined.GridOn
 import androidx.compose.material.icons.outlined.SaveAs
 import androidx.compose.material.icons.outlined.Replay
 import androidx.compose.material.icons.outlined.History
@@ -252,6 +253,7 @@ fun buildMenus(vm: EditorViewModel, callbacks: MenuCallbacks): List<MenuGroup> {
             act("flip-h", "Flip Horizontally", Icons.Outlined.SwapHoriz) { vm.flip(true) },
             act("flip-v", "Flip Vertically", Icons.Outlined.SwapVert) { vm.flip(false) },
         )),
+        act("grid", vm.grid.label, Icons.Outlined.GridOn) { vm.cycleGrid() },
         act("canvas-size", "Canvas Size…", Icons.Outlined.AspectRatio) { vm.dialog = Dialog.CanvasSize },
         act("scale-image", "Scale Image…", Icons.Outlined.PhotoSizeSelectLarge) { vm.dialog = Dialog.ScaleImage },
         act("crop-sel", "Crop to Selection", Icons.Outlined.Crop, hasSelection) { vm.cropToSelection() },

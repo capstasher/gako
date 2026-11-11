@@ -51,7 +51,8 @@ operation) for Android, and puts a touch interface on top designed for one hand 
 **Phone-first UI**
 - GIMP's menus (File, Edit, Select, Image, Layers, Colours, Filters) along the bottom edge, nested for thumbs;
   a side rail on landscape screens; tablets and unfolded foldables also keep a Layers dock open
-- A floating dock with the current tool, FG/BG colours and undo/redo; tool options in one strip above the menus
+- A floating dock with the current tool, FG/BG colours, active layer and undo/redo; tool options in one strip
+  above the menus; a pixel grid when zoomed to 800%+, and an optional thirds or square grid (Image menu)
 - Twist with two fingers to turn the view (snaps back to straight); pens: pressure, the eraser end erases,
   and once a pen is used fingers only navigate (palm rejection)
 - Hardware keyboards get GIMP's shortcuts (Ctrl+Z/S/C/V/A, tool letters, [ ] brush size, Enter/Esc)

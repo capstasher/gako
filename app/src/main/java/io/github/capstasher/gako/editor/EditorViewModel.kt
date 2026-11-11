@@ -137,6 +137,16 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var curves by mutableStateOf<CurvesSession?>(null); internal set
     var dialog by mutableStateOf<Dialog?>(null)
 
+    enum class Grid(val label: String) { Off("Grid: Off"), Thirds("Grid: Thirds"), Squares("Grid: Squares") }
+    /** An overlay grid for lining things up (not part of the image). */
+    var grid by mutableStateOf(runCatching { Grid.valueOf(app.getSharedPreferences("view", 0).getString("grid", "Off")!!) }.getOrDefault(Grid.Off))
+        private set
+
+    fun cycleGrid() {
+        grid = Grid.entries[(grid.ordinal + 1) % Grid.entries.size]
+        getApplication<Application>().getSharedPreferences("view", 0).edit().putString("grid", grid.name).apply()
+    }
+
     /** Tools, filters and curves work on the active layer's mask instead of its pixels. */
     var editMask by mutableStateOf(false)
         private set
