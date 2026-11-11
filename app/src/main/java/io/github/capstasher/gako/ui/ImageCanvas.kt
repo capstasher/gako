@@ -38,6 +38,7 @@ import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.padding
@@ -79,7 +80,8 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
     // The unsnapped angle during a twist, so snapping to straight doesn't stick.
     var rawAngle by remember { mutableFloatStateOf(0f) }
 
-    androidx.compose.foundation.layout.Box(modifier.fillMaxSize()) {
+    // Clipped: zoomed in, the image must not spill over the bars around the canvas.
+    androidx.compose.foundation.layout.Box(modifier.fillMaxSize().clipToBounds()) {
     Canvas(
         Modifier
             .fillMaxSize()
@@ -289,6 +291,40 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
             }
             nc.restoreToCount(iso)
             nc.restore()
+
+            // ---- grids: the pixel grid when zoomed right in, and the optional thirds/squares grid
+            val visible = RectF(0f, 0f, size.width, size.height).also { r ->
+                Matrix().also { view.invert(it) }.mapRect(r)
+                if (!r.intersect(0f, 0f, d.width.toFloat(), d.height.toFloat())) r.setEmpty()
+            }
+            if (s >= 8f && !visible.isEmpty) {
+                val pg = Paint().apply { color = android.graphics.Color.argb(70, 128, 128, 128); strokeWidth = 0f }
+                for (x in kotlin.math.floor(visible.left).toInt()..kotlin.math.ceil(visible.right).toInt())
+                    nc.drawLine(x.toFloat(), visible.top, x.toFloat(), visible.bottom, pg)
+                for (y in kotlin.math.floor(visible.top).toInt()..kotlin.math.ceil(visible.bottom).toInt())
+                    nc.drawLine(visible.left, y.toFloat(), visible.right, y.toFloat(), pg)
+            }
+            when (vm.grid) {
+                EditorViewModel.Grid.Thirds -> {
+                    val g = Paint().apply { color = android.graphics.Color.argb(150, 255, 255, 255); strokeWidth = 1.2f * px }
+                    val sh = Paint().apply { color = android.graphics.Color.argb(110, 0, 0, 0); strokeWidth = 3f * px }
+                    for (k in 1..2) {
+                        val x = d.width * k / 3f
+                        val y = d.height * k / 3f
+                        nc.drawLine(x, 0f, x, d.height.toFloat(), sh); nc.drawLine(x, 0f, x, d.height.toFloat(), g)
+                        nc.drawLine(0f, y, d.width.toFloat(), y, sh); nc.drawLine(0f, y, d.width.toFloat(), y, g)
+                    }
+                }
+                EditorViewModel.Grid.Squares -> {
+                    val step = niceGridStep(maxOf(d.width, d.height) / 16f)
+                    val g = Paint().apply { color = android.graphics.Color.argb(120, 255, 255, 255); strokeWidth = 1f * px }
+                    var x = step
+                    while (x < d.width) { nc.drawLine(x, 0f, x, d.height.toFloat(), g); x += step }
+                    var y = step
+                    while (y < d.height) { nc.drawLine(0f, y, d.width.toFloat(), y, g); y += step }
+                }
+                EditorViewModel.Grid.Off -> Unit
+            }
 
             // ---- overlays
             val ink = Paint().apply { style = Paint.Style.STROKE; strokeWidth = 1.5f * px; color = android.graphics.Color.BLACK; isAntiAlias = true }
@@ -504,6 +540,13 @@ private fun drawCrop(nc: android.graphics.Canvas, r: RectF, d: DocState, px: Flo
     }
     @Suppress("unused") val unused = max(0f, 0f)
     @Suppress("unused") val m = Matrix()
+}
+
+/** 1, 2, 5, 10, 20, 50… pixels: the round number nearest [raw]. */
+private fun niceGridStep(raw: Float): Float {
+    var m = 1f
+    while (m * 10 <= raw) m *= 10
+    return listOf(1f, 2f, 5f, 10f).map { it * m }.minByOrNull { kotlin.math.abs(it - raw) } ?: raw
 }
 
 /** [v] turned by [deg] degrees (clockwise on screen, like Canvas.rotate). */
