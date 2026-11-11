@@ -99,7 +99,7 @@ fun ToolOptionsBar(vm: EditorViewModel) {
         Tool.Pencil -> listOf(size, opacity)
         Tool.Airbrush -> listOf(size, opacity, rate)
         Tool.DodgeBurn -> listOf(size, exposure, hardness)
-        Tool.Smudge, Tool.Blur -> listOf(size, strength, hardness)
+        Tool.Smudge, Tool.Blur, Tool.Warp -> listOf(size, strength, hardness)
         Tool.RectSelect -> listOf(feather, corners)
         Tool.SelectBrush -> listOf(size, hardness, feather)
         Tool.EllipseSelect, Tool.FreeSelect -> listOf(feather)
@@ -231,6 +231,9 @@ fun ToolOptionsBar(vm: EditorViewModel) {
                     ApplyButton { vm.input.applyCrop() }
                     IconButton(onClick = { vm.input.startCrop() }) { Icon(Icons.Outlined.RestartAlt, "Reset", tint = Gako.Muted) }
                     CropAspect.entries.forEach { a -> OptChip(a.label, o.cropAspect == a) { set { it.copy(cropAspect = a) } } }
+                }
+                Tool.Warp -> io.github.capstasher.gako.tools.WarpMode.entries.forEach { m ->
+                    OptChip(m.label, o.warpMode == m) { set { it.copy(warpMode = m) } }
                 }
                 Tool.Transform -> {
                     val d = vm.doc

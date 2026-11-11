@@ -42,6 +42,7 @@ import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.ceil
 import kotlin.math.roundToInt
 import kotlin.math.sign
 import kotlin.math.sin
@@ -122,6 +123,13 @@ class ToolInput(private val vm: EditorViewModel) {
     private var transformState by mutableStateOf<LayerTransform?>(null)
 
     private var stroke: PaintStroke? = null
+    /** Warp Transform's mesh; it lasts across strokes until something else changes the layer. */
+    private var warp: io.github.capstasher.gako.tools.Warp? = null
+    private var warpRevision = -1
+    private var warpOnMask = false
+    private var warpLast: PointF? = null
+    /** Where the Warp brush is, while a warp stroke is under way (canvas pixels). */
+    var warpAt by mutableStateOf<PointF?>(null); private set
     private var strokeLabel = ""
     private var smoothed: PointF? = null
     private var lastRaw: PointF? = null
@@ -228,11 +236,12 @@ class ToolInput(private val vm: EditorViewModel) {
     }
 
     /** A brush stroke is under way. */
-    val stroking: Boolean get() = stroke != null
+    val stroking: Boolean get() = stroke != null || warp?.strokeActive == true
 
     /** The stroke in progress, for the canvas to draw from its tiles (null otherwise). */
-    val liveStroke: PaintStroke? get() = stroke
-    val liveStrokeOnMask: Boolean get() = strokeOnMask
+    val liveStroke: io.github.capstasher.gako.tools.LiveView?
+        get() = stroke ?: warp?.takeIf { it.strokeActive }
+    val liveStrokeOnMask: Boolean get() = if (stroke != null) strokeOnMask else warpOnMask
 
     fun hasPendingEdit() = (tool == Tool.Transform && transformState?.changed == true) ||
         (tool == Tool.Crop && cropState != null)
@@ -241,6 +250,9 @@ class ToolInput(private val vm: EditorViewModel) {
     fun reset() {
         stroke?.let { it.cancel(); vm.pixelsChanged() }
         stroke = null
+        warp?.let { if (it.strokeActive) { it.cancelStroke(); vm.pixelsChanged() } }
+        warp = null
+        warpAt = null
         airJob?.cancel()
         dragRect = null
         lasso = null
@@ -286,6 +298,7 @@ class ToolInput(private val vm: EditorViewModel) {
                 mode = hitTransform(t, x, y, tol)
             }
             Tool.Paths -> path.down(x, y, tol)
+            Tool.Warp -> beginWarp(d, x, y)
             Tool.SelectBrush -> {
                 val m = try { Bitmap.createBitmap(d.width, d.height, Bitmap.Config.ALPHA_8) } catch (e: OutOfMemoryError) { return }
                 selStroke = m
@@ -350,6 +363,7 @@ class ToolInput(private val vm: EditorViewModel) {
             Tool.Crop -> dragCrop(d, x, y)
             Tool.Transform -> dragTransform(x, y)
             Tool.Paths -> path.move(x, y)
+            Tool.Warp -> warpTo(x, y)
             Tool.SelectBrush -> selDab(x, y)
             else -> Unit
         }
@@ -407,6 +421,7 @@ class ToolInput(private val vm: EditorViewModel) {
                 applyGradient(a, b)
             }
             Tool.Paths -> path.up()
+            Tool.Warp -> endWarp()
             Tool.SelectBrush -> {
                 val m = selStroke ?: return
                 selStroke = null
@@ -440,6 +455,8 @@ class ToolInput(private val vm: EditorViewModel) {
         airJob?.cancel()
         stroke?.let { it.cancel(); vm.pixelsChanged() }
         stroke = null
+        warp?.let { if (it.strokeActive) { it.cancelStroke(); vm.pixelsChanged() } }
+        warpAt = null
         dragRect = null
         lasso = null
         gradient = null
@@ -527,6 +544,87 @@ class ToolInput(private val vm: EditorViewModel) {
                 }
             }
         }
+    }
+
+    // ------------------------------------------------------------ warp
+
+    private fun beginWarp(d: DocState, x: Float, y: Float) {
+        if (vm.refuseGroup(d)) return
+        val layer = vm.targetOf(d) ?: return
+        if (!layer.visible) { vm.say("“${layer.name}” is hidden"); return }
+        // Warping turns a text layer into an ordinary one.
+        val target = if (layer.text != null) layer.copy(text = null).also { vm.silently(d.replace(it)) } else layer
+        val onMask = vm.editingMask
+        val bmp = if (onMask) target.mask ?: return else target.bitmap
+        val w = warp
+        // A new mesh unless this one still matches the layer exactly as the last warp stroke left it.
+        if (w == null || w.layerId != target.id || w.bmp !== bmp || warpRevision != vm.revision || warpOnMask != onMask) {
+            warp = null
+            warp = try { io.github.capstasher.gako.tools.Warp(target.id, bmp) } catch (e: OutOfMemoryError) {
+                vm.say("Not enough memory to warp a layer this big"); return
+            }
+            warpOnMask = onMask
+        }
+        warp!!.beginStroke()
+        warpLast = PointF(x, y)
+        warpAt = PointF(x, y)
+        if (options.warpMode != io.github.capstasher.gako.tools.WarpMode.Move) warpDab(x, y, 0f, 0f)
+        vm.pixelsChanged()
+        // Grow, shrink, swirl, erase and smooth keep working while the finger rests.
+        if (options.warpMode != io.github.capstasher.gako.tools.WarpMode.Move) {
+            airJob = vm.viewModelScope.launch {
+                while (isActive) {
+                    delay(40)
+                    val p = warpLast ?: break
+                    if (warp?.strokeActive != true) break
+                    warpDab(p.x, p.y, 0f, 0f)
+                    vm.pixelsChanged()
+                }
+            }
+        }
+    }
+
+    /** One dab at canvas point ([x], [y]); the mesh works in layer pixels. */
+    private fun warpDab(x: Float, y: Float, dx: Float, dy: Float) {
+        val w = warp ?: return
+        val l = doc?.layer(w.layerId) ?: return
+        try {
+            w.dab(options.warpMode, x - l.x, y - l.y, dx, dy, options.size / 2f, options.strength, options.hardness)
+        } catch (e: OutOfMemoryError) {
+            vm.say("Not enough memory for that warp; try a smaller brush")
+        }
+    }
+
+    private fun warpTo(x: Float, y: Float) {
+        val w = warp ?: return
+        if (!w.strokeActive) return
+        val last = warpLast ?: return
+        val dist = hypot(x - last.x, y - last.y)
+        // Small steps, so the push follows the finger's path.
+        val step = max(1f, options.size / 8f)
+        val n = max(1, ceil(dist / step).toInt())
+        for (k in 1..n) {
+            val px = last.x + (x - last.x) * k / n
+            val py = last.y + (y - last.y) * k / n
+            warpDab(px, py, (x - last.x) / n, (y - last.y) / n)
+        }
+        warpLast = PointF(x, y)
+        warpAt = PointF(x, y)
+        vm.pixelsChanged()
+    }
+
+    private fun endWarp() {
+        airJob?.cancel()
+        warpAt = null
+        val w = warp ?: return
+        if (!w.strokeActive) return
+        val patch = try { w.endStroke("Warp Transform") } catch (e: OutOfMemoryError) {
+            w.cancelStroke(); warp = null; vm.pixelsChanged()
+            vm.say("Not enough memory to finish that warp"); return
+        }
+        patch?.let { vm.record(if (warpOnMask) it.forMask() else it) }
+        vm.pixelsChanged()
+        warpRevision = vm.revision
     }
 
     /** A stroke ran out of memory: undo it and say so, rather than crash. */
