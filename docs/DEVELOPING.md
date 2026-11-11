@@ -84,7 +84,8 @@ Stage 3 was tested on an Android 15 x86_64 emulator (Pixel 7 profile), driving i
 
 ## Known limits / next steps
 
-- Layer groups are flattened into their children on XCF import; no group UI.
+- Layer groups are flattened into their children on XCF/PSD import (a hidden or faded group hides or fades
+  its children; a group's blend mode is lost); no group UI.
 - Filters that grow a layer (drop shadow…) grow it only within the canvas.
 - During a stroke the canvas draws the pre-stroke copy plus 256 px tiles; other edits on huge layers
   still re-upload the whole texture once per change.
