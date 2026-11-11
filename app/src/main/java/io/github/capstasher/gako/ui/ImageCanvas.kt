@@ -13,6 +13,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.gestures.calculateRotation
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -63,6 +64,8 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
     // 0 means "fit to view"; reset whenever the document changes shape.
     var scale by remember(doc.width, doc.height) { mutableFloatStateOf(0f) }
     var pan by remember(doc.width, doc.height) { mutableStateOf(Offset.Zero) }
+    /** View rotation in degrees (two-finger twist). The image itself doesn't change. */
+    var angle by remember(doc.width, doc.height) { mutableFloatStateOf(0f) }
     val docState by rememberUpdatedState(doc)
     val checker = remember { checkerBrush() }
     val handlePx = with(LocalDensity.current) { 22.dp.toPx() }
@@ -73,6 +76,8 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
     fun fit(w: Float, h: Float) = min(w / docState.width, h / docState.height) * 0.94f
     fun effective(w: Float, h: Float) = if (scale > 0f) scale else fit(w, h)
     var viewSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
+    // The unsnapped angle during a twist, so snapping to straight doesn't stick.
+    var rawAngle by remember { mutableFloatStateOf(0f) }
 
     androidx.compose.foundation.layout.Box(modifier.fillMaxSize()) {
     Canvas(
@@ -84,7 +89,8 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
                     val w = size.width.toFloat()
                     val h = size.height.toFloat()
                     val s = effective(w, h)
-                    return (p - Offset(w / 2, h / 2) - pan) / s + Offset(docState.width / 2f, docState.height / 2f)
+                    val v = rotate(p - Offset(w / 2, h / 2) - pan, -angle)
+                    return v / s + Offset(docState.width / 2f, docState.height / 2f)
                 }
                 fun tolerance() = handlePx / effective(size.width.toFloat(), size.height.toFloat())
 
@@ -107,6 +113,7 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
                     var started = false
                     var moved = false
                     var textStart: Pair<Int, Int>? = null
+                    rawAngle = angle
                     first.consume()
 
                     while (true) {
@@ -126,8 +133,8 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
                                         if (first.uptimeMillis - t0 < 320 && (downPos - p0).getDistance() < slop * 3) {
                                             val w = size.width.toFloat()
                                             val h = size.height.toFloat()
-                                            if (scale > 0f && scale > fit(w, h) * 1.05f) {
-                                                scale = 0f; pan = Offset.Zero
+                                            if ((scale > 0f && scale > fit(w, h) * 1.05f) || angle != 0f) {
+                                                scale = 0f; pan = Offset.Zero; angle = 0f
                                             } else {
                                                 val s0 = effective(w, h)
                                                 val s1 = maxOf(1f, fit(w, h) * 2.5f)
@@ -151,10 +158,15 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
                             val zoom = ev.calculateZoom()
                             val panChange = ev.calculatePan()
                             val centroid = ev.calculateCentroid()
+                            val turn = ev.calculateRotation()
                             val s0 = effective(w, h)
                             val s1 = (s0 * zoom).coerceIn(fit(w, h) * 0.25f, 64f)
                             val c = centroid - Offset(w / 2, h / 2)
-                            pan = c - (c - pan) * (s1 / s0) + panChange
+                            // Keep the point under the fingers under the fingers while zooming and turning.
+                            rawAngle += turn
+                            val snapped = snapAngle(rawAngle)
+                            pan = c + panChange - rotate(c - pan, snapped - angle) * (s1 / s0)
+                            angle = snapped
                             scale = s1
                             ev.changes.forEach { it.consume() }
                             continue
@@ -166,7 +178,7 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
                         when {
                             textSession != null -> if (moved) {
                                 val start = textStart ?: (textSession.x to textSession.y).also { textStart = it }
-                                val d = (ch.position - downPos) / effective(size.width.toFloat(), size.height.toFloat())
+                                val d = toDoc(ch.position) - toDoc(downPos)
                                 textSession.x = start.first + d.x.toInt()
                                 textSession.y = start.second + d.y.toInt()
                             }
@@ -193,7 +205,25 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
         val dw = d.width * s
         val dh = d.height * s
         val topLeft = Offset(size.width / 2 + pan.x - dw / 2, size.height / 2 + pan.y - dh / 2)
-        drawRect(checker, topLeft, Size(dw, dh))
+        // Doc → screen: about the view centre, shifted by pan, turned by angle, scaled.
+        val view = Matrix().apply {
+            setTranslate(-d.width / 2f, -d.height / 2f)
+            postScale(s, s)
+            postRotate(angle)
+            postTranslate(size.width / 2 + pan.x, size.height / 2 + pan.y)
+        }
+        if (angle == 0f) drawRect(checker, topLeft, Size(dw, dh))
+        else drawIntoCanvas { cc ->
+            val corners = floatArrayOf(0f, 0f, d.width.toFloat(), 0f, d.width.toFloat(), d.height.toFloat(), 0f, d.height.toFloat())
+            view.mapPoints(corners)
+            val outline = Path().apply {
+                moveTo(corners[0], corners[1]); lineTo(corners[2], corners[3]); lineTo(corners[4], corners[5]); lineTo(corners[6], corners[7]); close()
+            }
+            cc.nativeCanvas.save()
+            cc.nativeCanvas.clipPath(outline)
+            drawRect(checker, Offset.Zero, size)
+            cc.nativeCanvas.restore()
+        }
 
         @Suppress("UNUSED_VARIABLE") val rev = vm.revision   // repaint on in-place pixel edits
         val preview = vm.preview
@@ -209,8 +239,7 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
         drawIntoCanvas { cc ->
             val nc = cc.nativeCanvas
             nc.save()
-            nc.translate(topLeft.x, topLeft.y)
-            nc.scale(s, s)
+            nc.concat(view)
             val bounds = RectF(0f, 0f, d.width.toFloat(), d.height.toFloat())
             nc.save()
             nc.clipRect(bounds)
@@ -359,14 +388,19 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
             val w = viewSize.width.toFloat()
             val h = viewSize.height.toFloat()
             val pct = (effective(w, h) * 100).roundToInt()
+            val turned = if (angle != 0f) " · ${angle.roundToInt()}°" else ""
             androidx.compose.material3.Text(
-                if (scale == 0f) "Fit · $pct%" else "$pct%",
+                (if (scale == 0f) "Fit · $pct%" else "$pct%") + turned,
                 style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
                 color = Gako.Parchment,
                 modifier = Modifier.align(androidx.compose.ui.Alignment.TopEnd).padding(10.dp)
                     .background(Gako.Ink.copy(alpha = 0.7f), androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
                     .clickable {
-                        if (scale == 0f) { scale = 1f; pan = Offset.Zero } else { scale = 0f; pan = Offset.Zero }
+                        when {
+                            angle != 0f -> { angle = 0f; pan = Offset.Zero }
+                            scale == 0f -> { scale = 1f; pan = Offset.Zero }
+                            else -> { scale = 0f; pan = Offset.Zero }
+                        }
                     }
                     .padding(horizontal = 10.dp, vertical = 4.dp),
             )
@@ -463,6 +497,22 @@ private fun drawCrop(nc: android.graphics.Canvas, r: RectF, d: DocState, px: Flo
     }
     @Suppress("unused") val unused = max(0f, 0f)
     @Suppress("unused") val m = Matrix()
+}
+
+/** [v] turned by [deg] degrees (clockwise on screen, like Canvas.rotate). */
+private fun rotate(v: Offset, deg: Float): Offset {
+    if (deg == 0f) return v
+    val r = Math.toRadians(deg.toDouble())
+    val c = kotlin.math.cos(r).toFloat()
+    val s = kotlin.math.sin(r).toFloat()
+    return Offset(v.x * c - v.y * s, v.x * s + v.y * c)
+}
+
+/** Within 5° of a right angle counts as straight, so the view is easy to put back. */
+private fun snapAngle(a: Float): Float {
+    val norm = ((a % 360f) + 540f) % 360f - 180f
+    for (k in listOf(-180f, -90f, 0f, 90f, 180f)) if (kotlin.math.abs(norm - k) < 5f) return if (k == -180f) 180f else k
+    return norm
 }
 
 private fun checkerBrush(): ShaderBrush {
