@@ -12,6 +12,8 @@
 
 #include <glib.h>
 #include "gako_core.h"
+#include "gako_modes.h"
+#include <stdlib.h>
 
 #define TAG "GAKO"
 #define JNI_FN(name) Java_io_github_capstasher_gako_engine_Engine_##name
@@ -347,5 +349,94 @@ JNI_FN (nativeMatting) (JNIEnv *env, jclass klass,
   if (rc < 0)
     set_last_error (err ? err : "unknown error");
   gako_free (err);
+  return rc;
+}
+
+/* ---- GIMP layer modes ----------------------------------------------------------------------- */
+
+/*
+ * Composites a layer stack the way GIMP does. [pixels]/[masks]: one bitmap (or null) per layer;
+ * [ints]: per layer x, y, parent index, flags (1 visible, 2 group), mode, blend space,
+ * composite space, composite mode; [opacity]: per layer. [out] shows the canvas from out_x, out_y.
+ */
+#define COMPOSITE_INTS 8
+JNIEXPORT jint JNICALL
+JNI_FN (nativeComposite) (JNIEnv *env, jclass klass,
+                          jobjectArray pixels, jobjectArray masks, jintArray ints, jfloatArray opacity,
+                          jobject out_bitmap, jint out_x, jint out_y, jint threads,
+                          jboolean has_background, jint background)
+{
+  AndroidBitmapInfo info;
+  jsize n = (*env)->GetArrayLength (env, pixels);
+  GakoLayer *layers = calloc ((size_t) (n > 0 ? n : 1), sizeof (GakoLayer));
+  jobject *locked = calloc ((size_t) (2 * n + 1), sizeof (jobject));
+  int n_locked = 0, rc = -1;
+  void *out_px = NULL;
+  jint *iv = NULL;
+  jfloat *ov = NULL;
+  (void) klass;
+
+  set_last_error (NULL);
+  if (!layers || !locked) goto done;
+  if ((*env)->GetArrayLength (env, ints) < n * COMPOSITE_INTS || (*env)->GetArrayLength (env, opacity) < n)
+    { set_last_error ("Bad layer description"); goto done; }
+  iv = (*env)->GetIntArrayElements (env, ints, NULL);
+  ov = (*env)->GetFloatArrayElements (env, opacity, NULL);
+  if (!iv || !ov) goto done;
+
+  for (jsize i = 0; i < n; i++)
+    {
+      GakoLayer *l = &layers[i];
+      const jint *p = iv + i * COMPOSITE_INTS;
+      jobject bmp = (*env)->GetObjectArrayElement (env, pixels, i);
+      jobject mask = (*env)->GetObjectArrayElement (env, masks, i);
+      l->x = p[0]; l->y = p[1]; l->parent = p[2];
+      l->visible = (p[3] & 1) != 0; l->group = (p[3] & 2) != 0;
+      l->mode = p[4]; l->blend_space = p[5]; l->composite_space = p[6]; l->composite_mode = p[7];
+      l->opacity = ov[i];
+      if (l->parent < -1 || l->parent >= n) l->parent = -1;
+      if (bmp && !l->group)
+        {
+          void *px = NULL;
+          if (AndroidBitmap_getInfo (env, bmp, &info) != ANDROID_BITMAP_RESULT_SUCCESS ||
+              info.format != ANDROID_BITMAP_FORMAT_RGBA_8888 ||
+              AndroidBitmap_lockPixels (env, bmp, &px) != ANDROID_BITMAP_RESULT_SUCCESS)
+            { set_last_error ("A layer isn't an ARGB_8888 bitmap"); goto done; }
+          locked[n_locked++] = bmp;
+          l->pixels = px; l->stride = (int) info.stride;
+          l->width = (int) info.width; l->height = (int) info.height;
+          if (mask)
+            {
+              void *mpx = NULL;
+              if (AndroidBitmap_getInfo (env, mask, &info) == ANDROID_BITMAP_RESULT_SUCCESS &&
+                  info.format == ANDROID_BITMAP_FORMAT_RGBA_8888 &&
+                  (int) info.width == l->width && (int) info.height == l->height &&
+                  AndroidBitmap_lockPixels (env, mask, &mpx) == ANDROID_BITMAP_RESULT_SUCCESS)
+                {
+                  locked[n_locked++] = mask;
+                  l->mask = mpx; l->mask_stride = (int) info.stride;
+                }
+            }
+        }
+      else if (!l->group)
+        l->visible = 0;
+    }
+
+  if (AndroidBitmap_getInfo (env, out_bitmap, &info) != ANDROID_BITMAP_RESULT_SUCCESS ||
+      info.format != ANDROID_BITMAP_FORMAT_RGBA_8888 ||
+      AndroidBitmap_lockPixels (env, out_bitmap, &out_px) != ANDROID_BITMAP_RESULT_SUCCESS)
+    { set_last_error ("The output isn't an ARGB_8888 bitmap"); goto done; }
+  rc = gako_composite (layers, (int) n, out_x, out_y, (int) info.width, (int) info.height,
+                       out_px, (int) info.stride, threads, has_background, (uint32_t) background);
+  AndroidBitmap_unlockPixels (env, out_bitmap);
+  if (rc < 0) set_last_error ("Out of memory while compositing");
+
+done:
+  for (int k = 0; k < n_locked; k++)
+    AndroidBitmap_unlockPixels (env, locked[k]);
+  if (iv) (*env)->ReleaseIntArrayElements (env, ints, iv, JNI_ABORT);
+  if (ov) (*env)->ReleaseFloatArrayElements (env, opacity, ov, JNI_ABORT);
+  free (layers);
+  free (locked);
   return rc;
 }

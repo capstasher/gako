@@ -81,6 +81,7 @@ wait
 
 # ---- what each device runs
 plans=()
+list=""
 if [ "$n" -gt 1 ] && [ -n "$PY" ]; then
   # The test list, worked out once per test APK.
   list="$STATE/tests-$(hash_of "$TEST_APK")"
@@ -150,7 +151,7 @@ rm -rf "$tmp"
 # Remember how long each test took, for the next split.
 if [ -n "$PY" ]; then
   for d in "${devices[@]}"; do adb -s "$d" logcat -d -v epoch -s TestRunner 2>/dev/null; done |
-    "$PY" scripts/devtest_plan.py record "$TIMINGS" || true
+    "$PY" scripts/devtest_plan.py record "$TIMINGS" ${list:+"$list"} || true
 fi
 
 [ "$failed" = 0 ] || exit 1

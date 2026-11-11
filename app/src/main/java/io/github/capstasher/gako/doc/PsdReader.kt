@@ -17,12 +17,16 @@ import java.util.zip.Inflater
  */
 object PsdReader {
 
+    /** Photoshop's blend modes as GIMP's PSD import maps them. */
     private val modes = mapOf(
         "norm" to LayerMode.Normal, "mul " to LayerMode.Multiply, "scrn" to LayerMode.Screen,
         "over" to LayerMode.Overlay, "sLit" to LayerMode.SoftLight, "hLit" to LayerMode.HardLight,
         "div " to LayerMode.Dodge, "idiv" to LayerMode.Burn, "dark" to LayerMode.Darken, "lite" to LayerMode.Lighten,
         "lddg" to LayerMode.Addition, "diff" to LayerMode.Difference, "smud" to LayerMode.Exclusion,
-        "hue " to LayerMode.Hue, "sat " to LayerMode.Saturation, "colr" to LayerMode.Color, "lum " to LayerMode.Luminosity,
+        "fsub" to LayerMode.Subtract, "fdiv" to LayerMode.Divide, "lbrn" to LayerMode.LinearBurn,
+        "vLit" to LayerMode.VividLight, "pLit" to LayerMode.PinLight, "lLit" to LayerMode.LinearLight,
+        "hMix" to LayerMode.HardMix,
+        "hue " to LayerMode.LchHue, "sat " to LayerMode.LchChroma, "colr" to LayerMode.LchColor, "lum " to LayerMode.LchLightness,
         "pass" to LayerMode.PassThrough,
     )
 
@@ -162,7 +166,7 @@ object PsdReader {
                         val id = Layer.newId()
                         out += Layer(id, r.name.ifBlank { "Group" }, Bitmaps.blank(1, 1), visible = r.visible,
                             opacity = r.opacity / 255f, mode = r.sectionMode ?: r.mode, group = true,
-                            parent = stack.lastOrNull(), expanded = r.section == 1) to false
+                            parent = stack.lastOrNull(), expanded = r.section == 1).gammaBlended() to false
                         stack += id
                         continue
                     }
@@ -171,7 +175,7 @@ object PsdReader {
                 val (bmp, mask) = pixels[i] ?: continue
                 out += Layer(Layer.newId(), r.name.ifBlank { "Layer ${out.size + 1}" }, bmp, r.left, r.top,
                     visible = r.visible, opacity = r.opacity / 255f, mode = if (r.mode == LayerMode.PassThrough) LayerMode.Normal else r.mode,
-                    mask = mask, maskEnabled = !r.maskDisabled, parent = stack.lastOrNull()) to false
+                    mask = mask, maskEnabled = !r.maskDisabled, parent = stack.lastOrNull()).gammaBlended() to false
             }
             // Empty groups would leave nothing to paint on; keep them only if there's a real layer.
             return if (out.any { !it.first.group }) out.asReversed() else emptyList()

@@ -20,14 +20,20 @@ import java.util.zip.ZipOutputStream
  */
 object OraFile {
 
-    private val modeNames = mapOf(
+    /** OpenRaster's (SVG's) compositing operators; the first match is what reading picks. */
+    private val modeNames = listOf(
         LayerMode.Normal to "svg:src-over", LayerMode.Multiply to "svg:multiply", LayerMode.Screen to "svg:screen",
         LayerMode.Overlay to "svg:overlay", LayerMode.Darken to "svg:darken", LayerMode.Lighten to "svg:lighten",
         LayerMode.Dodge to "svg:color-dodge", LayerMode.Burn to "svg:color-burn", LayerMode.HardLight to "svg:hard-light",
         LayerMode.SoftLight to "svg:soft-light", LayerMode.Difference to "svg:difference", LayerMode.Exclusion to "svg:exclusion",
         LayerMode.Hue to "svg:hue", LayerMode.Saturation to "svg:saturation", LayerMode.Color to "svg:color",
-        LayerMode.Luminosity to "svg:luminosity", LayerMode.Addition to "svg:plus",
+        LayerMode.Value to "svg:luminosity", LayerMode.Addition to "svg:plus",
+        LayerMode.LchHue to "svg:hue", LayerMode.LchChroma to "svg:saturation", LayerMode.LchColor to "svg:color",
+        LayerMode.LchLightness to "svg:luminosity", LayerMode.Luminance to "svg:luminosity",
+        LayerMode.LumaDarken to "svg:darken", LayerMode.LumaLighten to "svg:lighten",
     )
+    private fun opFor(mode: LayerMode) = modeNames.firstOrNull { it.first == mode }?.second ?: "svg:src-over"
+    private fun modeFor(op: String?) = modeNames.firstOrNull { it.second == op }?.first ?: LayerMode.Normal
 
     fun write(doc: DocState, out: OutputStream) {
         val zip = ZipOutputStream(out.buffered(256 * 1024))
@@ -57,7 +63,7 @@ object OraFile {
                     xml.append(" visibility=\"${if (l.visible) "visible" else "hidden"}\"")
                     // Pass-through groups aren't isolated (OpenRaster 0.0.5's isolation="auto").
                     xml.append(" isolation=\"${if (l.mode == LayerMode.PassThrough) "auto" else "isolate"}\"")
-                    xml.append(" composite-op=\"${modeNames[l.mode] ?: "svg:src-over"}\"")
+                    xml.append(" composite-op=\"${opFor(l.mode)}\"")
                     if (l.id == doc.activeId) xml.append(" selected=\"true\"")
                     if (!l.expanded) xml.append(" gako-collapsed=\"true\"")
                     xml.append(">\n")
@@ -72,7 +78,7 @@ object OraFile {
             xml.append("$indent<layer name=\"${esc(l.name)}\" src=\"data/layer$i.png\" x=\"${l.x}\" y=\"${l.y}\"")
             xml.append(" opacity=\"${String.format(Locale.US, "%.3f", l.opacity)}\"")
             xml.append(" visibility=\"${if (l.visible) "visible" else "hidden"}\"")
-            xml.append(" composite-op=\"${modeNames[l.mode] ?: "svg:src-over"}\"")
+            xml.append(" composite-op=\"${opFor(l.mode)}\"")
             if (l.id == doc.activeId) xml.append(" selected=\"true\"")
             if (l.lockAlpha) xml.append(" alpha-preserve=\"true\"")
             l.text?.let { t ->
@@ -159,7 +165,7 @@ object OraFile {
                             opacity = attr("opacity")?.toFloatOrNull()?.coerceIn(0f, 1f) ?: 1f,
                             visible = attr("visibility") != "hidden",
                             mode = if (passThrough) LayerMode.PassThrough
-                                   else modeNames.entries.firstOrNull { it.value == attr("composite-op") }?.key ?: LayerMode.Normal,
+                                   else modeFor(attr("composite-op")),
                             selected = attr("selected") == "true", lockAlpha = false, text = null,
                             parent = groups.last(), groupId = id, expanded = attr("gako-collapsed") != "true",
                         )
@@ -189,7 +195,7 @@ object OraFile {
                         y = oy + (attr("y")?.toIntOrNull() ?: 0),
                         opacity = attr("opacity")?.toFloatOrNull()?.coerceIn(0f, 1f) ?: 1f,
                         visible = attr("visibility") != "hidden",
-                        mode = modeNames.entries.firstOrNull { it.value == attr("composite-op") }?.key ?: LayerMode.Normal,
+                        mode = modeFor(attr("composite-op")),
                         selected = attr("selected") == "true",
                         lockAlpha = attr("alpha-preserve") == "true",
                         text = text,
@@ -206,7 +212,7 @@ object OraFile {
         val layers = entries.asReversed().mapNotNull { e ->
             if (e.groupId != null) {
                 return@mapNotNull Layer(e.groupId, e.name, Bitmaps.blank(1, 1), visible = e.visible, opacity = e.opacity,
-                    mode = e.mode, group = true, parent = e.parent, expanded = e.expanded) to e.selected
+                    mode = e.mode, group = true, parent = e.parent, expanded = e.expanded).gammaBlended() to e.selected
             }
             val png = files[e.src] ?: return@mapNotNull null
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -214,7 +220,7 @@ object OraFile {
             if (bounds.outWidth.toLong() * bounds.outHeight > 24_000_000L) error("A layer in that file is too big for GAKO (24 megapixels)")
             val bmp = BitmapFactory.decodeByteArray(png, 0, png.size, opts) ?: return@mapNotNull null
             Layer(Layer.newId(), e.name, Bitmaps.mutable(bmp), e.x, e.y, e.visible, e.opacity, e.mode, e.lockAlpha, e.text,
-                parent = e.parent) to e.selected
+                parent = e.parent).gammaBlended() to e.selected
         }
         if (layers.none { !it.first.group }) error("The OpenRaster file has no layers GAKO can read")
         if (w <= 0 || h <= 0) {

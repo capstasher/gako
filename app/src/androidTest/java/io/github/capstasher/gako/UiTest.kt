@@ -15,6 +15,9 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.isPopup
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -25,6 +28,8 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import io.github.capstasher.gako.TestImages.maxDiff
 import io.github.capstasher.gako.doc.Bitmaps
+import io.github.capstasher.gako.doc.Compositor
+import io.github.capstasher.gako.doc.Layer
 import io.github.capstasher.gako.editor.EditorViewModel
 import io.github.capstasher.gako.tools.BrushShape
 import io.github.capstasher.gako.tools.Tool
@@ -109,7 +114,45 @@ class UiTest {
     private fun line(x1: Float, y1: Float, x2: Float, y2: Float, steps: Int = 12) =
         (0..steps).map { x1 + (x2 - x1) * it / steps to y1 + (y2 - y1) * it / steps }
 
+    /** The colour the screen shows at image pixel ([x], [y]). */
+    private fun onScreen(x: Float, y: Float): Int {
+        val shot = rule.onRoot().captureToImage().asAndroidBitmap()
+        val node = canvas.fetchSemanticsNode().boundsInRoot
+        val p = at(x, y)
+        return shot.getPixel((node.left + p.x).toInt(), (node.top + p.y).toInt())
+    }
+
+    /** Waits until the canvas's exact composite (see Projection) is of the image as it is now. */
+    private fun projected() {
+        rule.waitUntil(10_000) { vm.projection.frame?.let { it.doc === vm.doc && it.revision == vm.revision } == true }
+        rule.waitForIdle()
+    }
+
+    private fun near(want: Int, got: Int, tolerance: Int = 2) =
+        listOf(16, 8, 0).all { abs(((want shr it) and 255) - ((got shr it) and 255)) <= tolerance }
+
     // ------------------------------------------------------------------ tests
+
+    @Test fun canvasShowsWhatGimpDraws() {
+        fresh()
+        // A GIMP 2.10+ (linear light) layer: black at 50% over white is 188 in GIMP (127 blended in sRGB).
+        rule.runOnUiThread {
+            val d = vm.doc!!
+            val top = Layer(Layer.newId(), "Black", Bitmaps.blank(d.width, d.height, Color.BLACK), opacity = 0.5f, legacy = false)
+            vm.doc = d.copy(layers = d.layers + top, activeId = top.id)
+        }
+        projected()
+        assertTrue("shows GIMP's grey", near(Color.rgb(188, 188, 188), onScreen(100f, 100f)))
+        // Painting on it: once the stroke is done the screen shows GIMP's composite of the new pixels.
+        tool(Tool.Paintbrush, size = 30f) { it.copy(opacity = 1f, brushShape = BrushShape.Round, symmetry = io.github.capstasher.gako.tools.Symmetry.Off) }
+        rule.runOnUiThread { vm.setForeground(Color.RED) }
+        canvas.performTouchInput { stroke(line(50f, 200f, 350f, 200f)) }
+        idle()
+        projected()
+        val want = Compositor.sample(vm.doc!!, 200, 200)
+        assertTrue("the stroke as GIMP draws it", want != Color.rgb(188, 188, 188) && near(want, onScreen(200f, 200f)))
+        assertTrue("and the rest unchanged", near(Color.rgb(188, 188, 188), onScreen(100f, 100f)))
+    }
 
     @Test fun pathsListNewDeleteUndo() {
         fresh()

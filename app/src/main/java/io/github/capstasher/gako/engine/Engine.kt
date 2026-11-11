@@ -49,8 +49,22 @@ object Engine {
     ): Int
     @JvmStatic private external fun nativeBounds(operation: String, params: String, width: Int, height: Int): IntArray?
     @JvmStatic private external fun nativeMatting(src: Bitmap, trimap: ByteArray, iterations: Int, alpha: ByteArray): Int
+    @JvmStatic private external fun nativeComposite(
+        pixels: Array<Bitmap?>, masks: Array<Bitmap?>, ints: IntArray, opacity: FloatArray,
+        out: Bitmap, outX: Int, outY: Int, threads: Int, hasBackground: Boolean, background: Int,
+    ): Int
     @JvmStatic private external fun nativeCancel()
     @JvmStatic private external fun nativeLastError(): String?
+
+    /**
+     * Composites a layer stack with GIMP's layer modes (no GEGL needed, so this works before
+     * [start]). See [io.github.capstasher.gako.doc.Compositor.composite] for the arguments.
+     */
+    fun composite(
+        pixels: Array<Bitmap?>, masks: Array<Bitmap?>, ints: IntArray, opacity: FloatArray,
+        out: Bitmap, outX: Int, outY: Int, threads: Int, background: Int? = null,
+    ): Boolean = nativeComposite(pixels, masks, ints, opacity, out, outX, outY, threads,
+        background != null, background ?: 0) == 0
 
     /** Starts GEGL. Returns null on success or an error message. */
     suspend fun start(context: Context): String? = withContext(Dispatchers.IO) {

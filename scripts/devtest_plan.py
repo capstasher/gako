@@ -5,8 +5,8 @@
   devtest_plan.py plan N TIMINGS [FILTER…]  tests on stdin → N lines of comma-separated tests with about
                                             equal total time each (longest first onto the least-loaded
                                             device), from the durations measured on earlier runs
-  devtest_plan.py record TIMINGS            `adb logcat -v epoch -s TestRunner` on stdin → remembers how
-                                            long each test took
+  devtest_plan.py record TIMINGS [LIST]     `adb logcat -v epoch -s TestRunner` on stdin → remembers how
+                                            long each test took (forgetting tests not in LIST, if given)
 """
 import re
 import sys
@@ -60,6 +60,12 @@ def main():
     elif cmd == "record":
         path = sys.argv[2]
         times = load(path)
+        if len(sys.argv) > 3:
+            try:
+                current = {line.strip() for line in open(sys.argv[3]) if line.strip()}
+                times = {k: v for k, v in times.items() if k in current}
+            except OSError:
+                pass
         started = {}
         for line in sys.stdin:
             m = re.match(r"\s*(\d+\.\d+).*TestRunner: (started|finished): (\w+)\(([\w.$]+)\)", line)

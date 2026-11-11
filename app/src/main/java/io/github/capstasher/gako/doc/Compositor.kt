@@ -10,8 +10,54 @@ import android.graphics.RectF
 import kotlin.math.max
 import kotlin.math.roundToInt
 
-/** Software compositing of a [DocState], matching what the on-screen canvas draws. */
+/**
+ * Compositing a [DocState]. [composite] (and so [flatten], [sample]) draws exactly what GIMP
+ * draws, with GIMP's own layer-mode code in the native engine; the Canvas-based functions
+ * ([drawTree], [drawLayer], [layerPaint]) draw the quick GPU approximation the canvas shows while
+ * something is being edited.
+ */
 object Compositor {
+
+    /** Threads for [composite]: all cores, as compositing is short and blocks what's waiting for it. */
+    private val threads = Runtime.getRuntime().availableProcessors().coerceIn(1, 8)
+
+    /**
+     * [layers] composited the way GIMP does into a [w]×[h] bitmap showing the canvas from ([x], [y]),
+     * or null if the native engine isn't there (then callers fall back to the Canvas).
+     */
+    fun composite(layers: List<Layer>, x: Int, y: Int, w: Int, h: Int, into: Bitmap? = null, background: Int? = null): Bitmap? {
+        val out = into ?: Bitmaps.blank(w, h)
+        val index = HashMap<Long, Int>(layers.size * 2)
+        layers.forEachIndexed { i, l -> index[l.id] = i }
+        val n = layers.size
+        val pixels = arrayOfNulls<Bitmap>(n)
+        val masks = arrayOfNulls<Bitmap>(n)
+        val ints = IntArray(n * 8)
+        val opacity = FloatArray(n)
+        layers.forEachIndexed { i, l ->
+            if (!l.group) { pixels[i] = l.bitmap; masks[i] = l.activeMask }
+            val o = i * 8
+            ints[o] = l.x; ints[o + 1] = l.y
+            ints[o + 2] = l.parent?.let { index[it] } ?: -1
+            ints[o + 3] = (if (l.visible) 1 else 0) or (if (l.group) 2 else 0)
+            ints[o + 4] = l.gimpMode
+            ints[o + 5] = l.blendSpace; ints[o + 6] = l.compositeSpace; ints[o + 7] = l.compositeMode
+            opacity[i] = l.opacity
+        }
+        return try {
+            if (io.github.capstasher.gako.engine.Engine.composite(pixels, masks, ints, opacity, out, x, y, threads, background)) out else null
+        } catch (e: UnsatisfiedLinkError) {
+            null
+        }
+    }
+
+    /** Whether the quick Canvas drawing shows [doc] exactly as GIMP would (only plain sRGB Normal layers). */
+    fun canvasIsExact(doc: DocState, layers: List<Layer> = doc.layers): Boolean = layers.all { l ->
+        !l.visible || when {
+            l.group -> l.gimpMode == 0 || (l.mode == LayerMode.PassThrough && l.opacity >= 1f)
+            else -> l.gimpMode == 0 && l.activeMask == null
+        }
+    }
 
     fun layerPaint(layer: Layer, filter: Boolean = true) = Paint().apply {
         alpha = (layer.opacity * 255).roundToInt().coerceIn(0, 255)
@@ -116,6 +162,7 @@ object Compositor {
 
     /** The image as it looks, as one canvas-sized bitmap. */
     fun flatten(doc: DocState, background: Int? = null, layers: List<Layer> = doc.layers): Bitmap {
+        composite(layers, 0, 0, doc.width, doc.height, background = background?.let { it or (0xFF shl 24) })?.let { return it }
         val out = Bitmaps.blank(doc.width, doc.height)
         val c = Canvas(out)
         if (background != null) c.drawColor(background)
@@ -125,10 +172,11 @@ object Compositor {
 
     /** The composite colour (unpremultiplied ARGB) at one canvas pixel. */
     fun sample(doc: DocState, x: Int, y: Int): Int {
-        val px = Bitmaps.blank(1, 1)
-        val c = Canvas(px)
-        c.translate(-x.toFloat(), -y.toFloat())
-        drawLayers(c, doc)
+        val px = composite(doc.layers, x, y, 1, 1) ?: Bitmaps.blank(1, 1).also {
+            val c = Canvas(it)
+            c.translate(-x.toFloat(), -y.toFloat())
+            drawLayers(c, doc)
+        }
         return px.getPixel(0, 0)
     }
 

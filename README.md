@@ -15,12 +15,14 @@ operation) for Android, and puts a touch interface on top designed for one hand 
 
 **Images and layers**
 - Layered documents: new, duplicate, delete, reorder, merge down, merge visible, flatten, new from visible
-- 17 layer modes (multiply, screen, overlay, soft/hard light, dodge, burn, HSL…), opacity, visibility, lock alpha
+- All of GIMP's layer modes (33: multiply, screen, overlay, soft/hard/vivid/pin/linear light, dodge, burn, grain
+  extract/merge, divide, HSV/HSL, LCh, luminance…), each in GIMP 2.10+'s linear-light form or its legacy sRGB one,
+  composited with GIMP's own formulas: images look as they do in GIMP 3 (checked against GIMP 3.2, within 1/255)
 - Layers can be any size and sit anywhere; scale layer, layer to image size, crop to selection or content,
   flip or rotate just the layer (or a whole group), raise to top / lower to bottom, alpha to selection
 - Layer groups: nest, collapse, pass-through or isolated with a blend mode and opacity; the arrows move a layer
   into and out of groups; merge a group; groups survive XCF, PSD and ORA in both directions
-- Layer masks (white, black, from alpha, selection or a grey copy): paint, fill, filter or curve the mask;
+- Opacity, visibility, lock alpha; layer masks (white, black, from alpha, selection or a grey copy): paint, fill, filter or curve the mask;
   disable, apply or delete it. Masks survive XCF in both directions
 - Undo/redo for everything, with GIMP's Undo History; painting only stores the pixels a stroke touched
 - Image: canvas size (with anchor), fit canvas to layers, scale image, crop to selection / content, rotate (90° steps or any angle,
@@ -52,7 +54,7 @@ operation) for Android, and puts a touch interface on top designed for one hand 
   File > Save overwrites the project file, and New/Open ask before discarding unsaved work
 - Open XCF from any GIMP version (all precisions, RLE/zlib, masks, groups, paths), Photoshop PSD/PSB with layers
   (8/16-bit RGB or grey, masks, blend modes), ORA, and every image Android decodes; an XCF saved back keeps
-  each layer's GIMP mode (GAKO draws GIMP 2.10+'s linear-light modes in sRGB, and says so when it shows)
+  each layer's GIMP mode, blend space and composite mode
 - Export PNG, JPEG, WebP, HEIF, TIFF, GIF, BMP, TGA, ICO, PPM, ORA and layered PSD, at full size or smaller;
   share; "Open with GAKO"
 - Take a photo straight into GAKO; a photo's EXIF (camera, date, exposure) carries over to JPEG/PNG/WebP
@@ -74,7 +76,8 @@ operation) for Android, and puts a touch interface on top designed for one hand 
 1. ✅ **Engine**: GEGL on Android, filters on photos
 2. ✅ **Layers**: layered documents, undo, XCF/ORA
 3. ✅ **Tools**: paint, select, transform, crop, curves, levels, text
-4. **More**: linear-light blending for GIMP's newer modes, tiled GEGL buffers for huge images, plug-ins (Script-Fu / Python)
+4. **More**: ✅ GIMP's layer modes exactly (linear light, legacy, LCh), then tiled GEGL buffers for huge images,
+   plug-ins (Script-Fu / Python)
 
 ## Install
 
@@ -112,9 +115,12 @@ See [docs/DEVELOPING.md](docs/DEVELOPING.md) for a map of the code and how it wa
 
 The editor keeps a `DocState` (canvas size, layers bottom to top, active layer, selection). Layers
 are immutable values holding mutable ARGB bitmaps; an edit either swaps a layer's bitmap (filters,
-transforms) or paints into it and records a patch of just the changed rectangle. The canvas
-composites the layers on the GPU every frame; during a stroke or warp only the 256 px tiles that
-changed are re-uploaded.
+transforms) or paints into it and records a patch of just the changed rectangle. Layer modes are
+GIMP's own code (`native/bridge/gako_modes.c`, ported from GIMP 3): exports, merges and the canvas
+all use it, so what you see is what GIMP shows. Images with only sRGB Normal layers are composited
+on the GPU every frame; others show GIMP's composite, refreshed in the background after each edit,
+with the layer being edited drawn live on top of what's below it. During a stroke or warp only the
+256 px tiles that changed are re-uploaded.
 
 
 ```
