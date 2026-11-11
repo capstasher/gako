@@ -57,6 +57,7 @@ object PsdReader {
         var width = 0
         var height = 0
         var channels = 0
+        var mergedHasAlpha = false
 
         fun u8() = buf.get().toInt() and 0xFF
         fun u16() = buf.short.toInt() and 0xFFFF
@@ -65,7 +66,17 @@ object PsdReader {
         fun u32() = buf.int.toLong() and 0xFFFFFFFFL
         fun len() = if (psb) buf.long else u32()
         fun key(): String = String(ByteArray(4).also { buf.get(it) }, Charsets.ISO_8859_1)
-        fun skip(n: Long) { buf.position((buf.position() + n).toInt()) }
+
+        // Every seek is checked: a damaged or hostile file must fail, never loop or seek backwards.
+        fun goTo(pos: Long) {
+            if (pos < 0 || pos > buf.limit()) error("The file is damaged (an offset points outside it)")
+            buf.position(pos.toInt())
+        }
+        fun skip(n: Long) {
+            if (n < 0) error("The file is damaged (negative length)")
+            goTo(buf.position() + n)
+        }
+        fun remaining() = (buf.limit() - buf.position()).toLong()
 
         fun parse(): DocState {
             if (key() != "8BPS") error("Not a Photoshop file")
@@ -77,14 +88,18 @@ object PsdReader {
             width = i32()
             depth = u16()
             mode = u16()
+            val maxSide = if (psb) 300_000 else 30_000
+            if (width !in 1..maxSide || height !in 1..maxSide) error("The file says it's ${width}×$height, which isn't possible")
+            if (width.toLong() * height > 24_000_000L) error("That image is ${width}×$height; GAKO opens up to 24 megapixels")
             if (mode != 3 && mode != 1) error("GAKO opens RGB and greyscale PSDs (this one is ${modeName(mode)})")
             if (depth != 8 && depth != 16) error("GAKO opens 8 and 16-bit PSDs (this one is $depth-bit)")
             skip(u32())          // colour mode data
             skip(u32())          // image resources
             val layerSectionLength = len()
+            if (layerSectionLength < 0 || layerSectionLength > remaining()) error("The file is damaged (layer section)")
             val layerSectionEnd = buf.position() + layerSectionLength
-            val layers = if (layerSectionLength > 0) runCatching { readLayers() }.getOrNull() else null
-            buf.position(layerSectionEnd.toInt())
+            val layers = if (layerSectionLength > 0) runCatching { readLayers(layerSectionEnd) }.getOrNull() else null
+            goTo(layerSectionEnd)
             if (!layers.isNullOrEmpty()) {
                 val list = layers.map { it.first }
                 return DocState(width, height, list, list.last().id)
@@ -95,30 +110,69 @@ object PsdReader {
 
         fun modeName(m: Int) = when (m) { 0 -> "bitmap"; 2 -> "indexed"; 4 -> "CMYK"; 7 -> "multichannel"; 8 -> "duotone"; 9 -> "Lab"; else -> "mode $m" }
 
-        fun readLayers(): List<Pair<Layer, Boolean>> {
+        /** Layer info, or (16/32-bit files) the copy Photoshop keeps in an Lr16/Lr32 block at the end of the section. */
+        fun readLayers(sectionEnd: Long): List<Pair<Layer, Boolean>> {
             val infoLength = len()
-            if (infoLength == 0L) return emptyList()
-            val count = kotlin.math.abs(i16())
-            val records = ArrayList<Record>()
-            repeat(count) { records += readRecord() }
-            // Channel data follows in the same order.
-            val pixels = records.map { r -> readLayerPixels(r) }
-            // PSD lists layers bottom first, as GAKO does. Group markers and empty layers drop out.
-            val out = ArrayList<Pair<Layer, Boolean>>()
-            for ((i, r) in records.withIndex()) {
-                if (r.section != 0) continue
-                val (bmp, mask) = pixels[i] ?: continue
-                out += Layer(Layer.newId(), r.name.ifBlank { "Layer ${out.size + 1}" }, bmp, r.left, r.top,
-                    visible = r.visible, opacity = r.opacity / 255f, mode = r.mode,
-                    mask = mask, maskEnabled = !r.maskDisabled) to false
+            if (infoLength < 0 || buf.position() + infoLength > sectionEnd) error("The file is damaged (layer info)")
+            val infoEnd = buf.position() + infoLength
+            if (infoLength > 0) {
+                val layers = readLayerInfo(infoEnd)
+                if (layers.isNotEmpty()) return layers
             }
-            return out
+            goTo(infoEnd)
+            skip(u32())                                 // global layer mask info
+            // Tagged blocks, rounded to 4 bytes here.
+            while (buf.position() + 12 <= sectionEnd) {
+                val sig = key()
+                if (sig != "8BIM" && sig != "8B64") break
+                val k = key()
+                val l = if (psb && k in longKeys) buf.long else u32()
+                if (l < 0 || buf.position() + l > sectionEnd) break
+                val dataStart = buf.position().toLong()
+                if (k == "Lr16" || k == "Lr32" || k == "Layr") return readLayerInfo(dataStart + l)
+                goTo(dataStart + ((l + 3) and 3L.inv()).coerceAtMost(sectionEnd - dataStart))
+            }
+            return emptyList()
         }
 
-        fun readRecord(): Record {
+        val longKeys = setOf("LMsk", "Lr16", "Lr32", "Layr", "Mt16", "Mt32", "Mtrn", "Alph", "FMsk", "lnk2", "FEid", "FXid", "PxSD")
+
+        fun readLayerInfo(end: Long): List<Pair<Layer, Boolean>> {
+            val raw = i16()
+            mergedHasAlpha = raw < 0
+            val count = kotlin.math.abs(raw)
+            // Every record is at least 34 bytes: a count beyond that can't be real.
+            if (count.toLong() * 34 > end - buf.position()) error("The file is damaged (layer count)")
+            val records = ArrayList<Record>()
+            repeat(count) { records += readRecord(end) }
+            // Channel data follows in the same order.
+            val pixels = records.map { r -> readLayerPixels(r) }
+            // PSD lists layers bottom first, as GAKO does. A group's record comes after (above) its
+            // children, closed by a divider (section 3) below them: walk top-down to know each
+            // layer's groups, so children of a hidden or faded group come out hidden or faded.
+            val out = ArrayList<Pair<Layer, Boolean>>()
+            val stack = ArrayList<Pair<Boolean, Float>>()
+            for (i in records.indices.reversed()) {
+                val r = records[i]
+                when (r.section) {
+                    1, 2 -> { stack += (r.visible && stack.all { it.first }) to (r.opacity / 255f) * (stack.lastOrNull()?.second ?: 1f); continue }
+                    3 -> { if (stack.isNotEmpty()) stack.removeAt(stack.lastIndex); continue }
+                }
+                val (bmp, mask) = pixels[i] ?: continue
+                val shown = r.visible && stack.all { it.first }
+                val opacity = r.opacity / 255f * (stack.lastOrNull()?.second ?: 1f)
+                out += Layer(Layer.newId(), r.name.ifBlank { "Layer ${out.size + 1}" }, bmp, r.left, r.top,
+                    visible = shown, opacity = opacity, mode = r.mode,
+                    mask = mask, maskEnabled = !r.maskDisabled) to false
+            }
+            return out.asReversed()
+        }
+
+        fun readRecord(end: Long): Record {
             val top = i32(); val left = i32(); val bottom = i32(); val right = i32()
             val n = u16()
-            val chans = List(n) { ChannelInfo(i16(), len()) }
+            if (n > 56) error("The file is damaged (channel count)")
+            val chans = List(n) { ChannelInfo(i16(), len()).also { if (it.length < 0 || it.length > end) error("The file is damaged (channel length)") } }
             key()                                   // "8BIM"
             val blend = key()
             val opacity = u8()
@@ -126,17 +180,19 @@ object PsdReader {
             val flags = u8()
             u8()                                    // filler
             val extra = u32()
+            if (buf.position() + extra > end) error("The file is damaged (layer record)")
             val extraEnd = buf.position() + extra
             // Layer mask data.
             var mTop = 0; var mLeft = 0; var mBottom = 0; var mRight = 0; var mDefault = 0; var mDisabled = false
             val maskLen = u32()
+            if (maskLen > extraEnd - buf.position()) error("The file is damaged (layer mask)")
             if (maskLen >= 20) {
-                val start = buf.position()
+                val start = buf.position().toLong()
                 mTop = i32(); mLeft = i32(); mBottom = i32(); mRight = i32()
                 mDefault = u8()
                 val mFlags = u8()
                 mDisabled = mFlags and 2 != 0
-                buf.position((start + maskLen).toInt())
+                goTo(start + maskLen)
             } else skip(maskLen)
             skip(u32())                             // blending ranges
             val nameLen = u8()
@@ -148,12 +204,13 @@ object PsdReader {
                 val sig = key()
                 if (sig != "8BIM" && sig != "8B64") break
                 val k = key()
-                val l = if (psb && k in setOf("LMsk", "Lr16", "Lr32", "Layr", "Mt16", "Mt32", "Mtrn", "Alph", "FMsk", "lnk2", "FEid", "FXid", "PxSD")) buf.long else u32()
+                val l = if (psb && k in longKeys) buf.long else u32()
                 val dataStart = buf.position()
+                if (l < 0 || dataStart + l > extraEnd) break
                 when (k) {
                     "luni" -> {
-                        val chars = u32().toInt()
-                        name = String(CharArray(chars) { buf.char })
+                        val chars = u32()
+                        if (chars in 0..((l - 4) / 2)) name = String(CharArray(chars.toInt()) { buf.char })
                     }
                     "lsct", "lsdk" -> section = i32()
                 }
@@ -162,9 +219,9 @@ object PsdReader {
                 val next = candidates.firstOrNull { p ->
                     p >= extraEnd || (p + 4 <= extraEnd && buf.getInt(p.toInt()).let { it == 0x3842494D || it == 0x38423634 })
                 } ?: extraEnd
-                buf.position(next.coerceAtMost(extraEnd).toInt())
+                goTo(maxOf(next, dataStart + 1L).coerceAtMost(extraEnd))
             }
-            buf.position(extraEnd.toInt())
+            goTo(extraEnd)
             return Record(top, left, bottom, right, chans, modes[blend] ?: LayerMode.Normal, opacity,
                 flags and 2 == 0, name, mTop, mLeft, mBottom, mRight, mDefault, mDisabled, section)
         }
@@ -174,17 +231,19 @@ object PsdReader {
             val planes = HashMap<Int, ByteArray>()
             var maskPlane: ByteArray? = null
             for (c in r.channels) {
-                val start = buf.position()
+                val start = buf.position().toLong()
+                if (c.length > remaining()) error("The file is damaged (channel data)")
                 val isMask = c.id == -2
                 val w = if (isMask) r.maskRight - r.maskLeft else r.w
                 val h = if (isMask) r.maskBottom - r.maskTop else r.h
-                if (w > 0 && h > 0 && c.length >= 2) {
+                if (w > 0 && h > 0 && w.toLong() * h <= 24_000_000L && c.length >= 2) {
                     val data = readChannel(w, h, c.length - 2)
                     if (isMask) maskPlane = data else if (c.id >= -1) planes[c.id] = data
                 }
-                buf.position((start + c.length).toInt())
+                goTo(start + c.length)
             }
             if (r.w <= 0 || r.h <= 0) return null
+            if (r.w.toLong() * r.h > 24_000_000L) error("A layer is too big")
             val n = r.w * r.h
             val px = IntArray(n)
             val red = planes[0]; val green = planes[1] ?: red; val blue = planes[2] ?: red
@@ -214,12 +273,19 @@ object PsdReader {
             val compression = u16()
             val bpc = depth / 8
             val raw = when (compression) {
-                0 -> ByteArray(w * h * bpc).also { buf.get(it, 0, minOf(it.size.toLong(), length).toInt()) }
+                0 -> ByteArray(w * h * bpc).also { buf.get(it, 0, minOf(it.size.toLong(), length, remaining()).toInt()) }
                 1 -> rle(w * bpc, h)
                 2, 3 -> {
+                    if (length > remaining()) error("The file is damaged (compressed channel)")
                     val src = ByteArray(length.toInt()).also { buf.get(it) }
                     val out = ByteArray(w * h * bpc)
-                    Inflater().apply { setInput(src); inflate(out); end() }
+                    val inflater = Inflater()
+                    try {
+                        inflater.setInput(src)
+                        inflater.inflate(out)
+                    } finally {
+                        inflater.end()
+                    }
                     if (compression == 3) unpredict(out, w * bpc, h, bpc)
                     out
                 }
@@ -235,6 +301,7 @@ object PsdReader {
             val counts = IntArray(rows) { if (psb) i32() else u16() }
             val out = ByteArray(rowBytes * rows)
             for (y in 0 until rows) {
+                if (counts[y] < 0 || counts[y] > remaining()) error("The file is damaged (RLE row)")
                 val end = buf.position() + counts[y]
                 var x = 0
                 while (buf.position() < end && x < rowBytes) {
@@ -283,7 +350,9 @@ object PsdReader {
                     1 -> {
                         val out = ByteArray(width * height * bpc)
                         for (y in 0 until height) {
-                            val end = buf.position() + counts!![c * height + y]
+                            val n0 = counts!![c * height + y]
+                            if (n0 < 0 || n0 > remaining()) error("The file is damaged (RLE row)")
+                            val end = buf.position() + n0
                             var x = 0
                             val row = width * bpc
                             while (buf.position() < end && x < row) {
@@ -306,7 +375,9 @@ object PsdReader {
                 val g = if (mode == 3) data[1][i].toInt() and 0xFF else r
                 val b = if (mode == 3) data[2][i].toInt() and 0xFF else r
                 val aPlane = if (mode == 3) 3 else 1
-                val a = if (planes > aPlane) data[aPlane][i].toInt() and 0xFF else 0xFF
+                // An extra channel is transparency only when the file says so; otherwise it's a
+                // saved selection or spot colour.
+                val a = if (planes > aPlane && mergedHasAlpha) data[aPlane][i].toInt() and 0xFF else 0xFF
                 px[i] = (a shl 24) or (r shl 16) or (g shl 8) or b
             }
             return Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).apply { setPixels(px, 0, width, 0, 0, width, height) }

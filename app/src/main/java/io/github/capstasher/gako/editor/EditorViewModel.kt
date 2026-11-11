@@ -227,6 +227,9 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         viewModelScope.launch {
+            androidx.compose.runtime.snapshotFlow { input.path.points to input.path.closed }.collect { syncPath() }
+        }
+        viewModelScope.launch {
             val error = try {
                 Engine.start(app)
             } catch (t: Throwable) {
@@ -405,6 +408,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         if (after == before) return
         record(Step.Snapshot(label, before, after))
         doc = after
+        reloadPath(before, after)
     }
 
     /** Changes the document without an undo step (e.g. picking the active layer). */
@@ -437,7 +441,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         if (session != null || text != null || curves != null) return
         val step = undoStack.removeLastOrNull() ?: return
         when (step) {
-            is Step.Snapshot -> doc = step.before
+            is Step.Snapshot -> { doc = step.before; reloadPath(step.after, step.before) }
             is Step.Patch -> doc?.layer(step.layerId)?.let { l -> step.target(l)?.let { Bitmaps.put(it, step.before, step.rect.left, step.rect.top) } }
         }
         redoStack.addLast(step)
@@ -454,7 +458,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         input.reset()
         val step = redoStack.removeLastOrNull() ?: return
         when (step) {
-            is Step.Snapshot -> doc = step.after
+            is Step.Snapshot -> { doc = step.after; reloadPath(step.before, step.after) }
             is Step.Patch -> doc?.layer(step.layerId)?.let { l -> step.target(l)?.let { Bitmaps.put(it, step.after, step.rect.left, step.rect.top) } }
         }
         undoStack.addLast(step)
@@ -536,7 +540,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     private fun newDocument(state: DocState, name: String, keepRecovery: Boolean = false) {
         if (!keepRecovery) clearRecovery()
         filterBrush = null
-        input.path.load(state.paths.firstOrNull())
+        input.path.load(state.paths.firstOrNull()?.strokes?.firstOrNull())
         metadata = null
         projectUri = null
         projectFormat = null
@@ -666,8 +670,39 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun baseName() = documentName.substringBeforeLast('.').ifBlank { "untitled" }
 
-    /** The document with the Paths tool's path in it, for writing files. */
-    private fun withPaths(d: DocState): DocState = d.copy(paths = input.path.toVector()?.let { listOf(it) } ?: emptyList())
+    /** The document as it is (the Paths tool keeps it up to date). */
+    private fun withPaths(d: DocState): DocState = d
+
+    /**
+     * The Paths tool edits the first stroke of the document's first path; the others are kept as
+     * they came from the file. Called whenever the tool's path changes.
+     */
+    private fun syncPath() {
+        val d = doc ?: return
+        val edited = input.path.toStroke()
+        val first = d.paths.firstOrNull()
+        val current = first?.strokes?.firstOrNull()
+        if (edited == null && current == null) return
+        if (edited != null && edited.sameAs(current)) return
+        val paths = when {
+            edited != null && first != null -> listOf(io.github.capstasher.gako.doc.VectorPath(first.name, listOf(edited) + first.strokes.drop(1))) + d.paths.drop(1)
+            edited != null -> listOf(io.github.capstasher.gako.doc.VectorPath("Path", listOf(edited)))
+            else -> {
+                // Cleared (or down to one point): drop that stroke, then show the next one, if any.
+                if (input.path.points.isNotEmpty()) return
+                val rest = first!!.strokes.drop(1)
+                (if (rest.isEmpty()) emptyList() else listOf(io.github.capstasher.gako.doc.VectorPath(first.name, rest))) + d.paths.drop(1)
+            }
+        }
+        doc = d.copy(paths = paths)
+        dirty = true
+        if (edited == null) input.path.load(paths.firstOrNull()?.strokes?.firstOrNull())
+    }
+
+    /** After undo/redo or an operation that moved the paths (crop, rotate…), show them in the tool. */
+    private fun reloadPath(before: DocState?, after: DocState?) {
+        if (after != null && before?.paths !== after.paths) input.path.load(after.paths.firstOrNull()?.strokes?.firstOrNull())
+    }
 
     // ---------------------------------------------------------------- recovery
 
@@ -1384,8 +1419,9 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             val dir = Fonts.userDir(getApplication<Application>().filesDir)
             val file = File(dir, name.substringBeforeLast('.').replace(Regex("[^A-Za-z0-9 _-]"), "_") + "." + ext)
             val ok = withContext(Dispatchers.IO) {
+                Fonts.forget(file.path)
                 runCatching { resolver.openInputStream(uri)!!.use { input -> file.outputStream().use { input.copyTo(it) } } }.isSuccess &&
-                    Fonts.load(file.path) != null
+                    Fonts.isFont(file.path) && Fonts.load(file.path) != null
             }
             if (!ok) {
                 file.delete()

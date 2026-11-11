@@ -33,6 +33,8 @@ class PathEditor {
     private var drag: Drag? = null
     private var down = PointF()
     private var start: List<PathPoint> = emptyList()
+    /** Whether the gesture under way saved an undo point (so cancelling it may take one back). */
+    private var pushed = false
 
     private sealed interface Drag {
         data class Anchor(val i: Int) : Drag
@@ -83,8 +85,10 @@ class PathEditor {
         down = PointF(x, y)
         start = points
         val h = hit(x, y, tol)
+        pushed = false
         if (h == null && closed) { drag = null; return }   // a closed path only reshapes
         remember()
+        pushed = true
         drag = h ?: run {
             points = points + PathPoint(x, y)
             start = points
@@ -118,7 +122,8 @@ class PathEditor {
 
     fun cancel() {
         drag = null
-        history.removeLastOrNull()?.let { (p, c) -> points = p; closed = c }
+        if (pushed) history.removeLastOrNull()?.let { (p, c) -> points = p; closed = c }
+        pushed = false
     }
 
     /** A tap: close the path on its first point, otherwise add a corner. */
@@ -144,17 +149,19 @@ class PathEditor {
         closed = !closed
     }
 
-    fun toVector(name: String = "Path"): io.github.capstasher.gako.doc.VectorPath? {
+    /** The path as a stroke for the document (null while it has fewer than two points). */
+    fun toStroke(): io.github.capstasher.gako.doc.PathStroke? {
         if (points.size < 2) return null
         val f = FloatArray(points.size * 6)
         points.forEachIndexed { i, p ->
             f[i * 6] = p.inX; f[i * 6 + 1] = p.inY; f[i * 6 + 2] = p.x; f[i * 6 + 3] = p.y; f[i * 6 + 4] = p.outX; f[i * 6 + 5] = p.outY
         }
-        return io.github.capstasher.gako.doc.VectorPath(name, f, closed)
+        return io.github.capstasher.gako.doc.PathStroke(f, closed)
     }
 
-    /** Replaces the path with one from a file (or none). */
-    fun load(v: io.github.capstasher.gako.doc.VectorPath?) {
+    /** Replaces the path with one from the document (or none). */
+    fun load(v: io.github.capstasher.gako.doc.PathStroke?) {
+        if (v != null && v.sameAs(toStroke())) return
         history.clear()
         drag = null
         if (v == null) { points = emptyList(); closed = false; return }

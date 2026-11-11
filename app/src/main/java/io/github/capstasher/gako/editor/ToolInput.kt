@@ -283,7 +283,12 @@ class ToolInput(private val vm: EditorViewModel) {
                 val k = 1f - options.smoothing.coerceIn(0f, 1f) * 0.9f
                 val p = smoothed?.let { PointF(it.x + (x - it.x) * k, it.y + (y - it.y) * k) } ?: PointF(x, y)
                 smoothed = p
-                s.moveTo(p.x, p.y, pressure)
+                try {
+                    s.moveTo(p.x, p.y, pressure)
+                } catch (e: OutOfMemoryError) {
+                    outOfMemory()
+                    return
+                }
                 vm.pixelsChanged()
             }
             Tool.RectSelect, Tool.EllipseSelect -> dragRect = RectF(min(down.x, x), min(down.y, y), max(down.x, x), max(down.y, y))
@@ -308,10 +313,16 @@ class ToolInput(private val vm: EditorViewModel) {
         when (tool) {
             Tool.Paintbrush, Tool.Pencil, Tool.Airbrush, Tool.Eraser, Tool.DodgeBurn, Tool.Clone, Tool.Heal, Tool.Smudge, Tool.Blur, Tool.FilterBrush -> {
                 val s = stroke ?: return
-                // Catch up with the finger so the stroke ends where it lifted.
-                if (options.smoothing > 0f) lastRaw?.let { s.moveTo(it.x, it.y, lastPressure) }
-                stroke = null
-                s.finish(strokeLabel)?.let { vm.record(if (strokeOnMask) it.forMask() else it) }
+                try {
+                    // Catch up with the finger so the stroke ends where it lifted.
+                    if (options.smoothing > 0f) lastRaw?.let { s.moveTo(it.x, it.y, lastPressure) }
+                    stroke = null
+                    s.finish(strokeLabel)?.let { vm.record(if (strokeOnMask) it.forMask() else it) }
+                } catch (e: OutOfMemoryError) {
+                    stroke = s
+                    outOfMemory()
+                    return
+                }
                 vm.pixelsChanged()
             }
             Tool.RectSelect, Tool.EllipseSelect -> {
@@ -449,6 +460,15 @@ class ToolInput(private val vm: EditorViewModel) {
                 }
             }
         }
+    }
+
+    /** A stroke ran out of memory: undo it and say so, rather than crash. */
+    private fun outOfMemory() {
+        airJob?.cancel()
+        stroke?.let { runCatching { it.cancel() } }
+        stroke = null
+        vm.pixelsChanged()
+        vm.say("Not enough memory for that stroke; try a smaller brush or image")
     }
 
     private fun setCloneSource(x: Float, y: Float) {

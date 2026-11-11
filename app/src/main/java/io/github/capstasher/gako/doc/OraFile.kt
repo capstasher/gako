@@ -154,8 +154,12 @@ object OraFile {
             inMutable = true
             inPreferredConfig = Bitmap.Config.ARGB_8888
         }
+        if (w.toLong() * h > 24_000_000L) error("That image is ${w}×$h; GAKO opens up to 24 megapixels")
         val layers = entries.asReversed().mapNotNull { e ->
             val png = files[e.src] ?: return@mapNotNull null
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(png, 0, png.size, bounds)
+            if (bounds.outWidth.toLong() * bounds.outHeight > 24_000_000L) error("A layer in that file is too big for GAKO (24 megapixels)")
             val bmp = BitmapFactory.decodeByteArray(png, 0, png.size, opts) ?: return@mapNotNull null
             Layer(Layer.newId(), e.name, Bitmaps.mutable(bmp), e.x, e.y, e.visible, e.opacity, e.mode, e.lockAlpha, e.text) to e.selected
         }

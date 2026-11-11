@@ -92,12 +92,24 @@ data class Layer(
 class Selection(val mask: Bitmap, val bounds: Rect, val outline: Path)
 
 /**
- * A Bézier path in canvas coordinates: per anchor six floats (in-handle x/y, anchor x/y,
+ * One Bézier stroke in canvas coordinates: per anchor six floats (in-handle x/y, anchor x/y,
  * out-handle x/y), as GIMP stores them.
  */
-class VectorPath(val name: String, val points: FloatArray, val closed: Boolean) {
+class PathStroke(val points: FloatArray, val closed: Boolean) {
     val anchors get() = points.size / 6
+
+    fun mapped(m: android.graphics.Matrix) = PathStroke(points.copyOf().also { m.mapPoints(it) }, closed)
+
+    fun sameAs(o: PathStroke?) = o != null && closed == o.closed && points.contentEquals(o.points)
 }
+
+/** A named path of one or more strokes (GIMP's paths can have several). */
+class VectorPath(val name: String, val strokes: List<PathStroke>) {
+    fun mapped(m: android.graphics.Matrix) = VectorPath(name, strokes.map { it.mapped(m) })
+}
+
+/** Paths moved by [m] (crop, scale, rotate…), or the same list when there are none. */
+fun List<VectorPath>.mapped(m: android.graphics.Matrix) = if (isEmpty()) this else map { it.mapped(m) }
 
 /** A whole image at one moment. Cheap to copy: bitmaps are shared until changed. */
 data class DocState(

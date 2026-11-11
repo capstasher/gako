@@ -86,7 +86,9 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
         Modifier
             .fillMaxSize()
             .onSizeChanged { viewSize = it }
-            .pointerInput(Unit) {
+            // Keyed on the canvas size: the view state is recreated when it changes (crop, resize),
+            // and the gesture handler must write to the new one.
+            .pointerInput(doc.width, doc.height) {
                 fun toDoc(p: Offset): Offset {
                     val w = size.width.toFloat()
                     val h = size.height.toFloat()
