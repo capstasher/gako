@@ -77,6 +77,8 @@ gradle :app:assembleDebug -Pgako.abis=x86_64        # or arm64-v8a,x86_64
 gradle :app:testDebugUnitTest                         # JVM tests (curves, selections)
 ```
 
+See [docs/DEVELOPING.md](docs/DEVELOPING.md) for a map of the code and how it was tested.
+
 `native/build-native.sh host` builds the same engine for your Linux machine and a smoke test
 (`gako-host-test`) that exercises the bridge without a phone.
 
