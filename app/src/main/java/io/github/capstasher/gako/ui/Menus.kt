@@ -28,6 +28,7 @@ import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.outlined.PhotoSizeSelectLarge
 import androidx.compose.material.icons.outlined.Save
+import androidx.compose.material.icons.outlined.LibraryAdd
 import androidx.compose.material.icons.outlined.GridOn
 import androidx.compose.material.icons.outlined.SaveAs
 import androidx.compose.material.icons.outlined.Replay
@@ -226,6 +227,8 @@ fun buildMenus(vm: EditorViewModel, callbacks: MenuCallbacks): List<MenuGroup> {
         act("copy", "Copy", Icons.Outlined.ContentCopy) { vm.copy() },
         act("copy-visible", "Copy Visible", Icons.Outlined.CopyAll) { vm.copy(merged = true) },
         act("paste", "Paste", Icons.Outlined.ContentPaste, vm.hasClipboard) { vm.paste() },
+        act("via-copy", "Layer via Copy", Icons.Outlined.LibraryAdd, hasSelection) { vm.layerViaSelection(cut = false) },
+        act("via-cut", "Layer via Cut", Icons.Outlined.ContentCut, hasSelection) { vm.layerViaSelection(cut = true) },
         act("paste-new", "Paste as New Image", Icons.Outlined.AddPhotoAlternate, vm.hasClipboard) { vm.paste(asNewImage = true) },
         act("clear", "Clear", Icons.Outlined.Backspace) { vm.clear() },
         act("fill-fg", "Fill with FG Colour", Icons.Outlined.FormatColorFill) { vm.fillWith(vm.fg, "Fill with FG Colour") },

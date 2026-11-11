@@ -277,6 +277,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                 android.view.KeyEvent.KEYCODE_F -> repeatLastFilter()
                 android.view.KeyEvent.KEYCODE_N -> if (shift) newLayer() else dialog = Dialog.NewImage
                 android.view.KeyEvent.KEYCODE_D -> duplicateLayer()
+                android.view.KeyEvent.KEYCODE_J -> layerViaSelection(cut = shift)
                 android.view.KeyEvent.KEYCODE_M -> startCurves()
                 android.view.KeyEvent.KEYCODE_L -> startCurves(levels = true)
                 else -> return false
@@ -1376,6 +1377,40 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         change("Paste", insertAboveActive(d, l))
         if (tool != Tool.Move && tool != Tool.Transform) selectTool(Tool.Move)
         say("Pasted as a new layer. Drag to place it.")
+    }
+
+    /**
+     * Layer via Copy / Cut: the selected part of the active layer becomes a new layer right above it,
+     * in place, and the Move tool is picked so it can be dragged away. One undo step.
+     */
+    fun layerViaSelection(cut: Boolean) {
+        val d = doc ?: return
+        val a = d.active ?: return
+        if (d.selection == null) { say("Select something first"); return }
+        if (blockedByBusy()) return
+        endInteractions()
+        val label = if (cut) "Layer via Cut" else "Layer via Copy"
+        docJob(label) { state ->
+            val l = state.layer(a.id) ?: return@docJob null
+            val sel = state.selection ?: return@docJob null
+            val area = Rect(sel.bounds)
+            if (!area.intersect(l.bounds)) return@docJob null
+            val piece = Bitmaps.blank(area.width(), area.height())
+            val c = Canvas(piece)
+            c.drawBitmap(l.bitmap, (l.x - area.left).toFloat(), (l.y - area.top).toFloat(), null)
+            Bitmaps.maskIn(c, sel.mask, -area.left.toFloat(), -area.top.toFloat())
+            val newLayer = Layer(Layer.newId(), layerName(state, "${l.name} ${if (cut) "cut" else "copy"}"), piece, area.left, area.top)
+            var base = state
+            if (cut) {
+                val rest = Bitmaps.copy(l.bitmap)
+                val m = Compositor.selectionFor(l, sel)!!
+                DocOps.fillLayer(l.copy(bitmap = rest), m, Color.BLACK, BlendMode.DST_OUT)
+                base = state.replace(l.copy(bitmap = rest, text = null))
+            }
+            val i = base.layers.indexOfFirst { it.id == l.id } + 1
+            base.copy(layers = base.layers.toMutableList().apply { add(i, newLayer) }, activeId = newLayer.id, selection = null)
+        }
+        selectTool(Tool.Move)
     }
 
     fun clear(label: String = "Clear") {
