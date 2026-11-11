@@ -195,6 +195,77 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         exportSession = null
     }
 
+    // ---------------------------------------------------------------- keyboard
+
+    /** Once a pen has touched the canvas, fingers navigate and only the pen uses tools. */
+    var stylusSeen by mutableStateOf(false)
+
+    /** GIMP's keyboard shortcuts, for tablets, Chromebooks and DeX. Returns true if handled. */
+    fun onKey(code: Int, ctrl: Boolean, shift: Boolean): Boolean {
+        val modal = text != null || dialog != null || confirm != null || exportSession != null
+        if (modal) return false
+        if (ctrl) {
+            when (code) {
+                android.view.KeyEvent.KEYCODE_Z -> if (shift) redo() else undo()
+                android.view.KeyEvent.KEYCODE_Y -> redo()
+                android.view.KeyEvent.KEYCODE_S -> if (shift) startExport(project = true) else save()
+                android.view.KeyEvent.KEYCODE_E -> startExport()
+                android.view.KeyEvent.KEYCODE_C -> copy(merged = shift)
+                android.view.KeyEvent.KEYCODE_X -> cut()
+                android.view.KeyEvent.KEYCODE_V -> paste(asNewImage = shift)
+                android.view.KeyEvent.KEYCODE_A -> if (shift) selectNone() else selectAll()
+                android.view.KeyEvent.KEYCODE_I -> invertSelection()
+                android.view.KeyEvent.KEYCODE_F -> repeatLastFilter()
+                android.view.KeyEvent.KEYCODE_N -> if (shift) newLayer() else dialog = Dialog.NewImage
+                android.view.KeyEvent.KEYCODE_D -> duplicateLayer()
+                android.view.KeyEvent.KEYCODE_M -> startCurves()
+                android.view.KeyEvent.KEYCODE_L -> startCurves(levels = true)
+                else -> return false
+            }
+            return true
+        }
+        if (session != null || curves != null) {
+            return when (code) {
+                android.view.KeyEvent.KEYCODE_ENTER -> { if (session != null) applySession() else applyCurves(); true }
+                android.view.KeyEvent.KEYCODE_ESCAPE -> { cancelSession(); cancelCurves(); true }
+                else -> false
+            }
+        }
+        val t: Tool? = when (code) {
+            android.view.KeyEvent.KEYCODE_P -> Tool.Paintbrush
+            android.view.KeyEvent.KEYCODE_N -> Tool.Pencil
+            android.view.KeyEvent.KEYCODE_A -> Tool.Airbrush
+            android.view.KeyEvent.KEYCODE_E -> if (shift) Tool.Eraser else Tool.EllipseSelect
+            android.view.KeyEvent.KEYCODE_C -> if (shift) Tool.Crop else Tool.Clone
+            android.view.KeyEvent.KEYCODE_S -> Tool.Smudge
+            android.view.KeyEvent.KEYCODE_D -> if (shift) Tool.DodgeBurn else null
+            android.view.KeyEvent.KEYCODE_B -> if (shift) Tool.BucketFill else null
+            android.view.KeyEvent.KEYCODE_G -> Tool.Gradient
+            android.view.KeyEvent.KEYCODE_T -> if (shift) Tool.Transform else Tool.Text
+            android.view.KeyEvent.KEYCODE_O -> if (shift) Tool.ColorSelect else Tool.ColorPicker
+            android.view.KeyEvent.KEYCODE_M -> Tool.Move
+            android.view.KeyEvent.KEYCODE_R -> Tool.RectSelect
+            android.view.KeyEvent.KEYCODE_F -> Tool.FreeSelect
+            android.view.KeyEvent.KEYCODE_U -> Tool.FuzzySelect
+            android.view.KeyEvent.KEYCODE_H -> Tool.Navigate
+            else -> null
+        }
+        if (t != null) { selectTool(t); return true }
+        return when (code) {
+            android.view.KeyEvent.KEYCODE_X -> { swapColors(); true }
+            android.view.KeyEvent.KEYCODE_FORWARD_DEL, android.view.KeyEvent.KEYCODE_DEL -> { clear(); true }
+            android.view.KeyEvent.KEYCODE_LEFT_BRACKET -> { updateOptions(options.copy(size = (options.size / 1.2f).coerceAtLeast(1f))); true }
+            android.view.KeyEvent.KEYCODE_RIGHT_BRACKET -> { updateOptions(options.copy(size = (options.size * 1.2f).coerceAtMost(1000f))); true }
+            android.view.KeyEvent.KEYCODE_ENTER -> when (tool) {
+                Tool.Crop -> { input.applyCrop(); true }
+                Tool.Transform -> { input.applyTransform(); true }
+                else -> false
+            }
+            android.view.KeyEvent.KEYCODE_ESCAPE -> { input.reset(); true }
+            else -> false
+        }
+    }
+
     // ---------------------------------------------------------------- tools
 
     fun selectTool(t: Tool) {
