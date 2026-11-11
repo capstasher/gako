@@ -26,25 +26,35 @@ object GimpOps {
      * arguments; a "config" one holds the serialized settings). Null if the settings can't be read.
      */
     fun apply(op: String, args: Map<String, Any>, src: Bitmap): Bitmap? {
-        val f = pixelFunction(op, args) ?: return null
+        pixelFunction(op, args) ?: return null
         val w = src.width
         val h = src.height
         val out = Bitmaps.blank(w, h)
-        val row = IntArray(w)
-        val px = FloatArray(4)
-        for (y in 0 until h) {
-            src.getPixels(row, 0, w, 0, y, w, 1)              // unpremultiplied
-            for (x in 0 until w) {
-                val c = row[x]
-                val a = c ushr 24
-                if (a == 0) { row[x] = 0; continue }
-                px[0] = ((c shr 16) and 255) / 255f; px[1] = ((c shr 8) and 255) / 255f
-                px[2] = (c and 255) / 255f; px[3] = a / 255f
-                f(px)
-                row[x] = (q(px[3]) shl 24) or (q(px[0]) shl 16) or (q(px[1]) shl 8) or q(px[2])
-            }
-            out.setPixels(row, 0, w, 0, y, w, 1)
+        // Rows split across the cores; each worker has its own pixel function (they keep scratch arrays).
+        val workers = Runtime.getRuntime().availableProcessors().coerceIn(1, 8).coerceAtMost(h)
+        val threads = (0 until workers).map { k ->
+            Thread {
+                val f = pixelFunction(op, args)!!
+                val row = IntArray(w)
+                val px = FloatArray(4)
+                var y = k
+                while (y < h) {
+                    synchronized(src) { src.getPixels(row, 0, w, 0, y, w, 1) }          // unpremultiplied
+                    for (x in 0 until w) {
+                        val c = row[x]
+                        val a = c ushr 24
+                        if (a == 0) { row[x] = 0; continue }
+                        px[0] = ((c shr 16) and 255) / 255f; px[1] = ((c shr 8) and 255) / 255f
+                        px[2] = (c and 255) / 255f; px[3] = a / 255f
+                        f(px)
+                        row[x] = (q(px[3]) shl 24) or (q(px[0]) shl 16) or (q(px[1]) shl 8) or q(px[2])
+                    }
+                    synchronized(out) { out.setPixels(row, 0, w, 0, y, w, 1) }
+                    y += workers
+                }
+            }.also { it.start() }
         }
+        threads.forEach { it.join() }
         return out
     }
 
@@ -181,8 +191,25 @@ object GimpOps {
     const val GREEN_Y = 0.7169039f
     const val BLUE_Y = 0.0606083f
 
-    val srgbToLinear: (Float) -> Float = { v -> if (v > 0.04045f) ((v + 0.055f) / 1.055f).toDouble().pow(2.4).toFloat() else v / 12.92f }
-    val linearToSrgb: (Float) -> Float = { v -> if (v > 0.0031308f) (1.055 * v.toDouble().pow(1 / 2.4) - 0.055).toFloat() else v * 12.92f }
+    private const val LUT = 4096
+    private val toLinLut = FloatArray(LUT + 1) { i -> val v = i.toDouble() / LUT; (if (v > 0.04045) ((v + 0.055) / 1.055).pow(2.4) else v / 12.92).toFloat() }
+    private val toSrgbLut = FloatArray(LUT + 1) { i -> val v = i.toDouble() / LUT; (if (v > 0.0031308) 1.055 * v.pow(1 / 2.4) - 0.055 else v * 12.92).toFloat() }
+
+    private fun lut(t: FloatArray, v: Float): Float {
+        val f = v * LUT
+        val i = f.toInt()
+        return t[i] + (t[i + 1] - t[i]) * (f - i)
+    }
+
+    /** sRGB ↔ linear light (tables inside 0..1, exact outside, as values can be out of range). */
+    val srgbToLinear: (Float) -> Float = { v ->
+        if (v >= 0f && v < 1f) lut(toLinLut, v)
+        else if (v > 0.04045f) ((v + 0.055f) / 1.055f).toDouble().pow(2.4).toFloat() else v / 12.92f
+    }
+    val linearToSrgb: (Float) -> Float = { v ->
+        if (v >= 0f && v < 1f) lut(toSrgbLut, v)
+        else if (v > 0.0031308f) (1.055 * v.toDouble().pow(1 / 2.4) - 0.055).toFloat() else v * 12.92f
+    }
 
     /** [f] run on the pixel in linear light. */
     private fun linear(f: (FloatArray) -> Unit): (FloatArray) -> Unit = { p ->
