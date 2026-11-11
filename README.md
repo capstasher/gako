@@ -6,21 +6,44 @@ GAKO doesn't run desktop GIMP behind an X server. It cross-compiles the parts of
 the actual image work (**babl** for pixel formats and colour, **GEGL** for every filter and
 operation) for Android, and puts a touch interface on top designed for one hand and no stylus.
 
-## Status: stage 1 (engine bring-up)
+## Status: stage 3 (layers and tools)
 
-- babl 0.1.128 + GEGL 0.4.72 + glib, cross-compiled for arm64 Android 12+ (API 31)
-- ~200 GEGL operations available, with auto-generated controls (sliders, toggles, choices, colours)
+**Engine**
+- babl 0.1.128 + GEGL 0.4.72 + glib, cross-compiled for Android 12+ (API 31), arm64 (and x86_64 for the emulator)
+- ~200 GEGL operations with auto-generated controls (sliders, toggles, choices, colours)
 - Live preview on a downscaled proxy, then full-resolution apply with progress and cancel
-- GIMP-style menus (File, Image, Colours, Filters), nested along the bottom edge for thumbs;
-  they become a side rail on landscape screens, tablets and unfolded foldables
-- Search across all operations; tap-to-place for filters with a centre point (lens flare, supernova…)
-- Undo/redo, rotate/flip, export PNG/JPEG/WebP to `Pictures/GAKO`, share, "Open with GAKO"
+
+**Images and layers**
+- Layered documents: new, duplicate, delete, reorder, merge down, merge visible, flatten, new from visible
+- 17 layer modes (multiply, screen, overlay, soft/hard light, dodge, burn, HSL…), opacity, visibility, lock alpha
+- Layers can be any size and sit anywhere; scale layer, layer to image size, alpha to selection
+- Undo/redo for everything; painting only stores the pixels a stroke touched
+- Image: canvas size (with anchor), scale image, crop to selection / content, rotate, flip
+
+**Tools** (one finger uses the tool, two fingers always pan and zoom)
+- Paint: paintbrush, pencil, airbrush, eraser, clone, smudge, blur, dodge/burn, bucket fill, gradient
+  (linear/radial/mirrored, FG→BG or FG→transparent), text (re-editable), colour picker; stylus pressure
+- Select: rectangle, ellipse, free (lasso), fuzzy, by colour; replace/add/subtract/intersect, feather;
+  Select menu: all, none, invert, feather, grow, shrink, border, from layer alpha
+- Transform: move, unified transform (scale/rotate/flip with handles), crop (with aspect presets)
+- Filters, Curves and Levels respect the selection; Edit: cut/copy/paste (also via Android's clipboard), clear, fill
+
+**Files**
+- Save projects as **XCF** (GIMP's own format; GIMP 2.10/3.x open them with layers) or OpenRaster
+- Open XCF from any GIMP version (all precisions, RLE/zlib, masks, groups), ORA, and every image Android decodes
+- Export PNG, JPEG, WebP, HEIF, TIFF, GIF, BMP, TGA, ICO, PPM, ORA; share; "Open with GAKO"
+- Unsaved work is kept in a recovery file and restored if Android closes the app
+
+**Phone-first UI**
+- GIMP's menus (File, Edit, Select, Image, Layers, Colours, Filters) along the bottom edge, nested for thumbs;
+  a side rail on landscape screens, tablets and unfolded foldables
+- A floating dock with the current tool, FG/BG colours and undo/redo; tool options in one strip above the menus
 
 ### Roadmap
 1. ✅ **Engine**: GEGL on Android, filters on photos
-2. **Core**: GIMP's core (images, layers, undo, `.xcf`) built headless for Android; documents become tiled GEGL buffers (no size cap)
-3. **Tools**: paint, erase, select, move, transform, crop, curves, text, built for touch
-4. **More**: paths, masks, plug-ins (Script-Fu / Python), stylus pressure, tablet layout
+2. ✅ **Layers**: layered documents, undo, XCF/ORA
+3. ✅ **Tools**: paint, select, transform, crop, curves, levels, text
+4. **More**: layer masks, paths, tiled GEGL buffers for huge images, plug-ins (Script-Fu / Python), tablet layout
 
 ## Install
 
@@ -38,10 +61,25 @@ ANDROID_NDK_HOME=/path/to/ndk native/stage-jnilibs.sh android-arm64 arm64-v8a
 gradle :app:assembleRelease
 ```
 
+For the x86_64 emulator, build and stage `android-x86_64` / `x86_64` too and pass the ABIs to Gradle:
+
+```sh
+ANDROID_NDK_HOME=/path/to/ndk native/build-native.sh android-x86_64
+ANDROID_NDK_HOME=/path/to/ndk native/stage-jnilibs.sh android-x86_64 x86_64
+gradle :app:assembleDebug -Pgako.abis=x86_64        # or arm64-v8a,x86_64
+gradle :app:testDebugUnitTest                         # JVM tests (curves, selections)
+```
+
 `native/build-native.sh host` builds the same engine for your Linux machine and a smoke test
 (`gako-host-test`) that exercises the bridge without a phone.
 
 ### How it fits together
+
+The editor keeps a `DocState` (canvas size, layers bottom to top, active layer, selection). Layers
+are immutable values holding mutable ARGB bitmaps; an edit either swaps a layer's bitmap (filters,
+transforms) or paints into it and records a patch of just the changed rectangle. The canvas
+composites the layers on the GPU every frame, so a brush stroke only re-uploads one texture.
+
 
 ```
 app (Kotlin, Jetpack Compose)  ──JNI──▶  libgako.so (native/bridge)
