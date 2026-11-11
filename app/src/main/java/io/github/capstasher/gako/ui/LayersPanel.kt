@@ -26,6 +26,8 @@ import androidx.compose.material.icons.outlined.ArrowDownward
 import androidx.compose.material.icons.outlined.ArrowUpward
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.LockOpen
 import androidx.compose.material.icons.outlined.MoreVert
@@ -73,7 +75,7 @@ fun LayersPanel(vm: EditorViewModel) {
     Column(Modifier.fillMaxWidth()) {
         if (active != null) {
             Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                ModePicker(active.mode) { vm.setLayerMode(it) }
+                ModePicker(active.mode, active.group) { vm.setLayerMode(it) }
                 Slider(
                     value = active.opacity,
                     onValueChange = { vm.setLayerOpacityLive(it) },
@@ -83,30 +85,37 @@ fun LayersPanel(vm: EditorViewModel) {
                 )
                 Text("${(active.opacity * 100).roundToInt()}%", style = MaterialTheme.typography.labelMedium, color = Gako.Gold,
                     modifier = Modifier.width(40.dp))
-                IconButton(onClick = { vm.setLockAlpha(!active.lockAlpha) }) {
+                if (!active.group) IconButton(onClick = { vm.setLockAlpha(!active.lockAlpha) }) {
                     Icon(if (active.lockAlpha) Icons.Outlined.Lock else Icons.Outlined.LockOpen,
                         contentDescription = "Lock alpha channel", tint = if (active.lockAlpha) Gako.Gold else Gako.Muted)
                 }
             }
         }
         HorizontalDivider(color = Gako.InkHigh)
+        val byId = io.github.capstasher.gako.doc.Tree.byId(d.layers)
+        val rows = d.layers.asReversed().filter { !io.github.capstasher.gako.doc.Tree.collapsedAway(it, byId) }
         LazyColumn(Modifier.weight(1f, fill = false).fillMaxWidth()) {
-            items(d.layers.asReversed(), key = { it.id }) { layer ->
-                LayerRow(vm, layer, layer.id == d.activeId)
+            items(rows, key = { it.id }) { layer ->
+                LayerRow(vm, layer, layer.id == d.activeId, io.github.capstasher.gako.doc.Tree.depth(layer, byId),
+                    shown = io.github.capstasher.gako.doc.Tree.shows(layer, byId))
             }
         }
         HorizontalDivider(color = Gako.InkHigh)
+        val range = active?.let { io.github.capstasher.gako.doc.Tree.range(d.layers, it.id) }
+        val canRaise = active != null && (active.parent != null || (range != null && range.last < d.layers.lastIndex))
+        val canLower = active != null && (active.parent != null || (range != null && range.first > 0))
         Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceEvenly) {
             IconButton(onClick = { vm.dialog = Dialog.NewLayer }, modifier = Modifier.size(40.dp)) { Icon(Icons.Outlined.Add, "New layer") }
             IconButton(onClick = vm::duplicateLayer, modifier = Modifier.size(40.dp)) { Icon(Icons.Outlined.ContentCopy, "Duplicate layer") }
-            IconButton(onClick = { vm.moveLayer(1) }, enabled = d.activeIndex < d.layers.lastIndex, modifier = Modifier.size(40.dp)) {
+            IconButton(onClick = { vm.moveLayer(1) }, enabled = canRaise, modifier = Modifier.size(40.dp)) {
                 Icon(Icons.Outlined.ArrowUpward, "Raise layer")
             }
-            IconButton(onClick = { vm.moveLayer(-1) }, enabled = d.activeIndex > 0, modifier = Modifier.size(40.dp)) {
+            IconButton(onClick = { vm.moveLayer(-1) }, enabled = canLower, modifier = Modifier.size(40.dp)) {
                 Icon(Icons.Outlined.ArrowDownward, "Lower layer")
             }
-            IconButton(onClick = vm::mergeDown, enabled = d.activeIndex > 0, modifier = Modifier.size(40.dp)) {
+            IconButton(onClick = vm::mergeDown, enabled = active?.group == true || io.github.capstasher.gako.doc.DocOps.mergeTarget(d) != null,
+                modifier = Modifier.size(40.dp)) {
                 Icon(Icons.AutoMirrored.Outlined.CallMerge, "Merge down")
             }
             IconButton(onClick = vm::deleteLayer, enabled = d.layers.size > 1, modifier = Modifier.size(40.dp)) { Icon(Icons.Outlined.Delete, "Delete layer") }
@@ -117,7 +126,7 @@ fun LayersPanel(vm: EditorViewModel) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun LayerRow(vm: EditorViewModel, layer: Layer, active: Boolean) {
+private fun LayerRow(vm: EditorViewModel, layer: Layer, active: Boolean, depth: Int, shown: Boolean) {
     val rev = if (active) vm.revision else 0
     val thumb = remember(layer.bitmap, rev) { Compositor.thumbnail(layer.bitmap, 96).asImageBitmap() }
     val maskThumb = layer.mask?.let { m -> remember(m, rev) { Compositor.thumbnail(m, 96).asImageBitmap() } }
@@ -130,13 +139,32 @@ private fun LayerRow(vm: EditorViewModel, layer: Layer, active: Boolean) {
                 onClick = { vm.setActiveLayer(layer.id) },
                 onLongClick = { vm.dialog = Dialog.RenameLayer(layer.id) },
             )
-            .padding(horizontal = 8.dp, vertical = 4.dp),
+            .padding(start = 8.dp + 18.dp * depth, end = 8.dp, top = 4.dp, bottom = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         IconButton(onClick = { vm.setLayerVisible(layer.id, !layer.visible) }) {
             Icon(if (layer.visible) Icons.Outlined.Visibility else Icons.Outlined.VisibilityOff,
                 contentDescription = if (layer.visible) "Hide" else "Show",
-                tint = if (layer.visible) Gako.Parchment else Gako.Muted.copy(alpha = 0.5f))
+                tint = if (layer.visible && shown) Gako.Parchment else Gako.Muted.copy(alpha = 0.5f))
+        }
+        if (layer.group) {
+            // A group: a folder that opens and closes, instead of thumbnails.
+            IconButton(onClick = { vm.setExpanded(layer.id, !layer.expanded) }, modifier = Modifier.size(44.dp)) {
+                Icon(if (layer.expanded) Icons.Outlined.FolderOpen else Icons.Outlined.Folder,
+                    contentDescription = if (layer.expanded) "Collapse group" else "Expand group",
+                    tint = if (active) Gako.Gold else Gako.GoldDim, modifier = Modifier.size(30.dp))
+            }
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(layer.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    color = if (shown) Gako.Parchment else Gako.Muted)
+                val info = buildList {
+                    add(layer.mode.label)
+                    if (layer.opacity < 1f) add("${(layer.opacity * 100).roundToInt()}%")
+                }
+                Text(info.joinToString(" · "), style = MaterialTheme.typography.labelSmall, color = Gako.Muted)
+            }
+            return@Row
         }
         Box(
             Modifier.size(44.dp).background(Color(0xFF777777), RoundedCornerShape(3.dp))
@@ -181,14 +209,14 @@ private fun LayerRow(vm: EditorViewModel, layer: Layer, active: Boolean) {
 }
 
 @Composable
-private fun ModePicker(mode: LayerMode, onPick: (LayerMode) -> Unit) {
+private fun ModePicker(mode: LayerMode, group: Boolean, onPick: (LayerMode) -> Unit) {
     var open by remember { mutableStateOf(false) }
     Box {
         TextButton(onClick = { open = true }) {
             Text(mode.label, color = Gako.Gold, maxLines = 1)
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            LayerMode.entries.forEach { m ->
+            LayerMode.entries.filter { group || it != LayerMode.PassThrough }.forEach { m ->
                 DropdownMenuItem(
                     text = { Text(m.label, color = if (m == mode) Gako.Gold else Gako.Parchment) },
                     onClick = { open = false; onPick(m) },
@@ -208,7 +236,16 @@ private fun MoreLayerActions(vm: EditorViewModel) {
                 DropdownMenuItem(text = { Text(label) }, onClick = { open = false; action() })
             }
             item("Rename…") { vm.doc?.activeId?.let { vm.dialog = Dialog.RenameLayer(it) } }()
+            item("New Layer Group") { vm.newGroup() }()
+            item("Put in New Group") { vm.groupActive() }()
             val a = vm.doc?.active
+            if (a?.group == true) {
+                item("Merge Layer Group") { vm.mergeGroup() }()
+                item("New from Visible") { vm.newFromVisible() }()
+                item("Merge Visible Layers") { vm.mergeVisible() }()
+                item("Flatten Image") { vm.flattenImage() }()
+                return@DropdownMenu
+            }
             if (a?.mask == null) item("Add Layer Mask…") { vm.dialog = Dialog.AddMask }()
             else {
                 item(if (vm.editingMask) "Edit Layer Pixels" else "Edit Layer Mask") { vm.chooseMaskEditing(!vm.editingMask) }()

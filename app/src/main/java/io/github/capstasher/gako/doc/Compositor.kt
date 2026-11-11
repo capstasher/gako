@@ -15,18 +15,35 @@ object Compositor {
 
     fun layerPaint(layer: Layer, filter: Boolean = true) = Paint().apply {
         alpha = (layer.opacity * 255).roundToInt().coerceIn(0, 255)
-        blendMode = layer.mode.blend
+        blendMode = if (layer.mode == LayerMode.PassThrough && !layer.group) BlendMode.SRC_OVER else layer.mode.blend
         isFilterBitmap = filter
     }
 
     /** Draws every visible layer onto [canvas] in canvas coordinates, isolated from what's below. */
     fun drawLayers(canvas: Canvas, doc: DocState, layers: List<Layer> = doc.layers) {
-        val save = canvas.saveLayer(RectF(0f, 0f, doc.width.toFloat(), doc.height.toFloat()), null)
-        for (l in layers) {
-            if (!l.visible || l.opacity <= 0f) continue
-            drawLayer(canvas, l, layerPaint(l))
-        }
+        val bounds = RectF(0f, 0f, doc.width.toFloat(), doc.height.toFloat())
+        val save = canvas.saveLayer(bounds, null)
+        drawTree(canvas, layers, bounds) { c, l -> drawLayer(c, l, layerPaint(l)) }
         canvas.restoreToCount(save)
+    }
+
+    /**
+     * Walks the layer tree bottom to top, calling [leaf] for each visible pixel layer. A group draws
+     * its children into its own layer, then blends that with its mode and opacity; a pass-through
+     * group at full opacity lets them blend straight onto what's below.
+     */
+    fun drawTree(canvas: Canvas, layers: List<Layer>, bounds: RectF, parent: Long? = null, leaf: (Canvas, Layer) -> Unit) {
+        for (l in layers) {
+            if (l.parent != parent || !l.visible || l.opacity <= 0f) continue
+            if (!l.group) { leaf(canvas, l); continue }
+            if (l.mode == LayerMode.PassThrough && l.opacity >= 1f) {
+                drawTree(canvas, layers, bounds, l.id, leaf)
+            } else {
+                val save = canvas.saveLayer(bounds, layerPaint(l))
+                drawTree(canvas, layers, bounds, l.id, leaf)
+                canvas.restoreToCount(save)
+            }
+        }
     }
 
     /** Turns a grey mask into alpha (its red channel) for DST_IN. */

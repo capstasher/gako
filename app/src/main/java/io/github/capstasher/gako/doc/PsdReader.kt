@@ -23,6 +23,7 @@ object PsdReader {
         "div " to LayerMode.Dodge, "idiv" to LayerMode.Burn, "dark" to LayerMode.Darken, "lite" to LayerMode.Lighten,
         "lddg" to LayerMode.Addition, "diff" to LayerMode.Difference, "smud" to LayerMode.Exclusion,
         "hue " to LayerMode.Hue, "sat " to LayerMode.Saturation, "colr" to LayerMode.Color, "lum " to LayerMode.Luminosity,
+        "pass" to LayerMode.PassThrough,
     )
 
     fun read(input: InputStream, scratch: File? = null): DocState {
@@ -45,6 +46,8 @@ object PsdReader {
         val channels: List<ChannelInfo>, val mode: LayerMode, val opacity: Int, val visible: Boolean,
         var name: String, val maskTop: Int, val maskLeft: Int, val maskBottom: Int, val maskRight: Int,
         val maskDefault: Int, val maskDisabled: Boolean, val section: Int,
+        /** A group's own blend mode from its section divider (pass-through, usually). */
+        val sectionMode: LayerMode? = null,
     ) {
         val w get() = right - left
         val h get() = bottom - top
@@ -102,7 +105,7 @@ object PsdReader {
             goTo(layerSectionEnd)
             if (!layers.isNullOrEmpty()) {
                 val list = layers.map { it.first }
-                return DocState(width, height, list, list.last().id)
+                return DocState(width, height, list, list.last { !it.group }.id)
             }
             val merged = readMerged()
             return DocOps.fromBitmap(merged)
@@ -151,21 +154,27 @@ object PsdReader {
             // children, closed by a divider (section 3) below them: walk top-down to know each
             // layer's groups, so children of a hidden or faded group come out hidden or faded.
             val out = ArrayList<Pair<Layer, Boolean>>()
-            val stack = ArrayList<Pair<Boolean, Float>>()
+            val stack = ArrayList<Long>()           // open groups, innermost last
             for (i in records.indices.reversed()) {
                 val r = records[i]
                 when (r.section) {
-                    1, 2 -> { stack += (r.visible && stack.all { it.first }) to (r.opacity / 255f) * (stack.lastOrNull()?.second ?: 1f); continue }
+                    1, 2 -> {
+                        val id = Layer.newId()
+                        out += Layer(id, r.name.ifBlank { "Group" }, Bitmaps.blank(1, 1), visible = r.visible,
+                            opacity = r.opacity / 255f, mode = r.sectionMode ?: r.mode, group = true,
+                            parent = stack.lastOrNull(), expanded = r.section == 1) to false
+                        stack += id
+                        continue
+                    }
                     3 -> { if (stack.isNotEmpty()) stack.removeAt(stack.lastIndex); continue }
                 }
                 val (bmp, mask) = pixels[i] ?: continue
-                val shown = r.visible && stack.all { it.first }
-                val opacity = r.opacity / 255f * (stack.lastOrNull()?.second ?: 1f)
                 out += Layer(Layer.newId(), r.name.ifBlank { "Layer ${out.size + 1}" }, bmp, r.left, r.top,
-                    visible = shown, opacity = opacity, mode = r.mode,
-                    mask = mask, maskEnabled = !r.maskDisabled) to false
+                    visible = r.visible, opacity = r.opacity / 255f, mode = r.mode,
+                    mask = mask, maskEnabled = !r.maskDisabled, parent = stack.lastOrNull()) to false
             }
-            return out.asReversed()
+            // Empty groups would leave nothing to paint on; keep them only if there's a real layer.
+            return if (out.any { !it.first.group }) out.asReversed() else emptyList()
         }
 
         fun readRecord(end: Long): Record {
@@ -199,6 +208,7 @@ object PsdReader {
             var name = String(ByteArray(nameLen).also { buf.get(it) }, Charsets.ISO_8859_1)
             skip(((nameLen + 1 + 3) / 4 * 4 - (nameLen + 1)).toLong())
             var section = 0
+            var sectionMode: LayerMode? = null
             // Additional layer information: the Unicode name and group markers.
             while (buf.position() + 12 <= extraEnd) {
                 val sig = key()
@@ -212,7 +222,10 @@ object PsdReader {
                         val chars = u32()
                         if (chars in 0..((l - 4) / 2)) name = String(CharArray(chars.toInt()) { buf.char })
                     }
-                    "lsct", "lsdk" -> section = i32()
+                    "lsct", "lsdk" -> {
+                        section = i32()
+                        if (l >= 12 && key() == "8BIM") sectionMode = key().let { if (it == "pass") LayerMode.PassThrough else modes[it] }
+                    }
                 }
                 // Writers pad blocks to 2 or 4 bytes (or not at all): take whichever lands on the next block.
                 val candidates = listOf(dataStart + l, dataStart + ((l + 1) and 1L.inv()), dataStart + ((l + 3) and 3L.inv()))
@@ -223,7 +236,7 @@ object PsdReader {
             }
             goTo(extraEnd)
             return Record(top, left, bottom, right, chans, modes[blend] ?: LayerMode.Normal, opacity,
-                flags and 2 == 0, name, mTop, mLeft, mBottom, mRight, mDefault, mDisabled, section)
+                flags and 2 == 0, name, mTop, mLeft, mBottom, mRight, mDefault, mDisabled, section, sectionMode)
         }
 
         /** One layer's channels as an ARGB bitmap, plus its mask (layer-sized grey) if it has one. */

@@ -34,6 +34,7 @@ import io.github.capstasher.gako.doc.LayerMode
 import io.github.capstasher.gako.doc.OraFile
 import io.github.capstasher.gako.doc.Selections
 import io.github.capstasher.gako.doc.Step
+import io.github.capstasher.gako.doc.Tree
 import io.github.capstasher.gako.engine.Engine
 import io.github.capstasher.gako.engine.OpDescription
 import io.github.capstasher.gako.engine.OpInfo
@@ -163,6 +164,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** What edits go to: the active layer, or its mask dressed up as a layer (alpha locked, opaque grey). */
     internal fun targetOf(d: DocState): Layer? {
         val a = d.active ?: return null
+        if (a.group) return null            // groups have no pixels of their own
         val m = a.mask
         return if (editMask && m != null) a.copy(bitmap = m, lockAlpha = true, text = null, mode = LayerMode.Normal,
             opacity = 1f, mask = null) else a
@@ -524,6 +526,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
      */
     internal fun editActiveLayer(label: String, canvasRect: Rect? = null, edit: (Layer, Bitmap?) -> Unit): Boolean {
         val d = doc ?: return false
+        if (refuseGroup(d)) return false
         val layer = targetOf(d) ?: return false
         val sel = Compositor.selectionFor(layer, d.selection)
         val r = DocOps.layerRect(layer, canvasRect ?: d.selection?.bounds)
@@ -594,13 +597,14 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                 val d = doc
                 if (asLayers && d != null) {
                     // Each opened layer goes in centred above the active one.
+                    val ids = state.layers.associate { it.id to Layer.newId() }
                     val added = state.layers.map {
-                        it.copy(id = Layer.newId(), name = if (state.layers.size == 1) name.substringBeforeLast('.') else it.name,
-                            x = it.x + (d.width - state.width) / 2, y = it.y + (d.height - state.height) / 2)
+                        it.copy(id = ids[it.id]!!, parent = it.parent?.let { p -> ids[p] },
+                            name = if (state.layers.size == 1) name.substringBeforeLast('.') else it.name,
+                            x = if (it.group) it.x else it.x + (d.width - state.width) / 2,
+                            y = if (it.group) it.y else it.y + (d.height - state.height) / 2)
                     }
-                    val i = d.activeIndex + 1
-                    val layers = d.layers.toMutableList().apply { addAll(i, added) }
-                    change("Open as Layers", d.copy(layers = layers, activeId = added.last().id))
+                    change("Open as Layers", insertAllAboveActive(d, added, added.last().id))
                 } else {
                     newDocument(state, name)
                     metadata = pendingMetadata
@@ -1036,9 +1040,25 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         return "$base #$i"
     }
 
+    /** New layers go right above the active one, in the same group (above a whole group if one is active). */
     private fun insertAboveActive(d: DocState, layer: Layer): DocState {
+        val a = d.active
         val i = (d.activeIndex + 1).coerceIn(0, d.layers.size)
-        return d.copy(layers = d.layers.toMutableList().apply { add(i, layer) }, activeId = layer.id)
+        return d.copy(layers = d.layers.toMutableList().apply { add(i, layer.copy(parent = a?.parent)) }, activeId = layer.id)
+    }
+
+    private fun insertAllAboveActive(d: DocState, added: List<Layer>, topId: Long): DocState {
+        val a = d.active
+        val i = (d.activeIndex + 1).coerceIn(0, d.layers.size)
+        val placed = added.map { if (it.parent == null) it.copy(parent = a?.parent) else it }
+        return d.copy(layers = d.layers.toMutableList().apply { addAll(i, placed) }, activeId = topId)
+    }
+
+    /** Says why a group can't be painted or filtered, and returns true if [d]'s active item is a group. */
+    internal fun refuseGroup(d: DocState): Boolean {
+        if (d.active?.group != true) return false
+        say("“${d.active?.name}” is a group: pick a layer inside it")
+        return true
     }
 
     enum class NewFill(val label: String) { Transparent("Transparency"), Foreground("Foreground"), Background("Background"), White("White") }
@@ -1062,38 +1082,84 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         val a = d.active ?: return
         if (blockedByBusy()) return
         endInteractions()
-        val copy = a.copy(id = Layer.newId(), name = layerName(d, "${a.name} copy"), bitmap = Bitmaps.copy(a.bitmap),
-            mask = a.mask?.let(Bitmaps::copy))
-        change("Duplicate Layer", insertAboveActive(d, copy))
+        // A group is duplicated with everything in it.
+        val block = d.layers.slice(Tree.range(d.layers, a.id))
+        val ids = block.associate { it.id to Layer.newId() }
+        val copies = block.map { l ->
+            l.copy(id = ids[l.id]!!, parent = l.parent?.let { ids[it] ?: it },
+                name = if (l.id == a.id) layerName(d, "${a.name} copy") else l.name,
+                bitmap = if (l.group) l.bitmap else Bitmaps.copy(l.bitmap), mask = l.mask?.let(Bitmaps::copy))
+        }
+        val i = d.activeIndex + 1
+        change(if (a.group) "Duplicate Group" else "Duplicate Layer",
+            d.copy(layers = d.layers.toMutableList().apply { addAll(i, copies) }, activeId = ids[a.id]!!))
     }
 
     fun deleteLayer() {
         val d = doc ?: return
         val a = d.active ?: return
         if (blockedByBusy()) return
-        if (d.layers.size <= 1) { say("An image needs at least one layer"); return }
+        val range = Tree.range(d.layers, a.id)
+        val layers = d.layers.filterIndexed { k, _ -> k !in range }
+        if (layers.none { !it.group }) { say("An image needs at least one layer"); return }
         endInteractions()
-        val i = d.activeIndex
-        val layers = d.layers.filter { it.id != a.id }
-        change("Delete Layer", d.copy(layers = layers, activeId = layers[(i - 1).coerceAtLeast(0)].id))
+        // The next one down takes over, or the one now at the bottom.
+        val next = layers.getOrNull((range.first - 1).coerceAtLeast(0)) ?: layers.first()
+        change(if (a.group) "Delete Group" else "Delete Layer", d.copy(layers = layers, activeId = next.id))
     }
 
+    /**
+     * Raise (+1) or lower (−1) the active layer or group among its siblings. Next to a group it goes
+     * into that group; at the edge of its own group it steps out of it — so the arrows reach anywhere.
+     */
     fun moveLayer(delta: Int) {
         val d = doc ?: return
+        val a = d.active ?: return
         if (blockedByBusy()) return
-        val i = d.activeIndex
-        val j = (i + delta).coerceIn(0, d.layers.lastIndex)
-        if (i == j) return
-        val layers = d.layers.toMutableList()
-        val l = layers.removeAt(i)
-        layers.add(j, l)
-        change(if (delta > 0) "Raise Layer" else "Lower Layer", d.copy(layers = layers))
+        val label = if (delta > 0) "Raise Layer" else "Lower Layer"
+        val layers = Tree.move(d.layers, a.id, delta, { it.id }, { it.parent }, { it.group }) { l, p -> l.copy(parent = p) } ?: return
+        change(label, d.copy(layers = layers))
     }
 
     fun mergeDown() {
         val d = doc ?: return
-        if (d.activeIndex <= 0) { say("There's no layer below to merge into"); return }
+        if (d.active?.group == true) { mergeGroup(); return }
+        if (DocOps.mergeTarget(d) == null) { say("There's no layer right below in the same group to merge into"); return }
         docJob("Merge Down") { DocOps.mergeDown(it) }
+    }
+
+    /** Layer > New Layer Group: an empty group above the active layer. */
+    fun newGroup() {
+        val d = doc ?: return
+        if (blockedByBusy()) return
+        endInteractions()
+        val g = Layer(Layer.newId(), layerName(d, "Group"), Bitmaps.blank(1, 1), group = true, mode = LayerMode.PassThrough)
+        change("New Layer Group", insertAboveActive(d, g))
+    }
+
+    /** Puts the active layer (or group) into a new group of its own. */
+    fun groupActive() {
+        val d = doc ?: return
+        val a = d.active ?: return
+        if (blockedByBusy()) return
+        endInteractions()
+        val g = Layer(Layer.newId(), layerName(d, "Group"), Bitmaps.blank(1, 1), group = true, mode = LayerMode.PassThrough, parent = a.parent)
+        val range = Tree.range(d.layers, a.id)
+        val layers = d.layers.toMutableList()
+        layers[range.last] = a.copy(parent = g.id)
+        layers.add(range.last + 1, g)
+        change("Put in New Group", d.copy(layers = layers, activeId = g.id))
+    }
+
+    fun mergeGroup() {
+        val a = doc?.active?.takeIf { it.group } ?: return
+        docJob("Merge Layer Group") { DocOps.mergeGroup(it, a.id) }
+    }
+
+    fun setExpanded(id: Long, expanded: Boolean) {
+        val d = doc ?: return
+        val l = d.layer(id)?.takeIf { it.group } ?: return
+        silently(d.replace(l.copy(expanded = expanded)))
     }
 
     fun setActiveLayer(id: Long) {
@@ -1164,6 +1230,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     fun addMask(init: MaskInit) {
         val d = doc ?: return
         val a = d.active ?: return
+        if (refuseGroup(d)) return
         if (a.mask != null) { say("“${a.name}” already has a mask"); return }
         docJob("Add Layer Mask") { state ->
             val l = state.layer(a.id) ?: return@docJob null
@@ -1213,16 +1280,17 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         change(if (enabled) "Enable Layer Mask" else "Disable Layer Mask", d.replace(a.copy(maskEnabled = enabled)))
     }
 
-    fun cropLayerToContent() = doc?.active?.let { a ->
+    fun cropLayerToContent() = doc?.takeIf { !refuseGroup(it) }?.active?.let { a ->
         docJob("Crop Layer to Content") { DocOps.cropLayerToContent(it, a.id) ?: run { say("Nothing to crop"); null } }
     }
 
-    fun layerToImageSize() = doc?.active?.let { a -> docJob("Layer to Image Size") { DocOps.layerToImageSize(it, a.id) } }
-    fun scaleLayer(w: Int, h: Int) = doc?.active?.let { a -> docJob("Scale Layer") { DocOps.scaleLayer(it, a.id, w, h) } }
+    fun layerToImageSize() = doc?.takeIf { !refuseGroup(it) }?.active?.let { a -> docJob("Layer to Image Size") { DocOps.layerToImageSize(it, a.id) } }
+    fun scaleLayer(w: Int, h: Int) = doc?.takeIf { !refuseGroup(it) }?.active?.let { a -> docJob("Scale Layer") { DocOps.scaleLayer(it, a.id, w, h) } }
 
     fun alphaToSelection() {
         val d = doc ?: return
         val a = d.active ?: return
+        if (refuseGroup(d)) return
         docJob("Alpha to Selection") { it.copy(selection = Selections.make(Selections.alphaOf(a, it.width, it.height))) }
     }
 
@@ -1314,6 +1382,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun copy(merged: Boolean = false) {
         if (blockedByBusy()) return
+        if (!merged && doc?.let(::refuseGroup) == true) return
         clipboard = copySelected(merged) ?: run { say("Nothing to copy"); return }
         publishClipboard()
         say(if (merged) "Copied the visible image" else "Copied")
@@ -1321,6 +1390,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun cut() {
         if (blockedByBusy()) return
+        if (doc?.let(::refuseGroup) == true) return
         clipboard = copySelected(false) ?: return
         publishClipboard()
         clear("Cut")
@@ -1386,6 +1456,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     fun layerViaSelection(cut: Boolean) {
         val d = doc ?: return
         val a = d.active ?: return
+        if (refuseGroup(d)) return
         if (d.selection == null) { say("Select something first"); return }
         if (blockedByBusy()) return
         endInteractions()
@@ -1399,7 +1470,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             val c = Canvas(piece)
             c.drawBitmap(l.bitmap, (l.x - area.left).toFloat(), (l.y - area.top).toFloat(), null)
             Bitmaps.maskIn(c, sel.mask, -area.left.toFloat(), -area.top.toFloat())
-            val newLayer = Layer(Layer.newId(), layerName(state, "${l.name} ${if (cut) "cut" else "copy"}"), piece, area.left, area.top)
+            val newLayer = Layer(Layer.newId(), layerName(state, "${l.name} ${if (cut) "cut" else "copy"}"), piece, area.left, area.top,
+                parent = l.parent)
             var base = state
             if (cut) {
                 val rest = Bitmaps.copy(l.bitmap)
@@ -1436,7 +1508,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         val d = doc ?: return
         if (busy != null) return
         // Tapping an existing text layer edits it.
-        val hit = d.layers.asReversed().firstOrNull { it.visible && it.text != null && it.bounds.contains(x, y) }
+        val byId = Tree.byId(d.layers)
+        val hit = d.layers.asReversed().firstOrNull { Tree.shows(it, byId) && it.text != null && it.bounds.contains(x, y) }
         text = if (hit != null) {
             silently(d.copy(activeId = hit.id))
             TextSession(hit.id, hit.x, hit.y, hit.text!!)
@@ -1497,6 +1570,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun startCurves(levels: Boolean = false) {
         val d = doc ?: run { say("Open an image first"); return }
+        if (refuseGroup(d)) return
         val layer = targetOf(d) ?: return
         if (blockedByBusy()) return
         endInteractions()
@@ -1510,6 +1584,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** Colours > Auto > White Balance: each colour channel stretched to its 0.5%/99.5% points. */
     fun whiteBalance() {
         val d = doc ?: run { say("Open an image first"); return }
+        if (refuseGroup(d)) return
         val layer = targetOf(d) ?: return
         val onMask = editingMask
         docJob("White Balance") { state ->
@@ -1604,6 +1679,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     fun repeatLastFilter() {
         val (op, values) = lastFilter ?: run { say("No filter used yet"); return }
         val d = doc ?: return
+        if (refuseGroup(d)) return
         val layer = targetOf(d) ?: return
         val onMask = editingMask
         if (blockedByBusy()) return
@@ -1617,6 +1693,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** Opens the parameter panel for [operation], or applies it straight away if it has no settings. */
     fun startFilter(operation: String) {
         val d = doc ?: run { say("Open an image first"); return }
+        if (refuseGroup(d)) return
         val layer = targetOf(d) ?: return
         val onMask = editingMask
         if (blockedByBusy()) return

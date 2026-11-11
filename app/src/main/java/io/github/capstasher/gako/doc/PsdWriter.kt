@@ -17,7 +17,7 @@ object PsdWriter {
         LayerMode.SoftLight to "sLit", LayerMode.HardLight to "hLit", LayerMode.Dodge to "div ", LayerMode.Burn to "idiv",
         LayerMode.Darken to "dark", LayerMode.Lighten to "lite", LayerMode.Addition to "lddg", LayerMode.Difference to "diff",
         LayerMode.Exclusion to "smud", LayerMode.Hue to "hue ", LayerMode.Saturation to "sat ", LayerMode.Color to "colr",
-        LayerMode.Luminosity to "lum ",
+        LayerMode.Luminosity to "lum ", LayerMode.PassThrough to "pass",
     )
 
     /**
@@ -29,16 +29,33 @@ object PsdWriter {
         try {
             val records = ByteArrayOutputStream()
             val li = DataOutputStream(records)
-            li.writeShort(-doc.layers.size)          // negative: the merged image's alpha is transparency
+            // Groups become a divider record below their children and a folder record above them.
+            val count = doc.layers.size + doc.layers.count { it.group }
+            li.writeShort(-count)                    // negative: the merged image's alpha is transparency
             var channelBytes = 0L
+            val empty = ByteArray(2)                 // an empty channel: raw compression, no data
             DataOutputStream(tmp.outputStream().buffered(1 shl 16)).use { chan ->
-                for (l in doc.layers) {
-                    val planes = planesOf(l.bitmap)
-                    val mask = l.mask?.let { redPlane(it) }
-                    val encoded = planes.map { rle(it, l.width, l.height) } + listOfNotNull(mask?.let { rle(it, l.width, l.height) })
-                    encoded.forEach { chan.write(it); channelBytes += it.size }
-                    writeRecord(li, l, encoded.map { it.size }, mask != null)
+                fun emptyRecord(l: Layer, section: Int, name: String) {
+                    repeat(4) { chan.write(empty); channelBytes += 2 }
+                    writeRecord(li, l.copy(name = name), listOf(2, 2, 2, 2), false, section)
                 }
+                fun emit(parent: Long?) {
+                    for (l in doc.layers) {
+                        if (l.parent != parent) continue
+                        if (l.group) {
+                            emptyRecord(l, 3, "</Layer group>")
+                            emit(l.id)
+                            emptyRecord(l, if (l.expanded) 1 else 2, l.name)
+                            continue
+                        }
+                        val planes = planesOf(l.bitmap)
+                        val mask = l.mask?.let { redPlane(it) }
+                        val encoded = planes.map { rle(it, l.width, l.height) } + listOfNotNull(mask?.let { rle(it, l.width, l.height) })
+                        encoded.forEach { chan.write(it); channelBytes += it.size }
+                        writeRecord(li, l, encoded.map { it.size }, mask != null)
+                    }
+                }
+                emit(null)
             }
             li.flush()
             val recordBytes = records.size().toLong()
@@ -73,13 +90,15 @@ object PsdWriter {
         }
     }
 
-    private fun writeRecord(li: DataOutputStream, l: Layer, sizes: List<Int>, hasMask: Boolean) {
-        li.writeInt(l.y); li.writeInt(l.x); li.writeInt(l.y + l.height); li.writeInt(l.x + l.width)
+    /** One layer record; [section] 1/2 is a group folder (open/closed), 3 the end of a group. */
+    private fun writeRecord(li: DataOutputStream, l: Layer, sizes: List<Int>, hasMask: Boolean, section: Int = 0) {
+        if (section != 0) { li.writeInt(0); li.writeInt(0); li.writeInt(0); li.writeInt(0) }
+        else { li.writeInt(l.y); li.writeInt(l.x); li.writeInt(l.y + l.height); li.writeInt(l.x + l.width) }
         li.writeShort(sizes.size)
         val ids = intArrayOf(-1, 0, 1, 2) + if (hasMask) intArrayOf(-2) else intArrayOf()
         for ((k, id) in ids.withIndex()) { li.writeShort(id); li.writeInt(sizes[k]) }
         li.writeBytes("8BIM")
-        li.writeBytes(modes[l.mode] ?: "norm")
+        li.writeBytes(if (section != 0 && l.mode == LayerMode.PassThrough) "pass" else modes[l.mode]?.takeIf { it != "pass" } ?: "norm")
         li.writeByte((l.opacity * 255).toInt().coerceIn(0, 255))
         li.writeByte(0)                              // clipping
         li.writeByte(if (l.visible) 0 else 2)        // flags: hidden
@@ -102,6 +121,12 @@ object PsdWriter {
             DataOutputStream(u).apply { writeInt(l.name.length); l.name.forEach { writeChar(it.code) } }
         }.toByteArray()
         ex.writeBytes("8BIM"); ex.writeBytes("luni"); ex.writeInt(uni.size); ex.write(uni)
+        if (section != 0) {
+            // Section divider: type, then (for folders) the group's own blend mode.
+            ex.writeBytes("8BIM"); ex.writeBytes("lsct")
+            if (section == 3) { ex.writeInt(4); ex.writeInt(3) }
+            else { ex.writeInt(12); ex.writeInt(section); ex.writeBytes("8BIM"); ex.writeBytes(modes[l.mode] ?: "norm") }
+        }
         ex.flush()
         li.writeInt(extra.size()); li.write(extra.toByteArray())
     }

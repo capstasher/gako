@@ -46,6 +46,7 @@ import kotlin.math.roundToInt
 import io.github.capstasher.gako.doc.Compositor
 import io.github.capstasher.gako.doc.DocState
 import io.github.capstasher.gako.doc.Layer
+import io.github.capstasher.gako.doc.Tree
 import io.github.capstasher.gako.editor.EditorViewModel
 import io.github.capstasher.gako.editor.TextSession
 import io.github.capstasher.gako.tools.Tool
@@ -236,6 +237,10 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
         val tool = vm.tool
         val active = d.active
         val moveDelta = input.moveDelta
+        // The Move tool moves a group with everything in it.
+        val moving: Set<Long> = if (moveDelta != null && active != null) {
+            if (active.group) d.layers.filter { Tree.isInside(it, active.id, Tree.byId(d.layers)) }.map { it.id }.toSet() else setOf(active.id)
+        } else emptySet()
         val transform = if (tool == Tool.Transform && vm.session == null) input.transformFor(d) else null
         val gradient = input.gradient
         val px = 1f / s   // one screen pixel in canvas units
@@ -249,9 +254,9 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
             nc.clipRect(bounds)
             val iso = nc.saveLayer(bounds, null)
             val smooth = s < 2f
-            for (layer in d.layers) {
+            fun drawLeaf(nc: android.graphics.Canvas, layer: Layer) {
                 val editingThis = text != null && text.layerId == layer.id
-                if (layer.visible && !editingThis) {
+                if (!editingThis) {
                     layer.bitmap.setHasMipMap(smooth)
                     val paint = Compositor.layerPaint(layer, smooth)
                     when {
@@ -267,7 +272,7 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
                                 nc.drawBitmap(preview, m, paint.apply { isFilterBitmap = true })
                             } else drawPreview(nc, layer, preview, d, paint, vm.editingMask)
                         }
-                        layer === active && moveDelta != null -> Compositor.drawLayer(nc, layer, paint,
+                        layer.id in moving && moveDelta != null -> Compositor.drawLayer(nc, layer, paint,
                             Matrix().apply { setTranslate(layer.x + moveDelta.x, layer.y + moveDelta.y) })
                         layer === active && transform != null && transform.changed ->
                             Compositor.drawLayer(nc, layer, paint.apply { isFilterBitmap = true }, transform.matrix())
@@ -290,6 +295,11 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
                     (text.layerId == layer.id || (text.layerId == null && layer === active))) {
                     nc.drawBitmap(textBitmap, text.x.toFloat(), text.y.toFloat(), null)
                 }
+            }
+            Compositor.drawTree(nc, d.layers, bounds) { c, l -> drawLeaf(c, l) }
+            // New text with a group active (no pixel layer to sit on) still shows.
+            if (text != null && textBitmap != null && text.layerId == null && active?.group == true) {
+                nc.drawBitmap(textBitmap, text.x.toFloat(), text.y.toFloat(), null)
             }
             nc.restoreToCount(iso)
             nc.restore()
@@ -334,7 +344,7 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
             val gold = Paint(ink).apply { color = Gako.Gold.toArgb(); strokeWidth = 2f * px }
 
             // Active layer's boundary when it isn't the canvas (GIMP's yellow dashes).
-            if (active != null && vm.session == null && (active.x != 0 || active.y != 0 || active.width != d.width || active.height != d.height) &&
+            if (active != null && !active.group && vm.session == null && (active.x != 0 || active.y != 0 || active.width != d.width || active.height != d.height) &&
                 transform == null) {
                 val r = RectF(active.bounds).apply { if (moveDelta != null) offset(moveDelta.x, moveDelta.y) }
                 nc.drawRect(r, Paint(dash).apply { color = Gako.Gold.toArgb() })
