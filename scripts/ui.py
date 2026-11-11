@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Drive GAKO on a device or emulator by what's on the screen, not by pixel coordinates.
 
-Buttons, menu items and messages are found by their text or accessibility label, read from
-Android's UI dump, so a layout change doesn't break a script. Points on the image are given in
-image pixels and mapped to the screen (with the view at "Fit").
+Buttons, menu items and messages are found by their text or accessibility label, so a layout
+change doesn't break a script. Points on the image are given in image pixels and mapped to the
+screen. Debug builds answer from an inspector inside the app (milliseconds, any zoom, plus the
+editor's state); otherwise the script falls back to uiautomator (~2 s a look, view at "Fit").
 
   scripts/ui.py ls                         # what's on screen: labels and where they are
+  scripts/ui.py state                      # the editor's state: image, layers, selection, paths, tool…
   scripts/ui.py text                       # just the texts (messages included)
   scripts/ui.py tap "Layers"               # tap by label (exact, else contains; --2 for the 2nd match)
   scripts/ui.py long "Background"          # long-press by label
@@ -22,8 +24,10 @@ image pixels and mapped to the screen (with the view at "Fit").
 
 Join several commands with "+":  scripts/ui.py tap Layers + tap "More layer actions" + text
 """
+import json
 import os
 import re
+import socket
 import subprocess
 import sys
 import time
@@ -31,6 +35,34 @@ import xml.etree.ElementTree as ET
 
 PKG = "io.github.capstasher.gako"
 SHOTS = os.environ.get("GAKO_SHOTS", "/tmp/gako-shots")
+
+
+PORT = int(os.environ.get("GAKO_INSPECTOR_PORT", "7781"))
+_forwarded = False
+
+
+def inspector(request):
+    """Ask the debug build's inspector (see app/src/debug/.../Inspector.kt); None if it isn't there."""
+    global _forwarded
+    if not _forwarded:
+        subprocess.run(["adb", "forward", f"tcp:{PORT}", "localabstract:gako-inspector"], capture_output=True)
+        _forwarded = True
+    try:
+        with socket.create_connection(("127.0.0.1", PORT), timeout=4) as s:
+            s.sendall((request + "\n").encode())
+            data = b""
+            while True:
+                chunk = s.recv(65536)
+                if not chunk:
+                    break
+                data += chunk
+        d = json.loads(data)
+    except (OSError, ValueError):
+        return None
+    if "error" in d:
+        print(f"inspector: {d['error']}", file=sys.stderr)
+        return None
+    return d
 
 
 def adb(*args, check=False):
@@ -43,12 +75,13 @@ def adb(*args, check=False):
 # ---------------------------------------------------------------- the screen
 
 class Node:
-    def __init__(self, e):
-        self.text = e.get("text", "")
-        self.desc = e.get("content-desc", "")
-        self.clickable = e.get("clickable") == "true"
-        l, t, r, b = map(int, re.findall(r"\d+", e.get("bounds", "[0,0][0,0]")))
-        self.box = (l, t, r, b)
+    def __init__(self, text, desc, clickable, box, win=0):
+        self.text, self.desc, self.clickable, self.box, self.win = text, desc, clickable, tuple(box), win
+
+    @staticmethod
+    def from_xml(e):
+        return Node(e.get("text", ""), e.get("content-desc", ""), e.get("clickable") == "true",
+                    map(int, re.findall(r"\d+", e.get("bounds", "[0,0][0,0]"))))
 
     @property
     def label(self):
@@ -66,13 +99,16 @@ class Node:
 
 
 def screen():
+    fast = inspector("ui")
+    if fast is not None:
+        return [Node(n["text"], n["desc"], n["click"], n["box"], n["win"]) for n in fast["nodes"]]
     raw = subprocess.run(["adb", "exec-out", "uiautomator", "dump", "/dev/tty"], capture_output=True, text=True).stdout
     raw = raw[: raw.rfind(">") + 1] if ">" in raw else raw
     try:
         root = ET.fromstring(raw)
     except ET.ParseError:
         return []
-    return [Node(e) for e in root.iter("node")]
+    return [Node.from_xml(e) for e in root.iter("node")]
 
 
 def find(label, nth=1, nodes=None):
@@ -81,8 +117,9 @@ def find(label, nth=1, nodes=None):
     exact = [n for n in labelled if label in (n.text, n.desc)]
     loose = [n for n in labelled if label.lower() in n.text.lower() or label.lower() in n.desc.lower()]
     hits = exact or loose
-    # Several nodes can carry the same label (a row and its text): prefer clickable, then the smallest.
-    hits.sort(key=lambda n: (not n.clickable, n.area))
+    # Several nodes can carry the same label: prefer the top window (a dialog over the screen),
+    # then clickable, then the smallest.
+    hits.sort(key=lambda n: (-n.win, not n.clickable, n.area))
     return hits[nth - 1] if len(hits) >= nth else None
 
 
@@ -97,7 +134,12 @@ def need(label, nth=1):
 # ---------------------------------------------------------------- the image
 
 def canvas():
-    """The canvas node, the image size, and the image→screen mapping at Fit."""
+    """Image pixel → screen pixel: from the inspector at any zoom, else worked out at Fit."""
+    if inspector("img 0 0") is not None:
+        def via_inspector(x, y):
+            p = inspector(f"img {x} {y}")
+            return p["x"], p["y"]
+        return via_inspector
     nodes = screen()
     c = next((n for n in nodes if n.desc.startswith("Image, ")), None)
     if c is None:
@@ -126,6 +168,11 @@ def cmd(args):
             if n.label:
                 x, y = n.centre
                 print(f"{n.label!r:50.50} at {x},{y}{'  (tap)' if n.clickable else ''}")
+    elif c == "state":
+        st = inspector("state")
+        if st is None:
+            sys.exit("No inspector (it's in debug builds): can't read the editor's state")
+        print(json.dumps(st, indent=1))
     elif c == "text":
         seen = []
         for n in screen():
@@ -145,14 +192,14 @@ def cmd(args):
         while time.time() < limit:
             if find(rest[0], nth):
                 return
-            time.sleep(0.3)
+            time.sleep(0.1)
         sys.exit(f'Timed out waiting for "{rest[0]}"')
     elif c == "gone":
         limit = time.time() + (float(rest[1]) if len(rest) > 1 else 10)
         while time.time() < limit:
             if not find(rest[0], nth):
                 return
-            time.sleep(0.3)
+            time.sleep(0.1)
         sys.exit(f'Still showing "{rest[0]}"')
     elif c == "img":
         x, y = canvas()(float(rest[0]), float(rest[1]))
