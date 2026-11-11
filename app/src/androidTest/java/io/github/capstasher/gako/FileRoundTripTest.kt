@@ -144,6 +144,18 @@ class FileRoundTripTest {
         assertEquals(2, flags(XcfReader.read(ByteArrayInputStream(bytes))) and 2)
         // For checking in GIMP itself.
         java.io.File(ctx.targetContext.cacheDir, "fidelity-gako.xcf").writeBytes(bytes)
+        // An untouched GIMP text layer carries only GIMP's text settings, so GIMP's later edits win:
+        // as if GIMP changed the text to "Bye", GAKO then shows "Bye".
+        assertTrue(!String(bytes, Charsets.ISO_8859_1).contains("gako-text"))
+        val hi0 = again.named("Hi")
+        val gimpEdited = hi0.xcf!!.parasites.map {
+            if (it.name != "gimp-text-layer") it
+            else io.github.capstasher.gako.doc.XcfParasite(it.name, it.flags,
+                String(it.data, Charsets.ISO_8859_1).replace("(text \"Hi\")", "(text \"Bye\")").toByteArray(Charsets.ISO_8859_1))
+        }
+        val edited = again.replace(hi0.copy(xcf = io.github.capstasher.gako.doc.XcfLayerData(hi0.xcf!!.props, gimpEdited, hi0.xcf!!.pixelSum, hi0.xcf!!.gimpText)))
+        val reopened = XcfReader.read(ByteArrayInputStream(ByteArrayOutputStream().also { XcfWriter.write(edited, it) }.toByteArray()))
+        assertEquals("Bye", reopened.named("Hi").text?.text)
         // Its text rewritten in GAKO: GIMP's old text settings go (else GIMP would bring back "Hi").
         val hi = again.named("Hi")
         val retexted = again.replace(hi.copy(text = hi.text!!.copy(text = "Hello")))

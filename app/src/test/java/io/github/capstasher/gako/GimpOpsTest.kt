@@ -70,6 +70,11 @@ class GimpOpsTest {
         assertEquals(null, l.section("channel", "blue").num("gamma"))
     }
 
+    @Test fun gimpTextMarkupBecomesPlainText() {
+        assertEquals("Tom & Jerry & <3 é", io.github.capstasher.gako.doc.GimpText.unmarkup(
+            "<markup><b>Tom</b> &amp; Jerry &#38; &lt;3 &#xe9;</markup>"))
+    }
+
     @Test fun brightnessContrastIsGimpsFormula() {
         // brightness 0.2 (halved), contrast 0.3: slant tan((0.3 + 1) π/4).
         val slant = Math.tan(1.3 * Math.PI / 4)

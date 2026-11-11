@@ -296,9 +296,9 @@ class ToolInput(private val vm: EditorViewModel) {
 
     /** Drops anything half-done. */
     fun reset() {
-        stroke?.let { it.cancel(); vm.pixelsChanged() }
+        stroke?.let { it.cancel(); vm.pixelsRestored(it.layerId) }
         stroke = null
-        warp?.let { if (it.strokeActive) { it.cancelStroke(); vm.pixelsChanged() } }
+        warp?.let { if (it.strokeActive) { it.cancelStroke(); vm.pixelsRestored(it.layerId) } }
         warp = null
         warpAt = null
         measure = null
@@ -416,7 +416,7 @@ class ToolInput(private val vm: EditorViewModel) {
     fun move(x0: Float, y0: Float, pressure: Float) {
         val d = doc ?: return
         lastPressure = pressure
-        val (x, y) = if (tool == Tool.RectSelect || tool == Tool.EllipseSelect || tool == Tool.Crop) snapToGuides(d, x0, y0).let { it.x to it.y } else x0 to y0
+        val (x, y) = if (tool == Tool.RectSelect || tool == Tool.EllipseSelect || (tool == Tool.Crop && mode != Drag.Move)) snapToGuides(d, x0, y0).let { it.x to it.y } else x0 to y0
         when (tool) {
             Tool.Paintbrush, Tool.Pencil, Tool.Airbrush, Tool.Eraser, Tool.DodgeBurn, Tool.Clone, Tool.Heal, Tool.Smudge, Tool.Blur, Tool.FilterBrush -> {
                 val s = stroke ?: return
@@ -561,9 +561,9 @@ class ToolInput(private val vm: EditorViewModel) {
     /** A second finger arrived or the gesture was taken over: undo whatever this gesture did. */
     fun cancel() {
         airJob?.cancel()
-        stroke?.let { it.cancel(); vm.pixelsChanged() }
+        stroke?.let { it.cancel(); vm.pixelsRestored(it.layerId) }
         stroke = null
-        warp?.let { if (it.strokeActive) { it.cancelStroke(); vm.pixelsChanged() } }
+        warp?.let { if (it.strokeActive) { it.cancelStroke(); vm.pixelsRestored(it.layerId) } }
         warpAt = null
         dragRect = null
         lasso = null
@@ -739,7 +739,7 @@ class ToolInput(private val vm: EditorViewModel) {
         val w = warp ?: return
         if (!w.strokeActive) return
         val patch = try { w.endStroke("Warp Transform") } catch (e: OutOfMemoryError) {
-            w.cancelStroke(); warp = null; vm.pixelsChanged()
+            w.cancelStroke(); warp = null; vm.pixelsRestored(w.layerId)
             vm.say("Not enough memory to finish that warp"); return
         }
         patch?.let { vm.record(if (warpOnMask) it.forMask() else it) }
@@ -771,9 +771,8 @@ class ToolInput(private val vm: EditorViewModel) {
     /** A stroke ran out of memory: undo it and say so, rather than crash. */
     private fun outOfMemory() {
         airJob?.cancel()
-        stroke?.let { runCatching { it.cancel() } }
+        stroke?.let { runCatching { it.cancel() }; vm.pixelsRestored(it.layerId) } ?: vm.pixelsChanged()
         stroke = null
-        vm.pixelsChanged()
         vm.say("Not enough memory for that stroke; try a smaller brush or image")
     }
 
