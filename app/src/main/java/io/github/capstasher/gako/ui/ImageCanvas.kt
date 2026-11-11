@@ -493,6 +493,27 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
                     }
                 }
             }
+            // Foreground Select: outside the outline dimmed, the marking strokes tinted.
+            if (tool == Tool.ForegroundSelect) input.fgOutline?.let { o ->
+                @Suppress("UNUSED_VARIABLE") val fr = input.fgRevision
+                val outside = android.graphics.Path(o).apply { fillType = android.graphics.Path.FillType.INVERSE_WINDING }
+                nc.save()
+                nc.clipRect(0f, 0f, d.width.toFloat(), d.height.toFloat())
+                nc.drawPath(outside, Paint().apply { color = android.graphics.Color.argb(120, 0, 0, 0) })
+                nc.restore()
+                nc.drawPath(o, ink)
+                nc.drawPath(o, dash)
+                val mark = Paint().apply {
+                    style = Paint.Style.STROKE
+                    strokeCap = Paint.Cap.ROUND
+                    strokeJoin = Paint.Join.ROUND
+                    isAntiAlias = true
+                }
+                for (s in input.fgStrokes) nc.drawPath(s.path, mark.apply {
+                    strokeWidth = s.width
+                    color = if (s.foreground) android.graphics.Color.argb(150, 210, 168, 78) else android.graphics.Color.argb(150, 60, 90, 200)
+                })
+            }
             // The Measure tool's line.
             if (tool == Tool.Measure) input.measure?.let { (a, b) ->
                 nc.drawLine(a.x, a.y, b.x, b.y, ink)

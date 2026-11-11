@@ -8,6 +8,7 @@ import androidx.compose.material.icons.outlined.Fingerprint
 import androidx.compose.material.icons.outlined.Brush
 import androidx.compose.material.icons.outlined.Colorize
 import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.ContentCut
 import androidx.compose.material.icons.outlined.Crop
 import androidx.compose.material.icons.outlined.CropFree
 import androidx.compose.material.icons.outlined.Draw
@@ -44,6 +45,8 @@ enum class Tool(val label: String, val icon: ImageVector, val group: ToolGroup, 
     SelectBrush("Selection Brush", Icons.Outlined.FormatPaint, ToolGroup.Select, "Paint over what you want selected"),
     FuzzySelect("Fuzzy Select", Icons.Outlined.AutoFixNormal, ToolGroup.Select, "Tap a region of similar colour"),
     ColorSelect("Select by Colour", Icons.Outlined.InvertColors, ToolGroup.Select, "Tap a colour to select it everywhere"),
+    ForegroundSelect("Foreground Select", Icons.Outlined.ContentCut, ToolGroup.Select,
+        "Draw roughly around the object, then paint over it"),
     Paths("Paths", Icons.Outlined.Polyline, ToolGroup.Select,
         "Tap for corners, drag for curves, tap the first point to close"),
     Paintbrush("Paintbrush", Icons.Outlined.Brush, ToolGroup.Paint, "Paint with the foreground colour"),
@@ -73,6 +76,7 @@ enum class Tool(val label: String, val icon: ImageVector, val group: ToolGroup, 
         SelectBrush -> "Sel. Brush"
         FuzzySelect -> "Fuzzy"
         ColorSelect -> "By Colour"
+        ForegroundSelect -> "Foreground"
         Paintbrush -> "Brush"
         DodgeBurn -> "Dodge/Burn"
         FilterBrush -> "Filter Brush"

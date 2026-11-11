@@ -34,7 +34,8 @@ app/src/main/java/io/github/capstasher/gako/
   ui/                   Compose: EditorScreen (layout, dock), ImageCanvas (GPU drawing + gestures),
                         MenuBar/Menus, ToolOptionsBar (+ ToolPalette), LayersPanel, ParamPanel,
                         CurvesPanel, TextPanel, ExportPanel, PathsDialog, Dialogs (incl. colour picker)
-native/bridge/          C bridge over GEGL: list/describe/apply operations, bounds, apply_rect
+native/bridge/          C bridge over GEGL: list/describe/apply operations, bounds, apply_rect, matting
+                        (gegl:matting-global with a trimap, for Foreground Select)
 ```
 
 ## The ideas

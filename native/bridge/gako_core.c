@@ -625,3 +625,80 @@ fail:
   g_clear_object (&graph);
   return -1;
 }
+
+int
+gako_core_matting (const uint8_t    *src,
+                   int               width,
+                   int               height,
+                   int               src_stride,
+                   const uint8_t    *trimap,
+                   int               trimap_stride,
+                   int               iterations,
+                   uint8_t          *alpha_out,
+                   int               alpha_stride,
+                   volatile int     *cancel,
+                   GakoProgressFunc  progress,
+                   void             *progress_data,
+                   char            **error_out)
+{
+  const Babl *format = babl_format (GAKO_PIXEL_FORMAT);
+  const Babl *y8 = babl_format ("Y u8");
+  GeglRectangle rect = { 0, 0, width, height };
+  GeglBuffer *in_buf, *tri_buf, *out_buf;
+  GeglNode *graph, *in_src, *tri_src, *op, *sink;
+  GeglProcessor *processor;
+  double fraction = 0.0;
+  int result = 0;
+
+  if (width <= 0 || height <= 0)
+    {
+      if (error_out)
+        *error_out = g_strdup ("Nothing to work on");
+      return -1;
+    }
+  if (!gegl_has_operation ("gegl:matting-global"))
+    {
+      if (error_out)
+        *error_out = g_strdup ("gegl:matting-global isn't available");
+      return -1;
+    }
+
+  in_buf = gegl_buffer_new (&rect, format);
+  gegl_buffer_set (in_buf, &rect, 0, format, src, src_stride);
+  tri_buf = gegl_buffer_new (&rect, y8);
+  gegl_buffer_set (tri_buf, &rect, 0, y8, trimap, trimap_stride);
+  out_buf = gegl_buffer_new (&rect, babl_format ("Y float"));
+
+  graph = gegl_node_new ();
+  in_src = gegl_node_new_child (graph, "operation", "gegl:buffer-source", "buffer", in_buf, NULL);
+  tri_src = gegl_node_new_child (graph, "operation", "gegl:buffer-source", "buffer", tri_buf, NULL);
+  op = gegl_node_new_child (graph, "operation", "gegl:matting-global",
+                            "iterations", (gint) MAX (1, iterations), NULL);
+  sink = gegl_node_new_child (graph, "operation", "gegl:write-buffer", "buffer", out_buf, NULL);
+  gegl_node_link (in_src, op);
+  gegl_node_connect (tri_src, "output", op, "aux");
+  gegl_node_link (op, sink);
+
+  processor = gegl_node_new_processor (sink, &rect);
+  while (gegl_processor_work (processor, &fraction))
+    {
+      if (cancel && *cancel)
+        {
+          result = 1;
+          break;
+        }
+      if (progress)
+        progress (fraction, progress_data);
+    }
+  g_object_unref (processor);
+
+  /* The matte is linear coverage: read it back as plain Y (no gamma). */
+  if (result == 0)
+    gegl_buffer_get (out_buf, &rect, 1.0, y8, alpha_out, alpha_stride, GEGL_ABYSS_NONE);
+
+  g_object_unref (graph);
+  g_object_unref (in_buf);
+  g_object_unref (tri_buf);
+  g_object_unref (out_buf);
+  return result;
+}

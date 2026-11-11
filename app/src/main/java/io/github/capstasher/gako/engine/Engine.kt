@@ -48,6 +48,7 @@ object Engine {
         operation: String, params: String, src: Bitmap, dst: Bitmap, outX: Int, outY: Int, listener: ProgressListener?,
     ): Int
     @JvmStatic private external fun nativeBounds(operation: String, params: String, width: Int, height: Int): IntArray?
+    @JvmStatic private external fun nativeMatting(src: Bitmap, trimap: ByteArray, iterations: Int, alpha: ByteArray): Int
     @JvmStatic private external fun nativeCancel()
     @JvmStatic private external fun nativeLastError(): String?
 
@@ -168,6 +169,28 @@ object Engine {
                 else -> { dst.recycle(); Result.Failed(nativeLastError() ?: "Unknown engine error") }
             }
         }
+    }
+
+    /**
+     * Foreground matting (GIMP's Foreground Select): the foreground's alpha for [src] given a
+     * trimap of the same size (0 background, 255 foreground, anything else unknown).
+     */
+    suspend fun matting(src: Bitmap, trimap: ByteArray, iterations: Int = 10): Result2 = withContext(Dispatchers.Default) {
+        lock.withLock {
+            ensureActive()
+            val alpha = ByteArray(src.width * src.height)
+            when (nativeMatting(src, trimap, iterations, alpha)) {
+                0 -> Result2.Ok(alpha)
+                1 -> Result2.Cancelled
+                else -> Result2.Failed(nativeLastError() ?: "Unknown engine error")
+            }
+        }
+    }
+
+    sealed interface Result2 {
+        class Ok(val alpha: ByteArray) : Result2
+        data object Cancelled : Result2
+        class Failed(val message: String) : Result2
     }
 
     private const val MAX_GROW = 2048

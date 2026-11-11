@@ -75,6 +75,25 @@ int gako_core_bounds (const char *operation,
                       int        *h,
                       char      **error);
 
+/* Foreground matting, as GIMP's Foreground Select does it (gegl:matting-global).
+ * src: premultiplied RGBA u8 (as for gako_core_apply). trimap: width×height bytes, 0 = background,
+ * 255 = foreground, anything else = unknown. Writes the foreground's alpha (0–255) into alpha_out.
+ * There must be some foreground and some background next to the unknown area, or the result is all 0.
+ * Returns 0 on success, 1 if cancelled, -1 on error (see *error, free with gako_free). */
+int gako_core_matting (const uint8_t    *src,
+                       int               width,
+                       int               height,
+                       int               src_stride,
+                       const uint8_t    *trimap,
+                       int               trimap_stride,
+                       int               iterations,
+                       uint8_t          *alpha_out,
+                       int               alpha_stride,
+                       volatile int     *cancel,
+                       GakoProgressFunc  progress,
+                       void             *progress_data,
+                       char            **error);
+
 void gako_free (void *p);
 
 #ifdef __cplusplus
