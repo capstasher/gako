@@ -218,6 +218,7 @@ private fun MoreLayerActions(vm: EditorViewModel) {
             }
             item("Scale Layer…") { vm.dialog = Dialog.ScaleLayer }()
             item("Layer to Image Size") { vm.layerToImageSize() }()
+            item("Crop to Content") { vm.cropLayerToContent() }()
             item("Alpha to Selection") { vm.alphaToSelection() }()
             item("New from Visible") { vm.newFromVisible() }()
             item("Merge Visible Layers") { vm.mergeVisible() }()

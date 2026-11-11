@@ -1091,6 +1091,10 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         change(if (enabled) "Enable Layer Mask" else "Disable Layer Mask", d.replace(a.copy(maskEnabled = enabled)))
     }
 
+    fun cropLayerToContent() = doc?.active?.let { a ->
+        docJob("Crop Layer to Content") { DocOps.cropLayerToContent(it, a.id) ?: run { say("Nothing to crop"); null } }
+    }
+
     fun layerToImageSize() = doc?.active?.let { a -> docJob("Layer to Image Size") { DocOps.layerToImageSize(it, a.id) } }
     fun scaleLayer(w: Int, h: Int) = doc?.active?.let { a -> docJob("Scale Layer") { DocOps.scaleLayer(it, a.id, w, h) } }
 

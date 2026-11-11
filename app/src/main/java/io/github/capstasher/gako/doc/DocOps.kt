@@ -155,6 +155,18 @@ object DocOps {
             x = (cx - w / 2f).roundToInt(), y = (cy - h / 2f).roundToInt()))
     }
 
+    /** Layer > Crop to Content: shrink the layer to the box around its non-transparent pixels. */
+    fun cropLayerToContent(doc: DocState, id: Long): DocState? {
+        val l = doc.layer(id) ?: return null
+        val box = Selections.make(l.bitmap.extractAlpha())?.bounds ?: return null
+        if (box == Rect(0, 0, l.width, l.height)) return null
+        return doc.replace(l.copy(
+            bitmap = Bitmaps.mutable(Bitmaps.crop(l.bitmap, box)),
+            mask = l.mask?.let { Bitmaps.mutable(Bitmaps.crop(it, box)) },
+            x = l.x + box.left, y = l.y + box.top, text = if (l.text != null && box.left == 0 && box.top == 0) l.text else null,
+        ))
+    }
+
     /** Layer > Layer to Image Size. */
     fun layerToImageSize(doc: DocState, id: Long): DocState {
         val l = doc.layer(id) ?: return doc
