@@ -117,6 +117,8 @@ class ToolInput(private val vm: EditorViewModel) {
 
     private var stroke: PaintStroke? = null
     private var strokeLabel = ""
+    private var smoothed: PointF? = null
+    private var lastRaw: PointF? = null
     private var strokeOnMask = false
     private var airJob: Job? = null
     private var lastPressure = 1f
@@ -275,7 +277,14 @@ class ToolInput(private val vm: EditorViewModel) {
         lastPressure = pressure
         when (tool) {
             Tool.Paintbrush, Tool.Pencil, Tool.Airbrush, Tool.Eraser, Tool.DodgeBurn, Tool.Clone, Tool.Heal, Tool.Smudge, Tool.Blur -> {
-                stroke?.let { it.moveTo(x, y, pressure); vm.pixelsChanged() }
+                val s = stroke ?: return
+                lastRaw = PointF(x, y)
+                // Smoothing trails the finger a little, which irons out wobble.
+                val k = 1f - options.smoothing.coerceIn(0f, 1f) * 0.9f
+                val p = smoothed?.let { PointF(it.x + (x - it.x) * k, it.y + (y - it.y) * k) } ?: PointF(x, y)
+                smoothed = p
+                s.moveTo(p.x, p.y, pressure)
+                vm.pixelsChanged()
             }
             Tool.RectSelect, Tool.EllipseSelect -> dragRect = RectF(min(down.x, x), min(down.y, y), max(down.x, x), max(down.y, y))
             Tool.FreeSelect -> {
@@ -299,6 +308,8 @@ class ToolInput(private val vm: EditorViewModel) {
         when (tool) {
             Tool.Paintbrush, Tool.Pencil, Tool.Airbrush, Tool.Eraser, Tool.DodgeBurn, Tool.Clone, Tool.Heal, Tool.Smudge, Tool.Blur -> {
                 val s = stroke ?: return
+                // Catch up with the finger so the stroke ends where it lifted.
+                if (options.smoothing > 0f) lastRaw?.let { s.moveTo(it.x, it.y, lastPressure) }
                 stroke = null
                 s.finish(strokeLabel)?.let { vm.record(if (strokeOnMask) it.forMask() else it) }
                 vm.pixelsChanged()
@@ -410,6 +421,8 @@ class ToolInput(private val vm: EditorViewModel) {
             return
         }
         strokeLabel = tool.label
+        smoothed = PointF(x, y)
+        lastRaw = PointF(x, y)
         vm.pixelsChanged()
         if (tool == Tool.Airbrush) {
             airJob = vm.viewModelScope.launch {

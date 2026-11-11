@@ -24,7 +24,8 @@ operation) for Android, and puts a touch interface on top designed for one hand 
 
 **Tools** (one finger uses the tool, two fingers always pan and zoom)
 - Paint: paintbrush, pencil, airbrush, eraser, clone, heal, smudge, blur, dodge/burn, bucket fill, gradient
-  (linear/radial/mirrored, FG→BG or FG→transparent), text (re-editable, with outline), colour picker; stylus pressure
+  (linear/radial/mirrored, FG→BG or FG→transparent), text (re-editable, with outline), colour picker;
+  round, square or calligraphy brushes with angle, stroke smoothing, stylus pressure
 - Paths: Bézier paths by tapping (corners) and dragging (curves); selection from path, stroke, fill
 - Select: rectangle (optionally rounded), ellipse, free (lasso), fuzzy, by colour; replace/add/subtract/intersect, feather;
   Select menu: all, none, invert, feather, grow, shrink, border, from layer alpha

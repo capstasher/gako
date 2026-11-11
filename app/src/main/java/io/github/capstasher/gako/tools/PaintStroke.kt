@@ -48,7 +48,9 @@ class PaintStroke(
 
     private val baseSize = options.size.coerceAtLeast(1f)
     private val hard = tool == Tool.Pencil
-    private val dab: Bitmap? = if (hard) null else dabBitmap(baseSize, if (tool == Tool.Airbrush) 0.2f else options.hardness)
+    private val round = options.brushShape == BrushShape.Round
+    private val dab: Bitmap? = if (hard && round) null
+        else dabBitmap(baseSize, if (hard) 1f else if (tool == Tool.Airbrush) 0.2f else options.hardness, options.brushShape, options.brushAngle)
     private val dabPaint = Paint().apply {
         isFilterBitmap = true
         if (tool == Tool.Airbrush) alpha = (options.airRate * 160).roundToInt().coerceIn(4, 255)
@@ -259,9 +261,11 @@ class PaintStroke(
         val r = size / 2f
         val box = Rect(floor(x - r - 1).toInt(), floor(y - r - 1).toInt(), ceil(x + r + 1).toInt(), ceil(y + r + 1).toInt())
         if (!box.intersect(0, 0, bmp.width, bmp.height)) return
-        if (hard) {
+        if (hard && dab == null) {
             if (size <= 1.5f) maskCanvas.drawRect(floor(x), floor(y), floor(x) + 1, floor(y) + 1, pencilPaint)
             else maskCanvas.drawCircle(x, y, r, pencilPaint)
+        } else if (hard) {
+            maskCanvas.drawBitmap(dab!!, null, RectF(x - r, y - r, x + r, y + r), pencilPaint)
         } else {
             maskCanvas.drawBitmap(dab!!, null, RectF(x - r, y - r, x + r, y + r), dabPaint)
         }
@@ -351,19 +355,34 @@ class PaintStroke(
     }
 
     companion object {
-        private val dabCache = HashMap<Pair<Int, Int>, Bitmap>()
+        private val dabCache = HashMap<String, Bitmap>()
 
-        /** A round soft dab: solid out to [hardness] of the radius, then a smooth falloff. */
-        fun dabBitmap(size: Float, hardness: Float): Bitmap {
+        /**
+         * A brush dab: solid out to [hardness] of the radius, then a smooth falloff. Round, square
+         * or a calligraphy nib (a flat ellipse), the last two turned by [angle] degrees.
+         */
+        fun dabBitmap(size: Float, hardness: Float, shape: BrushShape = BrushShape.Round, angle: Float = 0f): Bitmap {
             val d = ceil(size).toInt().coerceIn(2, 256)
             val h = (hardness.coerceIn(0f, 1f) * 20).roundToInt()
-            return dabCache.getOrPut(d to h) {
+            val a = if (shape == BrushShape.Round) 0 else angle.roundToInt()
+            return dabCache.getOrPut("$d/$h/$shape/$a") {
                 val b = Bitmap.createBitmap(d, d, Bitmap.Config.ALPHA_8)
                 val bytes = ByteArray(b.rowBytes * d)
                 val r = d / 2f
                 val inner = h / 20f
+                val cos = kotlin.math.cos(Math.toRadians(a.toDouble())).toFloat()
+                val sin = kotlin.math.sin(Math.toRadians(a.toDouble())).toFloat()
                 for (y in 0 until d) for (x in 0 until d) {
-                    val dist = sqrt((x + 0.5f - r) * (x + 0.5f - r) + (y + 0.5f - r) * (y + 0.5f - r)) / r
+                    val px = x + 0.5f - r
+                    val py = y + 0.5f - r
+                    // Into the brush's own axes.
+                    val u = px * cos + py * sin
+                    val v = -px * sin + py * cos
+                    val dist = when (shape) {
+                        BrushShape.Round -> sqrt(px * px + py * py) / r
+                        BrushShape.Square -> max(kotlin.math.abs(u), kotlin.math.abs(v)) / (r * 0.75f)
+                        BrushShape.Calligraphy -> sqrt(u * u + (v / 0.22f) * (v / 0.22f)) / r
+                    }
                     val a = when {
                         dist >= 1f -> 0f
                         dist <= inner -> 1f

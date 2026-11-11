@@ -301,6 +301,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         toolPrefs.edit()
             .putFloat("size", o.size).putFloat("opacity", o.opacity).putFloat("hardness", o.hardness)
             .putInt("threshold", o.threshold).putFloat("feather", o.feather).putBoolean("sampleMerged", o.sampleMerged)
+            .putString("brushShape", o.brushShape.name).putFloat("brushAngle", o.brushAngle).putFloat("smoothing", o.smoothing)
             .apply()
     }
 
@@ -311,6 +312,10 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         threshold = toolPrefs.getInt("threshold", 15),
         feather = toolPrefs.getFloat("feather", 0f),
         sampleMerged = toolPrefs.getBoolean("sampleMerged", false),
+        brushShape = runCatching { io.github.capstasher.gako.tools.BrushShape.valueOf(toolPrefs.getString("brushShape", "Round")!!) }
+            .getOrDefault(io.github.capstasher.gako.tools.BrushShape.Round),
+        brushAngle = toolPrefs.getFloat("brushAngle", 30f),
+        smoothing = toolPrefs.getFloat("smoothing", 0f),
     )
 
     fun setForeground(c: Int) {
