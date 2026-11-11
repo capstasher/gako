@@ -98,18 +98,18 @@ fun LayersPanel(vm: EditorViewModel) {
         HorizontalDivider(color = Gako.InkHigh)
         Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceEvenly) {
-            IconButton(onClick = { vm.dialog = Dialog.NewLayer }) { Icon(Icons.Outlined.Add, "New layer") }
-            IconButton(onClick = vm::duplicateLayer) { Icon(Icons.Outlined.ContentCopy, "Duplicate layer") }
-            IconButton(onClick = { vm.moveLayer(1) }, enabled = d.activeIndex < d.layers.lastIndex) {
+            IconButton(onClick = { vm.dialog = Dialog.NewLayer }, modifier = Modifier.size(40.dp)) { Icon(Icons.Outlined.Add, "New layer") }
+            IconButton(onClick = vm::duplicateLayer, modifier = Modifier.size(40.dp)) { Icon(Icons.Outlined.ContentCopy, "Duplicate layer") }
+            IconButton(onClick = { vm.moveLayer(1) }, enabled = d.activeIndex < d.layers.lastIndex, modifier = Modifier.size(40.dp)) {
                 Icon(Icons.Outlined.ArrowUpward, "Raise layer")
             }
-            IconButton(onClick = { vm.moveLayer(-1) }, enabled = d.activeIndex > 0) {
+            IconButton(onClick = { vm.moveLayer(-1) }, enabled = d.activeIndex > 0, modifier = Modifier.size(40.dp)) {
                 Icon(Icons.Outlined.ArrowDownward, "Lower layer")
             }
-            IconButton(onClick = vm::mergeDown, enabled = d.activeIndex > 0) {
+            IconButton(onClick = vm::mergeDown, enabled = d.activeIndex > 0, modifier = Modifier.size(40.dp)) {
                 Icon(Icons.AutoMirrored.Outlined.CallMerge, "Merge down")
             }
-            IconButton(onClick = vm::deleteLayer, enabled = d.layers.size > 1) { Icon(Icons.Outlined.Delete, "Delete layer") }
+            IconButton(onClick = vm::deleteLayer, enabled = d.layers.size > 1, modifier = Modifier.size(40.dp)) { Icon(Icons.Outlined.Delete, "Delete layer") }
             MoreLayerActions(vm)
         }
     }
@@ -202,7 +202,7 @@ private fun ModePicker(mode: LayerMode, onPick: (LayerMode) -> Unit) {
 private fun MoreLayerActions(vm: EditorViewModel) {
     var open by remember { mutableStateOf(false) }
     Box {
-        IconButton(onClick = { open = true }) { Icon(Icons.Outlined.MoreVert, "More layer actions") }
+        IconButton(onClick = { open = true }, modifier = Modifier.size(40.dp)) { Icon(Icons.Outlined.MoreVert, "More layer actions") }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             fun item(label: String, action: () -> Unit) = @Composable {
                 DropdownMenuItem(text = { Text(label) }, onClick = { open = false; action() })
