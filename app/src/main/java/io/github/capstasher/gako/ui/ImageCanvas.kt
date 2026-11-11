@@ -384,6 +384,8 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
                     !editing && frame != null -> {
                         frame.bitmap.setHasMipMap(smooth)
                         nc.drawBitmap(frame.bitmap, 0f, 0f, pixels)
+                        // The Quick Mask isn't part of the image: its tint goes over the composite.
+                        d.quickMask?.let { drawLayersLive(listOf(it)) }
                     }
                     below != null -> {
                         below.bitmap.setHasMipMap(smooth)
