@@ -98,6 +98,11 @@ native/bridge/          C bridge over GEGL: list/describe/apply operations, boun
   (a DECAL BitmapShader). The GPU canvas is fine, which is why previews looked right while the
   applied result was wrong.
 - Layer masks are opaque grey ARGB bitmaps; `Compositor.maskPaint` turns red into alpha.
+- `AndroidBitmap_unlockPixels` marks the bitmap changed (a new `generationId`, and the GPU uploads it
+  again) even if native code only read it: don't use the generation to tell whether pixels changed.
+- Android's asset packaging drops files ending in `.gz`: gzipped test assets are named `.bin`.
+- On the emulators, a square grid left on (a saved view preference) or the notification shade pulled
+  down by the monkey spoils screen-reading tests; `fresh()` and `devtest.sh` clear both.
 - `Bitmap.createBitmap(src, rect)` may return `src` itself for immutable full-size crops.
 - Jobs that suspend must re-read `vm.doc` before committing; layer property changes are blocked
   while `busy` is set.
