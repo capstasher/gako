@@ -499,9 +499,15 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         if (blockedByBusy()) return
         if (input.hasPendingEdit() || input.stroking) { input.reset(); return }
         if (session != null || text != null || curves != null) return
-        val step = undoStack.removeLastOrNull() ?: return
+        var step = undoStack.removeLastOrNull() ?: return
         when (step) {
-            is Step.Snapshot -> restore(step.before, step.after)
+            is Step.Snapshot -> {
+                // Paths drawn since this step (which moved or changed paths) go, but come back with Redo.
+                val cur = doc
+                if (cur != null && step.before.paths !== step.after.paths && cur.paths !== step.after.paths)
+                    step = Step.Snapshot(step.label, step.before, step.after.copy(paths = cur.paths))
+                restore(step.before, step.after)
+            }
             is Step.Patch -> doc?.layer(step.layerId)?.let { l -> step.target(l)?.let { Bitmaps.put(it, step.before, step.rect.left, step.rect.top) } }
         }
         redoStack.addLast(step)
@@ -516,9 +522,14 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         if (input.stroking) return
         if (session != null || text != null || curves != null) return
         input.reset()
-        val step = redoStack.removeLastOrNull() ?: return
+        var step = redoStack.removeLastOrNull() ?: return
         when (step) {
-            is Step.Snapshot -> restore(step.after, step.before)
+            is Step.Snapshot -> {
+                val cur = doc
+                if (cur != null && step.before.paths !== step.after.paths && cur.paths !== step.before.paths)
+                    step = Step.Snapshot(step.label, step.before.copy(paths = cur.paths), step.after)
+                restore(step.after, step.before)
+            }
             is Step.Patch -> doc?.layer(step.layerId)?.let { l -> step.target(l)?.let { Bitmaps.put(it, step.after, step.rect.left, step.rect.top) } }
         }
         undoStack.addLast(step)
@@ -897,6 +908,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         val old = before?.paths.orEmpty()
         val was = old.getOrNull(pathIndex)
         when {
+            // Paths came back into an image that had none (redo): edit the first, unless one is being drawn.
+            was == null && old.isEmpty() && after.paths.isNotEmpty() && input.path.isEmpty -> { pathIndex = 0; strokeIndex = 0 }
             // A new path that isn't in the document yet stays new.
             was == null -> { pathIndex = after.paths.size; strokeIndex = 0 }
             else -> {
@@ -1438,7 +1451,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         val d = doc ?: return
         if (blockedByBusy()) return
         val l = d.active ?: return
-        if (l.mode != mode) change("Layer Mode", d.replace(l.copy(mode = mode)))
+        // A deliberate change: from now on the file's own GIMP mode number no longer applies.
+        if (l.mode != mode || l.xcfMode != null) change("Layer Mode", d.replace(l.copy(mode = mode, xcfMode = null)))
     }
 
     fun renameLayer(id: Long, name: String) {

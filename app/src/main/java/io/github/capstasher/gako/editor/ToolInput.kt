@@ -142,6 +142,11 @@ class ToolInput(private val vm: EditorViewModel) {
     private var warpRevision = -1
     private var warpOnMask = false
     private var warpLast: PointF? = null
+    /** Android is short of memory: let go of an idle warp mesh (and its copy of the layer). */
+    fun trimMemory() {
+        if (warp?.strokeActive != true) warp = null
+    }
+
     /** Where the Warp brush is, while a warp stroke is under way (canvas pixels). */
     var warpAt by mutableStateOf<PointF?>(null); private set
     private var strokeLabel = ""
@@ -630,7 +635,8 @@ class ToolInput(private val vm: EditorViewModel) {
         // Warping turns a text layer into an ordinary one.
         val target = if (layer.text != null) layer.copy(text = null).also { vm.silently(d.replace(it)) } else layer
         val onMask = vm.editingMask
-        val bmp = if (onMask) target.mask ?: return else target.bitmap
+        // targetOf already gives the mask as the layer's bitmap when the mask is being edited.
+        val bmp = target.bitmap
         val w = warp
         // A new mesh unless this one still matches the layer exactly as the last warp stroke left it.
         if (w == null || w.layerId != target.id || w.bmp !== bmp || warpRevision != vm.revision || warpOnMask != onMask) {
