@@ -588,6 +588,9 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         if (lower.endsWith(".ora") || mime == "image/openraster") {
             return resolver.openInputStream(uri)!!.use { OraFile.read(it) } to null
         }
+        if (lower.endsWith(".psd") || lower.endsWith(".psb") || mime == "image/vnd.adobe.photoshop" || mime == "image/x-photoshop") {
+            return resolver.openInputStream(uri)!!.use { io.github.capstasher.gako.doc.PsdReader.read(it) } to null
+        }
         if (lower.endsWith(".xcf") || mime == "image/x-xcf") {
             return resolver.openInputStream(uri)!!.use { io.github.capstasher.gako.doc.XcfReader.read(it) } to null
         }
