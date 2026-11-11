@@ -109,7 +109,7 @@ private fun CurveEditor(c: CurvesSession, vm: EditorViewModel) {
     val color = channelColor(ch)
     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
         Canvas(
-            Modifier.widthIn(max = 420.dp).fillMaxWidth().aspectRatio(1f).border(1.dp, Gako.InkHigh)
+            Modifier.widthIn(max = 520.dp).fillMaxWidth().height(230.dp).border(1.dp, Gako.InkHigh)
                 .pointerInput(ch) {
                     awaitEachGesture {
                         val down = awaitFirstDown()

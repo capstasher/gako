@@ -154,15 +154,16 @@ fun ToolOptionsBar(vm: EditorViewModel) {
                     OptChip("Aligned", o.cloneAligned) { set { it.copy(cloneAligned = !it.cloneAligned) } }
                 }
                 Tool.Crop -> {
-                    CropAspect.entries.forEach { a -> OptChip(a.label, o.cropAspect == a) { set { it.copy(cropAspect = a) } } }
-                    Spacer(Modifier.width(4.dp))
-                    IconButton(onClick = { vm.input.startCrop() }) { Icon(Icons.Outlined.RestartAlt, "Reset", tint = Gako.Muted) }
                     ApplyButton { vm.input.applyCrop() }
+                    IconButton(onClick = { vm.input.startCrop() }) { Icon(Icons.Outlined.RestartAlt, "Reset", tint = Gako.Muted) }
+                    CropAspect.entries.forEach { a -> OptChip(a.label, o.cropAspect == a) { set { it.copy(cropAspect = a) } } }
                 }
                 Tool.Transform -> {
                     val d = vm.doc
                     val t = d?.let { vm.input.transformFor(it) }
                     if (t != null) {
+                        ApplyButton { vm.input.applyTransform() }
+                        IconButton(onClick = { vm.input.startTransform() }) { Icon(Icons.Outlined.RestartAlt, "Reset", tint = Gako.Muted) }
                         Text("${(kotlin.math.abs(t.sx) * 100).roundToInt()}%  ${t.angle.roundToInt()}°",
                             style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace), color = Gako.Gold)
                         IconButton(onClick = { vm.input.setTransform(t.copy(sx = -t.sx)) }) {
@@ -173,8 +174,6 @@ fun ToolOptionsBar(vm: EditorViewModel) {
                         }
                         OptChip("−90°", false) { vm.input.setTransform(t.copy(angle = t.angle - 90f)) }
                         OptChip("+90°", false) { vm.input.setTransform(t.copy(angle = t.angle + 90f)) }
-                        IconButton(onClick = { vm.input.startTransform() }) { Icon(Icons.Outlined.Close, "Reset", tint = Gako.Muted) }
-                        ApplyButton { vm.input.applyTransform() }
                     }
                 }
                 else -> Unit
