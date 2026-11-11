@@ -376,6 +376,18 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         toolPrefs.edit().putInt("bg", c).apply()
     }
 
+    /** Long-press eyedropper: the visible colour at a canvas point becomes the FG colour. */
+    fun pickAt(x: Float, y: Float) {
+        val d = doc ?: return
+        val xi = x.toInt()
+        val yi = y.toInt()
+        if (xi !in 0 until d.width || yi !in 0 until d.height) return
+        val c = Compositor.sample(d, xi, yi)
+        if (Color.alpha(c) == 0) return
+        setForeground(c or (0xFF shl 24))
+        say(String.format(java.util.Locale.US, "Picked #%06X", c and 0xFFFFFF))
+    }
+
     fun swapColors() {
         val f = fg
         setForeground(bg)
