@@ -45,6 +45,9 @@ data class TextInfo(
     val bold: Boolean = false,
     val italic: Boolean = false,
     val align: TextAlign = TextAlign.Left,
+    /** An outline around the letters (0 = none), in pixels, and its colour. */
+    val outline: Float = 0f,
+    val outlineColor: Int = -0x1000000,
 )
 
 /**

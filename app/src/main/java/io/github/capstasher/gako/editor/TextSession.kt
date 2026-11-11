@@ -39,11 +39,16 @@ class TextSession(val layerId: Long?, x: Int, y: Int, info: TextInfo) {
             return Typeface.create(family, style)
         }
 
-        fun layout(info: TextInfo): StaticLayout {
+        fun layout(info: TextInfo, outline: Boolean = false): StaticLayout {
             val paint = TextPaint(TextPaint.ANTI_ALIAS_FLAG).apply {
                 textSize = info.size.coerceAtLeast(1f)
-                color = info.color
+                color = if (outline) info.outlineColor else info.color
                 typeface = typeface(info)
+                if (outline) {
+                    style = android.graphics.Paint.Style.STROKE
+                    strokeWidth = info.outline * 2      // the stroke straddles the edge; the fill covers the inner half
+                    strokeJoin = android.graphics.Paint.Join.ROUND
+                }
             }
             val text = info.text.ifEmpty { " " }
             val width = text.lines().maxOf { ceil(paint.measureText(it)).toInt() }.coerceAtLeast(1)
@@ -61,10 +66,12 @@ class TextSession(val layerId: Long?, x: Int, y: Int, info: TextInfo) {
         /** The text as a tightly sized transparent bitmap (with a little room for italics). */
         fun render(info: TextInfo): Bitmap {
             val l = layout(info)
-            val pad = ceil(info.size * 0.15f).toInt()
-            val b = Bitmaps.blank(l.width + pad * 2, l.height)
+            val edge = ceil(info.outline.coerceAtLeast(0f)).toInt()
+            val pad = ceil(info.size * 0.15f).toInt() + edge
+            val b = Bitmaps.blank(l.width + pad * 2, l.height + edge * 2)
             val c = Canvas(b)
-            c.translate(pad.toFloat(), 0f)
+            c.translate(pad.toFloat(), edge.toFloat())
+            if (info.outline > 0f) layout(info, outline = true).draw(c)
             l.draw(c)
             return b
         }
