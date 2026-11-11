@@ -312,7 +312,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             android.view.KeyEvent.KEYCODE_G -> Tool.Gradient
             android.view.KeyEvent.KEYCODE_T -> if (shift) Tool.Transform else Tool.Text
             android.view.KeyEvent.KEYCODE_O -> if (shift) Tool.ColorSelect else Tool.ColorPicker
-            android.view.KeyEvent.KEYCODE_M -> Tool.Move
+            android.view.KeyEvent.KEYCODE_M -> if (shift) Tool.Measure else Tool.Move
             android.view.KeyEvent.KEYCODE_W -> Tool.Warp
             android.view.KeyEvent.KEYCODE_R -> Tool.RectSelect
             android.view.KeyEvent.KEYCODE_F -> Tool.FreeSelect
@@ -1183,6 +1183,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     // ---------------------------------------------------------------- image
 
     fun rotate(quarterTurns: Int) = docJob(if (quarterTurns == 2) "Rotate 180°" else "Rotate 90°") { DocOps.rotate(it, quarterTurns) }
+    fun rotateBy(degrees: Float, crop: Boolean) =
+        docJob(if (crop) "Straighten" else "Rotate") { DocOps.rotateBy(it, degrees, crop) }
     fun flip(horizontal: Boolean) = docJob(if (horizontal) "Flip Horizontally" else "Flip Vertically") { DocOps.flip(it, horizontal) }
     fun flattenImage() = docJob("Flatten Image") { DocOps.flatten(it, bg) }
     fun mergeVisible() = docJob("Merge Visible Layers") { DocOps.mergeVisible(it) }

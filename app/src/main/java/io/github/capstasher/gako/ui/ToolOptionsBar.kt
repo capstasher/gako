@@ -232,6 +232,19 @@ fun ToolOptionsBar(vm: EditorViewModel) {
                     IconButton(onClick = { vm.input.startCrop() }) { Icon(Icons.Outlined.RestartAlt, "Reset", tint = Gako.Muted) }
                     CropAspect.entries.forEach { a -> OptChip(a.label, o.cropAspect == a) { set { it.copy(cropAspect = a) } } }
                 }
+                Tool.Measure -> {
+                    val m = vm.input.measure
+                    if (m == null) Text("Drag along something that should be level or upright",
+                        style = MaterialTheme.typography.labelMedium, color = Gako.Muted)
+                    else {
+                        val len = kotlin.math.hypot(m.second.x - m.first.x, m.second.y - m.first.y)
+                        val deg = Math.toDegrees(kotlin.math.atan2(-(m.second.y - m.first.y).toDouble(), (m.second.x - m.first.x).toDouble()))
+                        Text("${"%.1f".format(len)} px · ${"%.1f".format(deg)}°",
+                            style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace), color = Gako.Gold)
+                        OptChip("Straighten & crop", false) { vm.input.straighten(crop = true) }
+                        OptChip("Straighten", false) { vm.input.straighten(crop = false) }
+                    }
+                }
                 Tool.Warp -> io.github.capstasher.gako.tools.WarpMode.entries.forEach { m ->
                     OptChip(m.label, o.warpMode == m) { set { it.copy(warpMode = m) } }
                 }
@@ -262,7 +275,7 @@ fun ToolOptionsBar(vm: EditorViewModel) {
             }
             if (numbers.isEmpty() && tool !in setOf(Tool.Crop, Tool.Transform, Tool.RectSelect, Tool.EllipseSelect,
                     Tool.FreeSelect, Tool.FuzzySelect, Tool.ColorSelect, Tool.BucketFill, Tool.Gradient, Tool.ColorPicker, Tool.Paths,
-                    Tool.SelectBrush)) {
+                    Tool.SelectBrush, Tool.Measure)) {
                 Text(tool.hint, style = MaterialTheme.typography.labelMedium, color = Gako.Muted)
             }
         }

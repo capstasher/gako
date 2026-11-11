@@ -51,7 +51,7 @@ private val sections = listOf(
         "⇧B G T O" to "Fill, gradient, text, picker",
         "R E F U ⇧O" to "Rectangle, ellipse, lasso, fuzzy, by colour",
         "B M ⇧T ⇧C H" to "Paths, move, transform, crop, navigate",
-        "W" to "Warp transform",
+        "W  ⇧M" to "Warp transform, measure / straighten",
         "[ ]  X  Del" to "Brush size, swap colours, clear",
         "Enter / Esc" to "Apply / cancel",
     ),

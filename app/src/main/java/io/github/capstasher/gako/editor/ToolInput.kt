@@ -114,6 +114,9 @@ class ToolInput(private val vm: EditorViewModel) {
     private var selLast: PointF? = null
 
     var dragRect by mutableStateOf<RectF?>(null); private set
+    /** The Measure tool's line (canvas pixels); it stays until another tool or a new line. */
+    var measure by mutableStateOf<Pair<PointF, PointF>?>(null); private set
+    private var measureEnd = 1
     var lasso by mutableStateOf<Path?>(null); private set
     var lassoRevision by mutableIntStateOf(0); private set
     var gradient by mutableStateOf<Pair<PointF, PointF>?>(null); private set
@@ -255,6 +258,7 @@ class ToolInput(private val vm: EditorViewModel) {
         warp?.let { if (it.strokeActive) { it.cancelStroke(); vm.pixelsChanged() } }
         warp = null
         warpAt = null
+        measure = null
         airJob?.cancel()
         dragRect = null
         lasso = null
@@ -302,6 +306,14 @@ class ToolInput(private val vm: EditorViewModel) {
             }
             Tool.Paths -> path.down(x, y, tol)
             Tool.Warp -> beginWarp(d, x, y)
+            Tool.Measure -> {
+                val m = measure
+                measureEnd = when {
+                    m != null && hypot(x - m.first.x, y - m.first.y) < tol -> 0
+                    m != null && hypot(x - m.second.x, y - m.second.y) < tol -> 1
+                    else -> { measure = PointF(x, y) to PointF(x, y); 1 }
+                }
+            }
             Tool.SelectBrush -> {
                 val m = try { Bitmap.createBitmap(d.width, d.height, Bitmap.Config.ALPHA_8) } catch (e: OutOfMemoryError) { return }
                 selStroke = m
@@ -371,6 +383,7 @@ class ToolInput(private val vm: EditorViewModel) {
             Tool.Transform -> dragTransform(x, y)
             Tool.Paths -> path.move(x, y)
             Tool.Warp -> warpTo(x, y)
+            Tool.Measure -> measure?.let { m -> measure = if (measureEnd == 0) PointF(x, y) to m.second else m.first to PointF(x, y) }
             Tool.SelectBrush -> { selPath?.lineTo(x, y); selDab(x, y); selStrokeRevision++ }
             else -> Unit
         }
@@ -429,6 +442,7 @@ class ToolInput(private val vm: EditorViewModel) {
             }
             Tool.Paths -> path.up()
             Tool.Warp -> endWarp()
+            Tool.Measure -> measure?.let { m -> if (hypot(m.second.x - m.first.x, m.second.y - m.first.y) < 1f) measure = null }
             Tool.SelectBrush -> {
                 val m = selStroke ?: return
                 selStroke = null
@@ -634,6 +648,27 @@ class ToolInput(private val vm: EditorViewModel) {
         patch?.let { vm.record(if (warpOnMask) it.forMask() else it) }
         vm.pixelsChanged()
         warpRevision = vm.revision
+    }
+
+    /**
+     * The Measure line's angle from the nearest axis, in degrees (anticlockwise positive, as GIMP
+     * shows it), or null without a line.
+     */
+    fun measureTilt(): Float? {
+        val (a, b) = measure ?: return null
+        val deg = Math.toDegrees(atan2(-(b.y - a.y).toDouble(), (b.x - a.x).toDouble())).toFloat()
+        var t = deg % 90f
+        if (t > 45f) t -= 90f
+        if (t < -45f) t += 90f
+        return t
+    }
+
+    /** Rotates the image so the Measure line is level (or upright, whichever is nearer). */
+    fun straighten(crop: Boolean) {
+        val t = measureTilt() ?: run { vm.say("Drag a line along something that should be level"); return }
+        if (kotlin.math.abs(t) < 0.05f) { vm.say("Already straight"); return }
+        // Anticlockwise tilt: turn the image clockwise by as much (Android's positive angles are clockwise).
+        vm.rotateBy(t, crop)
     }
 
     /** A stroke ran out of memory: undo it and say so, rather than crash. */

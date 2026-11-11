@@ -26,6 +26,7 @@ import androidx.compose.material.icons.outlined.Polyline
 import androidx.compose.material.icons.outlined.OpenInFull
 import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material.icons.outlined.Tonality
+import androidx.compose.material.icons.outlined.Straighten
 import androidx.compose.material.icons.outlined.Waves
 import androidx.compose.ui.graphics.vector.ImageVector
 
@@ -59,7 +60,8 @@ enum class Tool(val label: String, val icon: ImageVector, val group: ToolGroup, 
     BucketFill("Bucket Fill", Icons.Outlined.FormatColorFill, ToolGroup.Paint, "Tap to fill"),
     Gradient("Gradient", Icons.Outlined.Gradient, ToolGroup.Paint, "Drag from start to end colour"),
     Text("Text", Icons.Outlined.TextFields, ToolGroup.Paint, "Tap to place text"),
-    ColorPicker("Colour Picker", Icons.Outlined.Colorize, ToolGroup.View, "Tap to pick the foreground colour");
+    ColorPicker("Colour Picker", Icons.Outlined.Colorize, ToolGroup.View, "Tap to pick the foreground colour"),
+    Measure("Measure", Icons.Outlined.Straighten, ToolGroup.View, "Drag a line to measure; Straighten levels the image along it");
 
     /** A label short enough for the palette grid. */
     val short: String get() = when (this) {
