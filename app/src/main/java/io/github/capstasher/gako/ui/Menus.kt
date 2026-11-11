@@ -27,6 +27,9 @@ import androidx.compose.material.icons.outlined.NoteAdd
 import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.PhotoSizeSelectLarge
 import androidx.compose.material.icons.outlined.Save
+import androidx.compose.material.icons.outlined.SaveAs
+import androidx.compose.material.icons.outlined.Replay
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.SelectAll
 import androidx.compose.material.icons.outlined.ShowChart
 import androidx.compose.material.icons.outlined.ZoomInMap
@@ -205,7 +208,8 @@ fun buildMenus(vm: EditorViewModel, callbacks: MenuCallbacks): List<MenuGroup> {
         act("open", "Open…", Icons.Outlined.FolderOpen, true) { callbacks.openFile(false) },
         act("open-photo", "Open Photo…", Icons.Outlined.PhotoLibrary, true) { callbacks.openImage() },
         act("open-layers", "Open as Layers…", Icons.Outlined.Layers) { callbacks.openFile(true) },
-        act("save", "Save Project…", Icons.Outlined.Save) { vm.startExport(project = true) },
+        act("save", "Save", Icons.Outlined.Save) { vm.save() },
+        act("save-as", "Save As…", Icons.Outlined.SaveAs) { vm.startExport(project = true) },
         act("export", "Export As…", Icons.Outlined.SaveAlt) { vm.startExport() },
         act("share", "Share", Icons.Outlined.Share) { callbacks.share() },
         act("about", "About", Icons.Outlined.Info, true) { callbacks.about() },
@@ -292,7 +296,14 @@ fun buildMenus(vm: EditorViewModel, callbacks: MenuCallbacks): List<MenuGroup> {
         if (other.isNotEmpty()) MenuGroup("filters:other", "Other", Icons.Outlined.MoreHoriz,
             other.sortedBy { it.title }.map { opAction(it) }) else null,
     )
-    val filters = MenuGroup("filters", "Filters", Icons.Outlined.FilterVintage, filterGroups,
+    val recent = vm.recentFilters.mapNotNull { byName[it] }
+    val filterTop = listOfNotNull(
+        vm.lastFilterName?.let { n ->
+            act("repeat", "Repeat “${byName[n]?.title ?: n}”", Icons.Outlined.Replay) { vm.repeatLastFilter() }
+        },
+        if (recent.isNotEmpty()) MenuGroup("filters:recent", "Recently Used", Icons.Outlined.History, recent.map { opAction(it) }) else null,
+    )
+    val filters = MenuGroup("filters", "Filters", Icons.Outlined.FilterVintage, filterTop + filterGroups,
         searchable = ops.filter { op -> op.categories.none { it in setOf("transform", "svgfilter", "vector") } })
 
     // ---- Tools (opened from the canvas dock)

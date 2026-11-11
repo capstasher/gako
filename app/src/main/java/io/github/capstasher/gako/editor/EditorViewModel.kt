@@ -375,6 +375,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun newDocument(state: DocState, name: String, keepRecovery: Boolean = false) {
         if (!keepRecovery) clearRecovery()
+        projectUri = null
+        projectFormat = null
         endInteractions()
         resetHistory()
         doc = state
@@ -412,6 +414,13 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                     change("Open as Layers", d.copy(layers = layers, activeId = added.last().id))
                 } else {
                     newDocument(state, name)
+                    val lower = name.lowercase()
+                    projectFormat = when {
+                        lower.endsWith(".xcf") -> ExportFormat.Xcf
+                        lower.endsWith(".ora") -> ExportFormat.Ora
+                        else -> null
+                    }
+                    projectUri = uri.takeIf { projectFormat != null }
                 }
                 note?.let(::say)
             } catch (t: OutOfMemoryError) {
@@ -545,6 +554,39 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     ); private set
     var exportToFolder by mutableStateOf(prefs.getBoolean("toFolder", false) && exportFolder != null)
 
+    /** Where File > Save writes: the project file this image was opened from or last saved as. */
+    private var projectUri: Uri? = null
+    private var projectFormat: ExportFormat? = null
+
+    /** File > Save: overwrite the project file, or ask where to save it the first time. */
+    fun save() {
+        val d = doc ?: return
+        val uri = projectUri
+        val format = projectFormat
+        if (blockedByBusy()) return
+        if (uri == null || format == null) { startExport(project = true); return }
+        cancelSession(); cancelCurves(); if (text != null) commitText(); input.reset()
+        busy = Busy("Saving")
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    resolver.openOutputStream(uri, "wt")?.use { Exporter.encode(d, format, ExportOptions(), it, File(getApplication<Application>().cacheDir, "export")) }
+                        ?: error("no stream")
+                }
+                if (doc === d) dirty = false
+                clearRecovery()
+                say("Saved $documentName")
+            } catch (t: Throwable) {
+                // Read-only (e.g. from the photo picker): save somewhere new instead.
+                projectUri = null
+                busy = null
+                startExport(project = true)
+            } finally {
+                busy = null
+            }
+        }
+    }
+
     fun startExport(project: Boolean = false) {
         if (doc == null || blockedByBusy()) return
         cancelSession(); cancelCurves(); if (text != null) commitText(); input.reset()
@@ -597,7 +639,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         busy = Busy(if (format.layered) "Saving" else "Exporting")
         viewModelScope.launch {
             try {
-                val where = withContext(Dispatchers.IO) {
+                val (where, uri) = withContext(Dispatchers.IO) {
                     val scratch = File(getApplication<Application>().cacheDir, "export")
                     val write: (java.io.OutputStream) -> Unit = { Exporter.encode(d, format, s.options, it, scratch) }
                     if (folder != null) writeToFolder(folder, fileName, format, write)
@@ -605,6 +647,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 exportSession = null
                 if (format.layered) {
+                    projectUri = uri
+                    projectFormat = format
                     documentName = fileName
                     dirty = false
                 }
@@ -619,7 +663,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun writeToPictures(fileName: String, format: ExportFormat, write: (java.io.OutputStream) -> Unit): String {
+    private fun writeToPictures(fileName: String, format: ExportFormat, write: (java.io.OutputStream) -> Unit): Pair<String, Uri> {
         fun insert(collection: Uri, relative: String, mime: String): Uri? = runCatching {
             resolver.insert(collection, ContentValues().apply {
                 put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
@@ -644,11 +688,11 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             runCatching { resolver.delete(uri, null, null) }
             throw t
         }
-        return where
+        return where to uri
     }
 
     private fun writeToFolder(folder: ExportFolder, fileName: String, format: ExportFormat,
-                              write: (java.io.OutputStream) -> Unit): String {
+                              write: (java.io.OutputStream) -> Unit): Pair<String, Uri> {
         val parent = DocumentsContract.buildDocumentUriUsingTree(folder.uri, DocumentsContract.getTreeDocumentId(folder.uri))
         val mime = if (format.opaqueToSystem) "application/octet-stream" else format.mime
         val doc = DocumentsContract.createDocument(resolver, parent, mime, fileName)
@@ -659,7 +703,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             runCatching { DocumentsContract.deleteDocument(resolver, doc) }
             throw t
         }
-        return folder.name
+        return folder.name to doc
     }
 
     /** Writes a PNG of the image for the share sheet and returns its content Uri. */
@@ -1161,6 +1205,34 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         return Proxy(bmp, bmp.width.toDouble() / src.width)
     }
 
+    private val filterPrefs = app.getSharedPreferences("filters", 0)
+
+    /** GIMP's Filters > Recently Used, newest first. */
+    var recentFilters by mutableStateOf(filterPrefs.getString("recent", "")!!.split(',').filter { it.isNotBlank() })
+        private set
+    private var lastFilter: Pair<String, Map<String, Any?>>? = null
+
+    private fun rememberFilter(operation: String, values: Map<String, Any?>) {
+        lastFilter = operation to values
+        recentFilters = (listOf(operation) + recentFilters.filter { it != operation }).take(8)
+        filterPrefs.edit().putString("recent", recentFilters.joinToString(",")).apply()
+    }
+
+    val lastFilterName: String? get() = lastFilter?.first
+
+    /** Filters > Repeat Last: the last filter again, with the same settings, no dialog. */
+    fun repeatLastFilter() {
+        val (op, values) = lastFilter ?: run { say("No filter used yet"); return }
+        val d = doc ?: return
+        val layer = targetOf(d) ?: return
+        if (blockedByBusy()) return
+        endInteractions()
+        viewModelScope.launch {
+            val title = describe(op)?.title ?: op
+            runCommit(title, op, values, layer)
+        }
+    }
+
     /** Opens the parameter panel for [operation], or applies it straight away if it has no settings. */
     fun startFilter(operation: String) {
         val d = doc ?: run { say("Open an image first"); return }
@@ -1170,6 +1242,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val desc = describe(operation) ?: run { say("$operation isn't available"); return@launch }
             if (desc.params.isEmpty()) {
+                rememberFilter(operation, emptyMap())
                 runCommit(desc.title, operation, emptyMap(), layer)
                 return@launch
             }
@@ -1275,6 +1348,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         if (blockedByBusy()) return
         previewJob?.cancel()
         Engine.cancel(tag = s)
+        rememberFilter(s.op.name, s.values)
         viewModelScope.launch {
             runCommit(s.op.title, s.op.name, s.values, layer)
             if (session === s) {
