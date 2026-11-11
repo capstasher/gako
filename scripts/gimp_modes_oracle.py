@@ -82,10 +82,12 @@ custom("cm_m30_union", 30, cmode=1)
 custom("cm_m31_cliplayer", 31, cmode=3)
 custom("cm_m28_intersect", 28, cmode=4)
 custom("cm_m23_union_cs_perc", 23, comp=4, cmode=1)
+# No dates or file names in the archives, so the same cases always give the same bytes.
 os.makedirs(ASSETS, exist_ok=True)
-with gzip.open(f"{ASSETS}/expected.bin", "wt") as f:
-    f.write("\n".join(lines) + "\n")
+with open(f"{ASSETS}/expected.bin", "wb") as raw, gzip.GzipFile("", "wb", fileobj=raw, mtime=0) as f:
+    f.write(("\n".join(lines) + "\n").encode())
 with zipfile.ZipFile(f"{ASSETS}/modes.zip", "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
     for name in sorted(os.listdir(OUT)):
-        z.write(os.path.join(OUT, name), name)
+        with open(os.path.join(OUT, name), "rb") as src:
+            z.writestr(zipfile.ZipInfo(name, (1980, 1, 1, 0, 0, 0)), src.read(), zipfile.ZIP_DEFLATED, 9)
 print("cases", len(lines), "written to", ASSETS)
