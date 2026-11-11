@@ -101,4 +101,51 @@ class TransformTest {
         val old = src.getPixel(200, 150)
         for (sh in intArrayOf(0, 8, 16)) assertTrue(abs(((centre ushr sh) and 255) - ((old ushr sh) and 255)) <= 24)
     }
+
+    @Test fun layerFlipsAndTurnsComeBackRound() {
+        val doc = TestImages.document()
+        val inside = doc.layers.single { it.name == "Inside" }
+        var d = doc
+        repeat(2) { d = DocOps.transformLayer(d, inside.id, DocOps.LayerTurn.FlipH)!! }
+        val back = d.layer(inside.id)!!
+        assertEquals(0, maxDiff(inside.bitmap, back.bitmap))
+        assertEquals(inside.x, back.x); assertEquals(inside.y, back.y)
+        // A quarter turn swaps the size and keeps the centre.
+        val q = DocOps.transformLayer(doc, inside.id, DocOps.LayerTurn.Cw)!!.layer(inside.id)!!
+        assertEquals(inside.height, q.width); assertEquals(inside.width, q.height)
+        assertEquals(inside.x + inside.width / 2f, q.x + q.width / 2f, 1f)
+        repeat(4) { d = DocOps.transformLayer(d, inside.id, DocOps.LayerTurn.Cw)!! }
+        assertEquals(0, maxDiff(inside.bitmap, d.layer(inside.id)!!.bitmap))
+        assertEquals(0, maxDiff(inside.mask!!, d.layer(inside.id)!!.mask!!))
+        // Other layers stay put.
+        val bg = doc.layers.first()
+        assertTrue(d.layer(bg.id)!!.bitmap === bg.bitmap)
+    }
+
+    @Test fun restackStaysInTheGroup() {
+        val doc = TestImages.document()      // Background, [Inside] in Group, Top
+        val bg = doc.layers.first()
+        val top = DocOps.restack(doc, bg.id, top = true)!!
+        assertEquals(listOf("Inside", "Group", "Top", "Background"), top.layers.map { it.name })
+        assertEquals(null, DocOps.restack(top, bg.id, top = true))
+        val bottom = DocOps.restack(top, bg.id, top = false)!!
+        assertEquals(doc.layers.map { it.name }, bottom.layers.map { it.name })
+        // The group moves with its contents.
+        val group = doc.layers.single { it.name == "Group" }
+        val g = DocOps.restack(doc, group.id, top = false)!!
+        assertEquals(listOf("Inside", "Group", "Background", "Top"), g.layers.map { it.name })
+        // Alone in its group, a layer has nowhere to go.
+        val inside = doc.layers.single { it.name == "Inside" }
+        assertEquals(null, DocOps.restack(doc, inside.id, top = true))
+    }
+
+    @Test fun fitCanvasTakesInEveryLayer() {
+        val doc = TestImages.document()      // "Top" sits at (-4, 40), 16×16, so it overhangs left and bottom
+        val fit = DocOps.fitCanvasToLayers(doc)!!
+        assertEquals(68, fit.width)          // -4 … 64
+        assertEquals(56, fit.height)         // 0 … 56
+        assertEquals(0, fit.layers.single { it.name == "Top" }.x)
+        assertEquals(4, fit.layers.single { it.name == "Background" }.x)
+        assertEquals(null, DocOps.fitCanvasToLayers(fit))
+    }
 }

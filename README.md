@@ -16,13 +16,14 @@ operation) for Android, and puts a touch interface on top designed for one hand 
 **Images and layers**
 - Layered documents: new, duplicate, delete, reorder, merge down, merge visible, flatten, new from visible
 - 17 layer modes (multiply, screen, overlay, soft/hard light, dodge, burn, HSL…), opacity, visibility, lock alpha
-- Layers can be any size and sit anywhere; scale layer, layer to image size, crop to content, alpha to selection
+- Layers can be any size and sit anywhere; scale layer, layer to image size, crop to selection or content,
+  flip or rotate just the layer (or a whole group), raise to top / lower to bottom, alpha to selection
 - Layer groups: nest, collapse, pass-through or isolated with a blend mode and opacity; the arrows move a layer
   into and out of groups; merge a group; groups survive XCF, PSD and ORA in both directions
 - Layer masks (white, black, from alpha, selection or a grey copy): paint, fill, filter or curve the mask;
   disable, apply or delete it. Masks survive XCF in both directions
 - Undo/redo for everything, with GIMP's Undo History; painting only stores the pixels a stroke touched
-- Image: canvas size (with anchor), scale image, crop to selection / content, rotate (90° steps or any angle,
+- Image: canvas size (with anchor), fit canvas to layers, scale image, crop to selection / content, rotate (90° steps or any angle,
   optionally cropping the empty corners away), flip
 
 **Tools** (one finger uses the tool, two fingers always pan and zoom)

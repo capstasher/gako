@@ -64,6 +64,7 @@ import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material.icons.outlined.SwapVert
+import androidx.compose.material.icons.outlined.FitScreen
 import androidx.compose.material.icons.outlined.Straighten
 import androidx.compose.material.icons.outlined.Sync
 import androidx.compose.material.icons.outlined.Texture
@@ -264,6 +265,7 @@ fun buildMenus(vm: EditorViewModel, callbacks: MenuCallbacks): List<MenuGroup> {
         )),
         act("grid", vm.grid.label, Icons.Outlined.GridOn) { vm.cycleGrid() },
         act("canvas-size", "Canvas Size…", Icons.Outlined.AspectRatio) { vm.dialog = Dialog.CanvasSize },
+        act("fit-canvas", "Fit Canvas to Layers", Icons.Outlined.FitScreen) { vm.fitCanvasToLayers() },
         act("scale-image", "Scale Image…", Icons.Outlined.PhotoSizeSelectLarge) { vm.dialog = Dialog.ScaleImage },
         act("crop-sel", "Crop to Selection", Icons.Outlined.Crop, hasSelection) { vm.cropToSelection() },
         act("crop-content", "Crop to Content", Icons.Outlined.CropFree) { vm.cropToContent() },

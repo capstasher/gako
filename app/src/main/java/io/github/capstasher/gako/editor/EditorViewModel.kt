@@ -1328,6 +1328,31 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         change(label, d.copy(layers = layers))
     }
 
+    /** Layer > Stack > Raise to Top / Lower to Bottom (within the layer's group). */
+    fun restack(top: Boolean) {
+        val d = doc ?: return
+        val a = d.active ?: return
+        if (blockedByBusy()) return
+        val out = DocOps.restack(d, a.id, top) ?: run { say(if (top) "Already at the top" else "Already at the bottom"); return }
+        change(if (top) "Raise to Top" else "Lower to Bottom", out.copy(layers = Tree.reveal(out.layers, a.id)))
+    }
+
+    /** Layer > Transform: flip or turn the active layer (or everything in the active group). */
+    fun transformLayer(turn: DocOps.LayerTurn) {
+        val a = doc?.active ?: return
+        docJob(turn.label) { DocOps.transformLayer(it, a.id, turn) ?: run { say("That group is empty"); null } }
+    }
+
+    fun cropLayerToSelection() {
+        val d = doc ?: return
+        if (refuseGroup(d)) return
+        if (d.selection == null) { say("Select something first"); return }
+        val a = d.active ?: return
+        docJob("Crop Layer to Selection") { DocOps.cropLayerToSelection(it, a.id) ?: run { say("Nothing to crop"); null } }
+    }
+
+    fun fitCanvasToLayers() = docJob("Fit Canvas to Layers") { DocOps.fitCanvasToLayers(it) ?: run { say("The canvas already fits the layers"); null } }
+
     fun mergeDown() {
         val d = doc ?: return
         if (d.active?.group == true) { mergeGroup(); return }
