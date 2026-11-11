@@ -142,8 +142,9 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
                     first.consume()
 
                     // Long-press with a colour-painting tool picks the colour there (as in most phone painting apps).
-                    val canPick = !modal && !fingerOnly && vm.busy == null &&
-                        tool in setOf(Tool.Paintbrush, Tool.Pencil, Tool.Airbrush, Tool.BucketFill, Tool.Gradient, Tool.Text)
+                    // Not with a pen (it may rest while drawing) nor the airbrush (holding still builds it up).
+                    val canPick = !modal && !fingerOnly && !isPen && vm.busy == null &&
+                        tool in setOf(Tool.Paintbrush, Tool.Pencil, Tool.BucketFill, Tool.Gradient, Tool.Text)
                     var picked = false
                     fun pickHere() {
                         // Held still: undo any dot just started and pick instead.
@@ -413,9 +414,16 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
                 nc.drawPath(sel.outline, dash)
             }
             // The Selection Brush's stroke, tinted while it's being painted.
-            input.selStroke?.let { m ->
+            input.selPath?.let { p ->
                 @Suppress("UNUSED_VARIABLE") val sr = input.selStrokeRevision
-                nc.drawBitmap(m, 0f, 0f, Paint().apply { color = android.graphics.Color.argb(110, 210, 168, 78); isFilterBitmap = true })
+                nc.drawPath(p, Paint().apply {
+                    color = android.graphics.Color.argb(110, 210, 168, 78)
+                    style = Paint.Style.STROKE
+                    strokeWidth = vm.options.size.coerceAtLeast(1f)
+                    strokeCap = Paint.Cap.ROUND
+                    strokeJoin = Paint.Join.ROUND
+                    isAntiAlias = true
+                })
             }
             input.dragRect?.let { r ->
                 if (tool == Tool.EllipseSelect) { nc.drawOval(r, ink); nc.drawOval(r, dash) }

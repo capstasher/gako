@@ -105,9 +105,11 @@ class ToolInput(private val vm: EditorViewModel) {
     /** The Paths tool's path; it stays while other tools are used, until cleared or a new image. */
     val path = io.github.capstasher.gako.tools.PathEditor()
 
-    /** The Selection Brush's stroke so far (canvas-sized ALPHA_8), shown over the image. */
+    /** The Selection Brush's stroke so far (canvas-sized ALPHA_8). */
     var selStroke by mutableStateOf<Bitmap?>(null); private set
     var selStrokeRevision by mutableIntStateOf(0); private set
+    /** The finger's path while the Selection Brush paints, drawn as a thick line over the image (cheaper than the mask). */
+    var selPath by mutableStateOf<Path?>(null); private set
     private var selCanvas: Canvas? = null
     private var selLast: PointF? = null
 
@@ -259,6 +261,7 @@ class ToolInput(private val vm: EditorViewModel) {
         gradient = null
         moveDelta = null
         selStroke = null
+        selPath = null
         selCanvas = null
         cropState = null
         transformState = null
@@ -304,31 +307,35 @@ class ToolInput(private val vm: EditorViewModel) {
                 selStroke = m
                 selCanvas = Canvas(m)
                 selLast = null
+                selPath = Path().apply { moveTo(x, y); lineTo(x + 0.01f, y) }
                 selDab(x, y)
             }
             else -> Unit
         }
     }
 
-    /** Selection Brush dabs, spaced along the finger's path. */
+    /**
+     * Selection Brush dabs, spaced along the finger's path. [selLast] is the last dab drawn, so slow
+     * moves (less than a step per event) still add up to dabs.
+     */
     private fun selDab(x: Float, y: Float) {
         val c = selCanvas ?: return
         val r = options.size.coerceAtLeast(1f) / 2f
         val dab = PaintStroke.dabBitmap(r * 2, options.hardness)
         val paint = Paint().apply { isFilterBitmap = true }
-        val from = selLast ?: PointF(x, y)
-        val dist = hypot(x - from.x, y - from.y)
-        val step = max(1f, r * 0.25f)
-        var t = if (selLast == null) 0f else step
-        while (t <= dist || (selLast == null && t == 0f)) {
-            val f = if (dist > 0f) t / dist else 0f
-            val px = from.x + (x - from.x) * f
-            val py = from.y + (y - from.y) * f
-            c.drawBitmap(dab, null, RectF(px - r, py - r, px + r, py + r), paint)
-            if (selLast == null) break
-            t += step
+        fun stamp(px: Float, py: Float) = c.drawBitmap(dab, null, RectF(px - r, py - r, px + r, py + r), paint)
+        val from = selLast
+        if (from == null) {
+            stamp(x, y)
+            selLast = PointF(x, y)
+        } else {
+            val dist = hypot(x - from.x, y - from.y)
+            val step = max(1f, r * 0.25f)
+            if (dist < step) return
+            val n = (dist / step).toInt()
+            for (k in 1..n) stamp(from.x + (x - from.x) * k * step / dist, from.y + (y - from.y) * k * step / dist)
+            selLast = PointF(from.x + (x - from.x) * n * step / dist, from.y + (y - from.y) * n * step / dist)
         }
-        selLast = PointF(x, y)
         selStrokeRevision++
     }
 
@@ -364,7 +371,7 @@ class ToolInput(private val vm: EditorViewModel) {
             Tool.Transform -> dragTransform(x, y)
             Tool.Paths -> path.move(x, y)
             Tool.Warp -> warpTo(x, y)
-            Tool.SelectBrush -> selDab(x, y)
+            Tool.SelectBrush -> { selPath?.lineTo(x, y); selDab(x, y); selStrokeRevision++ }
             else -> Unit
         }
     }
@@ -425,6 +432,7 @@ class ToolInput(private val vm: EditorViewModel) {
             Tool.SelectBrush -> {
                 val m = selStroke ?: return
                 selStroke = null
+                selPath = null
                 selCanvas = null
                 // Like GIMP's Paint Select, strokes add up (Replace acts as Add; Select › None starts over).
                 val mode = if (options.selectMode == SelectMode.Replace) SelectMode.Add else options.selectMode
@@ -463,6 +471,7 @@ class ToolInput(private val vm: EditorViewModel) {
         moveDelta = null
         if (tool == Tool.Paths) path.cancel()
         selStroke = null
+        selPath = null
         selCanvas = null
         if (tool == Tool.Crop && mode != Drag.None) doc?.let { cropState = (it.width to it.height) to cropAtDown }
         if (tool == Tool.Transform && mode != Drag.None) transformState = transformAtDown

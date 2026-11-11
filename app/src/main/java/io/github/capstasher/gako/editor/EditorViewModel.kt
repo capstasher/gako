@@ -460,6 +460,17 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         reloadPath(before, after)
     }
 
+    /**
+     * Undo/redo of a snapshot: back to [target], except that a step which didn't touch the paths
+     * leaves them as they are now (the Paths tool edits them without undo steps of their own).
+     */
+    private fun restore(target: DocState, other: DocState) {
+        val cur = doc
+        val next = if (cur != null && target.paths === other.paths && cur.paths !== target.paths) target.copy(paths = cur.paths) else target
+        doc = next
+        reloadPath(cur, next)
+    }
+
     /** Changes the document without an undo step (e.g. picking the active layer). */
     internal fun silently(after: DocState) {
         doc = after
@@ -490,7 +501,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         if (session != null || text != null || curves != null) return
         val step = undoStack.removeLastOrNull() ?: return
         when (step) {
-            is Step.Snapshot -> { doc = step.before; reloadPath(step.after, step.before) }
+            is Step.Snapshot -> restore(step.before, step.after)
             is Step.Patch -> doc?.layer(step.layerId)?.let { l -> step.target(l)?.let { Bitmaps.put(it, step.before, step.rect.left, step.rect.top) } }
         }
         redoStack.addLast(step)
@@ -507,7 +518,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         input.reset()
         val step = redoStack.removeLastOrNull() ?: return
         when (step) {
-            is Step.Snapshot -> { doc = step.after; reloadPath(step.before, step.after) }
+            is Step.Snapshot -> restore(step.after, step.before)
             is Step.Patch -> doc?.layer(step.layerId)?.let { l -> step.target(l)?.let { Bitmaps.put(it, step.after, step.rect.left, step.rect.top) } }
         }
         undoStack.addLast(step)
@@ -778,6 +789,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun renamePath(i: Int, name: String) {
+        if (blockedByBusy()) return
         val d = doc ?: return
         val p = d.paths.getOrNull(i) ?: return
         val n = name.trim().ifEmpty { return }
@@ -786,6 +798,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun duplicatePath(i: Int) {
+        if (blockedByBusy()) return
         val d = doc ?: return
         val p = d.paths.getOrNull(i) ?: return
         val copy = VectorPath("${p.name} copy", p.strokes)
@@ -794,23 +807,20 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun deletePath(i: Int) {
+        if (blockedByBusy()) return
         val d = doc ?: return
         if (i !in d.paths.indices) return
-        val paths = d.paths.toMutableList().also { it.removeAt(i) }
-        if (i < pathIndex || (i == pathIndex && pathIndex >= paths.size)) pathIndex = (pathIndex - 1).coerceAtLeast(0)
-        if (i == pathIndex || pathIndex >= paths.size) strokeIndex = 0
-        change("Delete Path", d.copy(paths = paths))
-        input.path.load(strokeAt(paths, pathIndex, strokeIndex))
+        // reloadPath (via change) keeps the tool on the same path, or the next one if this was it.
+        change("Delete Path", d.copy(paths = d.paths.toMutableList().also { it.removeAt(i) }))
     }
 
     /** Moves path [i] up or down the list. */
     fun movePath(i: Int, delta: Int) {
+        if (blockedByBusy()) return
         val d = doc ?: return
         val j = i + delta
         if (i !in d.paths.indices || j !in d.paths.indices) return
-        val paths = d.paths.toMutableList().also { java.util.Collections.swap(it, i, j) }
-        if (pathIndex == i) pathIndex = j else if (pathIndex == j) pathIndex = i
-        change("Reorder Paths", d.copy(paths = paths))
+        change("Reorder Paths", d.copy(paths = d.paths.toMutableList().also { java.util.Collections.swap(it, i, j) }))
     }
 
     /** Called whenever the tool's stroke changes: writes it into its slot in the document. */
@@ -852,10 +862,25 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         dirty = true
     }
 
-    /** After undo/redo or an operation that moved the paths (crop, rotate…), show them in the tool. */
+    /**
+     * After undo/redo or an operation that changed the paths (delete, reorder, crop, rotate…): keep
+     * the tool on the same path where it went (by identity, else by name), and show it.
+     */
     private fun reloadPath(before: DocState?, after: DocState?) {
         if (after == null || before?.paths === after.paths) return
-        pathIndex = pathIndex.coerceIn(0, after.paths.size)
+        val old = before?.paths.orEmpty()
+        val was = old.getOrNull(pathIndex)
+        when {
+            // A new path that isn't in the document yet stays new.
+            was == null -> { pathIndex = after.paths.size; strokeIndex = 0 }
+            else -> {
+                val found = after.paths.indexOfFirst { it === was }.takeIf { it >= 0 }
+                    ?: (if (after.paths.size == old.size) pathIndex else null)
+                    ?: after.paths.indexOfFirst { it.name == was.name }.takeIf { it >= 0 }
+                if (found != null) pathIndex = found
+                else { pathIndex = pathIndex.coerceIn(0, after.paths.size); strokeIndex = 0 }
+            }
+        }
         strokeIndex = strokeIndex.coerceIn(0, after.paths.getOrNull(pathIndex)?.strokes?.size ?: 0)
         input.path.load(strokeAt(after.paths, pathIndex, strokeIndex))
     }
@@ -1517,11 +1542,12 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
      * selection's edge, centred on it, painted on the active layer.
      */
     fun strokeSelection() {
+        if (blockedByBusy()) return
+        // Finish any text first: committing it replaces the document.
+        endInteractions()
         val d = doc ?: return
         val sel = d.selection ?: run { say("Select something first"); return }
         if (refuseGroup(d)) return
-        if (blockedByBusy()) return
-        endInteractions()
         val half = (options.size / 2f).roundToInt().coerceAtLeast(1)
         val color = paintColor(fg) or (0xFF shl 24)
         val opacity = options.opacity
@@ -1541,7 +1567,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                     m
                 }
                 val area = Rect(sel.bounds).apply { inset(-half - 2, -half - 2); intersect(0, 0, d.width, d.height) }
-                if (doc !== d) return@launch
+                if (doc !== d) { say("The image changed meanwhile; stroke the selection again"); return@launch }
                 editActiveLayer("Stroke Selection", area) { l, _ ->
                     val c = Canvas(l.bitmap)
                     val save = c.saveLayer(RectF(0f, 0f, l.width.toFloat(), l.height.toFloat()), Paint().apply {
@@ -1551,6 +1577,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                     c.drawBitmap(edge, -l.x.toFloat(), -l.y.toFloat(), Paint().apply { this.color = color })
                     c.restoreToCount(save)
                 }
+            } catch (e: OutOfMemoryError) {
+                say("Not enough memory to stroke the selection on an image this big")
             } finally {
                 busy = null
             }
