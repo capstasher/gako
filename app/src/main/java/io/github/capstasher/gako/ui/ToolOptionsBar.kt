@@ -166,6 +166,10 @@ fun ToolOptionsBar(vm: EditorViewModel) {
                     if (t != null) {
                         ApplyButton { vm.input.applyTransform() }
                         IconButton(onClick = { vm.input.startTransform() }) { Icon(Icons.Outlined.RestartAlt, "Reset", tint = Gako.Muted) }
+                        OptChip("Perspective", t.perspective) {
+                            vm.input.setTransform(if (t.perspective) t.copy(quad = null) else t.copy(quad = t.cornerArray()))
+                        }
+                        if (!t.perspective) {
                         Text("${(kotlin.math.abs(t.sx) * 100).roundToInt()}%  ${t.angle.roundToInt()}°",
                             style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace), color = Gako.Gold)
                         IconButton(onClick = { vm.input.setTransform(t.copy(sx = -t.sx)) }) {
@@ -176,6 +180,7 @@ fun ToolOptionsBar(vm: EditorViewModel) {
                         }
                         OptChip("−90°", false) { vm.input.setTransform(t.copy(angle = t.angle - 90f)) }
                         OptChip("+90°", false) { vm.input.setTransform(t.copy(angle = t.angle + 90f)) }
+                        }
                     }
                 }
                 else -> Unit
