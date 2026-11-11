@@ -156,6 +156,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             engine = if (error != null) EngineState.Failed(error)
                      else EngineState.Ready(Engine.operations())
         }
+        restoreRecovery()
     }
 
     internal fun say(message: String) {
@@ -340,7 +341,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------------------------------------------------------------- files
 
-    private fun newDocument(state: DocState, name: String) {
+    private fun newDocument(state: DocState, name: String, keepRecovery: Boolean = false) {
+        if (!keepRecovery) clearRecovery()
         endInteractions()
         resetHistory()
         doc = state
@@ -429,6 +431,57 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }.getOrNull() ?: uri.lastPathSegment?.substringAfterLast('/')
 
     private fun baseName() = documentName.substringBeforeLast('.').ifBlank { "untitled" }
+
+    // ---------------------------------------------------------------- recovery
+
+    private val recoveryFile get() = File(getApplication<Application>().filesDir, "recovery.xcf")
+    private val recoveryName get() = File(getApplication<Application>().filesDir, "recovery.name")
+    private var savedForRecovery: DocState? = null
+    private var savedRevision = -1
+
+    /** Called when the app leaves the screen: keeps unsaved work safe if Android kills the process. */
+    fun autosave() {
+        val d = doc ?: return
+        if (!dirty) { clearRecovery(); return }
+        if (d === savedForRecovery && revision == savedRevision) return
+        savedForRecovery = d
+        savedRevision = revision
+        // Copy pixels a stroke might change while the write runs.
+        val snapshot = d.copy(layers = d.layers.map { it.copy(bitmap = it.bitmap.copy(Bitmap.Config.ARGB_8888, false)) })
+        val name = documentName
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                val tmp = File(recoveryFile.path + ".tmp")
+                tmp.outputStream().buffered(1 shl 16).use { io.github.capstasher.gako.doc.XcfWriter.write(snapshot, it, level = 1) }
+                tmp.renameTo(recoveryFile)
+                recoveryName.writeText(name)
+            }
+        }
+    }
+
+    private fun clearRecovery() {
+        recoveryFile.delete()
+        recoveryName.delete()
+    }
+
+    private fun restoreRecovery() {
+        if (!recoveryFile.exists()) return
+        viewModelScope.launch {
+            busy = Busy("Restoring")
+            try {
+                val state = withContext(Dispatchers.IO) { recoveryFile.inputStream().use { io.github.capstasher.gako.doc.XcfReader.read(it) } }
+                if (doc == null) {
+                    newDocument(state, runCatching { recoveryName.readText() }.getOrNull() ?: "Recovered", keepRecovery = true)
+                    dirty = true
+                    say("Restored your unsaved image")
+                }
+            } catch (t: Throwable) {
+                clearRecovery()
+            } finally {
+                busy = null
+            }
+        }
+    }
 
     // ---------------------------------------------------------------- export
 
@@ -830,7 +883,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         val out = Bitmaps.blank(area.width(), area.height())
         val c = Canvas(out)
         c.drawBitmap(source.bitmap, (source.x - area.left).toFloat(), (source.y - area.top).toFloat(), null)
-        if (sel != null) c.drawBitmap(sel.mask, -area.left.toFloat(), -area.top.toFloat(), Paint().apply { blendMode = BlendMode.DST_IN })
+        if (sel != null) Bitmaps.maskIn(c, sel.mask, -area.left.toFloat(), -area.top.toFloat())
         return out to area
     }
 

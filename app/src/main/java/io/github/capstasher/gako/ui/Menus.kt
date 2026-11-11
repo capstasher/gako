@@ -181,6 +181,7 @@ class MenuCallbacks(
     val share: () -> Unit,
     val about: () -> Unit,
     val layersPanel: @Composable () -> Unit,
+    val toolsPanel: @Composable () -> Unit,
 )
 
 fun buildMenus(vm: EditorViewModel, callbacks: MenuCallbacks): List<MenuGroup> {
@@ -223,7 +224,7 @@ fun buildMenus(vm: EditorViewModel, callbacks: MenuCallbacks): List<MenuGroup> {
     ))
 
     // ---- Select
-    val select = MenuGroup("select", "Select", Icons.Outlined.HighlightAlt, listOf(
+    val select = MenuGroup("select", "Select", Icons.Outlined.HighlightAlt, Tool.entries.filter { it.group == ToolGroup.Select }.map(::toolAction) + listOf(
         act("sel-all", "All", Icons.Outlined.SelectAll) { vm.selectAll() },
         act("sel-none", "None", Icons.Outlined.Deselect, hasSelection) { vm.selectNone() },
         act("sel-invert", "Invert", Icons.Outlined.FlipToBack) { vm.invertSelection() },
@@ -232,7 +233,7 @@ fun buildMenus(vm: EditorViewModel, callbacks: MenuCallbacks): List<MenuGroup> {
         act("sel-shrink", "Shrink…", Icons.Outlined.ZoomInMap, hasSelection) { vm.dialog = Dialog.ModifySelection(EditorViewModel.SelectionChange.Shrink) },
         act("sel-border", "Border…", Icons.Outlined.BorderStyle, hasSelection) { vm.dialog = Dialog.ModifySelection(EditorViewModel.SelectionChange.Border) },
         act("sel-alpha", "From Layer Alpha", Icons.Outlined.Opacity) { vm.alphaToSelection() },
-    ) + Tool.entries.filter { it.group == ToolGroup.Select }.map(::toolAction))
+    ))
 
     // ---- Image
     val image = MenuGroup("image", "Image", Icons.Outlined.Image, listOf(
@@ -295,7 +296,8 @@ fun buildMenus(vm: EditorViewModel, callbacks: MenuCallbacks): List<MenuGroup> {
         searchable = ops.filter { op -> op.categories.none { it in setOf("transform", "svgfilter", "vector") } })
 
     // ---- Tools (opened from the canvas dock)
-    val tools = MenuGroup("tools", "Tools", Icons.Outlined.Handyman, Tool.entries.map(::toolAction), inBar = false)
+    val tools = MenuGroup("tools", "Tools", Icons.Outlined.Handyman, Tool.entries.map(::toolAction), inBar = false,
+        panel = callbacks.toolsPanel)
 
     return listOf(file, edit, select, image, layers, colours, filters, tools)
 }

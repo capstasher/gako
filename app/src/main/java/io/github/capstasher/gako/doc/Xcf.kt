@@ -35,6 +35,7 @@ private object XcfProps {
     const val OFFSETS = 15
     const val COMPRESSION = 17
     const val RESOLUTION = 19
+    const val PARASITES = 21
     const val GROUP_ITEM = 29
     const val FLOAT_OPACITY = 33
     const val TILE = 64
@@ -94,7 +95,21 @@ object XcfWriter {
         }
     }
 
-    fun write(doc: DocState, out: OutputStream) {
+    /** Text layers keep their text in a parasite, which GIMP preserves but ignores. */
+    const val TEXT_PARASITE = "gako-text"
+
+    fun textToString(t: TextInfo): String = org.json.JSONObject().apply {
+        put("text", t.text); put("size", t.size.toDouble()); put("color", t.color); put("font", t.font.name)
+        put("bold", t.bold); put("italic", t.italic); put("align", t.align.name)
+    }.toString()
+
+    fun textFromString(s: String): TextInfo? = runCatching {
+        val o = org.json.JSONObject(s)
+        TextInfo(o.getString("text"), o.getDouble("size").toFloat(), o.getInt("color"),
+            TextFont.valueOf(o.getString("font")), o.getBoolean("bold"), o.getBoolean("italic"), TextAlign.valueOf(o.getString("align")))
+    }.getOrNull()
+
+    fun write(doc: DocState, out: OutputStream, level: Int = 6) {
         val b = Buf()
         b.bytes("gimp xcf v010".toByteArray(Charsets.US_ASCII)); b.u8(0)
         b.u32(doc.width); b.u32(doc.height); b.u32(0)     // RGB
@@ -108,7 +123,7 @@ object XcfWriter {
         b.u32(0)                                           // end of layers
         b.u32(0)                                           // no channels
 
-        val deflater = Deflater(6)
+        val deflater = Deflater(level)
         val tileBuf = ByteArray(XcfProps.TILE * XcfProps.TILE * 4)
         val compressed = ByteArray(tileBuf.size * 2 + 64)
         layers.forEachIndexed { i, l ->
@@ -122,6 +137,13 @@ object XcfWriter {
             b.prop(XcfProps.LOCK_ALPHA, if (l.lockAlpha) 1 else 0)
             b.prop(XcfProps.OFFSETS, l.x, l.y)
             b.prop(XcfProps.MODE, XcfProps.write[l.mode] ?: 0)
+            l.text?.let { t ->
+                // One parasite: name, flags (1 = persistent), size, data.
+                val name = TEXT_PARASITE.toByteArray(Charsets.UTF_8)
+                val data = textToString(t).toByteArray(Charsets.UTF_8)
+                b.u32(XcfProps.PARASITES); b.u32(4 + name.size + 1 + 4 + 4 + data.size)
+                b.string(TEXT_PARASITE); b.u32(1); b.u32(data.size); b.bytes(data)
+            }
             b.u32(XcfProps.END); b.u32(0)
             val hierarchySlot = b.size; b.u32(0)
             b.u32(0)                                       // no layer mask
@@ -193,6 +215,7 @@ object XcfReader {
         var opacity: Float = 1f, var visible: Boolean = true, var mode: LayerMode = LayerMode.Normal,
         var lockAlpha: Boolean = false, var active: Boolean = false, var group: Boolean = false,
         var applyMask: Boolean = true,
+        var text: TextInfo? = null,
     )
 
     private class Parser(val buf: ByteBuffer) {
@@ -276,6 +299,13 @@ object XcfReader {
                     XcfProps.LOCK_ALPHA -> info.lockAlpha = u32() != 0
                     XcfProps.OFFSETS -> { info.x = u32(); info.y = u32() }
                     XcfProps.GROUP_ITEM -> info.group = true
+                    XcfProps.PARASITES -> while (buf.position() < start + len) {
+                        val name = string()
+                        u32()
+                        val size = u32()
+                        val data = ByteArray(size).also { buf.get(it) }
+                        if (name == XcfWriter.TEXT_PARASITE) info.text = XcfWriter.textFromString(String(data, Charsets.UTF_8))
+                    }
                     XcfProps.APPLY_MASK -> info.applyMask = u32() != 0
                 }
                 buf.position(start + len)
@@ -287,7 +317,7 @@ object XcfReader {
             val bmp = readHierarchy(hierarchy, type, baseType) ?: return null
             if (mask != 0L && info.applyMask) applyMask(bmp, mask)
             return Layer(Layer.newId(), info.name.ifEmpty { "Layer" }, bmp, info.x, info.y, info.visible,
-                info.opacity, info.mode, info.lockAlpha) to info.active
+                info.opacity, info.mode, info.lockAlpha, info.text) to info.active
         }
 
         fun applyMask(bmp: Bitmap, at: Long) {
@@ -308,7 +338,7 @@ object XcfReader {
                 val bytes = ByteArray(px.size) { (px[it] and 0xFF).toByte() }
                 Selections.maskFromBytes(bytes, m.width, m.height).also { a.recycle() }
             }
-            Canvas(bmp).drawBitmap(alpha, 0f, 0f, Paint().apply { blendMode = BlendMode.DST_IN })
+            Bitmaps.maskIn(Canvas(bmp), alpha)
         }
 
         /** Bytes per channel and whether values are linear light, from the precision. */

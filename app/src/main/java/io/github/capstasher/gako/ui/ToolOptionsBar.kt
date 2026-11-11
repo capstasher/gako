@@ -1,6 +1,8 @@
 package io.github.capstasher.gako.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -207,4 +209,32 @@ fun OptChip(text: String, selected: Boolean, onClick: () -> Unit) {
             selectedLabelColor = Gako.Parchment,
         ),
     )
+}
+
+/** The toolbox: every tool in a compact grid, grouped the way GIMP groups them. */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+fun ToolPalette(vm: EditorViewModel, onPicked: () -> Unit) {
+    androidx.compose.foundation.layout.FlowRow(
+        Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+    ) {
+        Tool.entries.sortedBy { it.group.ordinal }.forEach { t ->
+            val selected = vm.tool == t
+            Column(
+                Modifier.width(66.dp).clickable { vm.selectTool(t); onPicked() }.padding(vertical = 5.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                androidx.compose.foundation.layout.Box(
+                    Modifier.size(40.dp).background(if (selected) Gako.Oxblood else Gako.InkHigh, androidx.compose.foundation.shape.CircleShape)
+                        .then(if (selected) Modifier.border(1.dp, Gako.Gold, androidx.compose.foundation.shape.CircleShape) else Modifier),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(t.icon, contentDescription = t.label, tint = if (selected) Gako.Gold else Gako.Parchment, modifier = Modifier.size(22.dp))
+                }
+                Text(t.short, style = MaterialTheme.typography.labelSmall, color = if (selected) Gako.Gold else Gako.Parchment,
+                    maxLines = 1, softWrap = false, modifier = Modifier.padding(top = 3.dp))
+            }
+        }
+    }
 }

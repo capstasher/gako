@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
+import androidx.activity.addCallback
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.PickVisualMediaRequest
@@ -41,6 +42,8 @@ class MainActivity : ComponentActivity() {
         )
         super.onCreate(savedInstanceState)
         if (savedInstanceState == null) handleIntent(intent)
+        // Back on the editor itself leaves the app running (and the image open) rather than closing it.
+        onBackPressedDispatcher.addCallback(this) { moveTaskToBack(true) }
 
         setContent {
             GakoTheme {
@@ -59,6 +62,11 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        vm.autosave()
     }
 
     override fun onNewIntent(intent: Intent) {

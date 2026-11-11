@@ -89,6 +89,7 @@ fun EditorScreen(
         share = { scope.launch { vm.shareableUri()?.let(onShare) } },
         about = { showAbout = true },
         layersPanel = { LayersPanel(vm) },
+        toolsPanel = { ToolPalette(vm) { menu.close() } },
     ))
     val session = vm.session
     val export = vm.exportSession

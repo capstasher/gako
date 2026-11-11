@@ -45,6 +45,21 @@ enum class Tool(val label: String, val icon: ImageVector, val group: ToolGroup, 
     Text("Text", Icons.Outlined.TextFields, ToolGroup.Paint, "Tap to place text"),
     ColorPicker("Colour Picker", Icons.Outlined.Colorize, ToolGroup.View, "Tap to pick the foreground colour");
 
+    /** A label short enough for the palette grid. */
+    val short: String get() = when (this) {
+        Transform -> "Transform"
+        RectSelect -> "Rectangle"
+        EllipseSelect -> "Ellipse"
+        FreeSelect -> "Lasso"
+        FuzzySelect -> "Fuzzy"
+        ColorSelect -> "By Colour"
+        Paintbrush -> "Brush"
+        DodgeBurn -> "Dodge/Burn"
+        BucketFill -> "Fill"
+        ColorPicker -> "Picker"
+        else -> label
+    }
+
     val paints get() = this in setOf(Paintbrush, Pencil, Airbrush, Eraser, Clone, DodgeBurn)
     val selects get() = group == ToolGroup.Select
 }
