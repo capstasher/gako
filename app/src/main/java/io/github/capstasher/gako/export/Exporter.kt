@@ -6,7 +6,11 @@ import androidx.heifwriter.HeifWriter
 import io.github.capstasher.gako.export.encoders.BmpEncoder
 import io.github.capstasher.gako.export.encoders.GifEncoder
 import io.github.capstasher.gako.export.encoders.IcoEncoder
-import io.github.capstasher.gako.export.encoders.OraEncoder
+import io.github.capstasher.gako.doc.Compositor
+import io.github.capstasher.gako.doc.DocOps
+import io.github.capstasher.gako.doc.DocState
+import io.github.capstasher.gako.doc.OraFile
+import io.github.capstasher.gako.doc.XcfWriter
 import io.github.capstasher.gako.export.encoders.PixelSource
 import io.github.capstasher.gako.export.encoders.PnmEncoder
 import io.github.capstasher.gako.export.encoders.TgaEncoder
@@ -28,12 +32,16 @@ enum class ExportFormat(val label: String, val extensions: List<String>, val mim
     Tga("TGA", listOf("tga"), "image/x-tga"),
     Ico("ICO", listOf("ico"), "image/x-icon"),
     Ppm("PPM", listOf("ppm", "pnm"), "image/x-portable-pixmap"),
-    Ora("ORA", listOf("ora"), "image/openraster");
+    Ora("ORA", listOf("ora"), "image/openraster"),
+    Xcf("XCF", listOf("xcf"), "image/x-xcf");
 
     val ext: String get() = extensions.first()
 
     /** Types the platform doesn't know; saved as plain files so nothing renames them. */
-    val opaqueToSystem: Boolean get() = this == Tga || this == Ora
+    val opaqueToSystem: Boolean get() = this == Tga || this == Ora || this == Xcf
+
+    /** Formats that keep layers (GAKO's project formats). */
+    val layered: Boolean get() = this == Ora || this == Xcf
 
     companion object {
         fun forFileName(name: String): ExportFormat? {
@@ -53,6 +61,15 @@ data class ExportOptions(
 
 /** Encodes a bitmap in any [ExportFormat]. Runs on a background thread. */
 object Exporter {
+
+    fun encode(doc: DocState, format: ExportFormat, options: ExportOptions, out: OutputStream, scratch: File) {
+        scratch.mkdirs()
+        when (format) {
+            ExportFormat.Ora -> { OraFile.write(doc, out); return }
+            ExportFormat.Xcf -> { XcfWriter.write(doc, out); return }
+            else -> encode(Compositor.flatten(doc), format, options, out, scratch)
+        }
+    }
 
     fun encode(bitmap: Bitmap, format: ExportFormat, options: ExportOptions, out: OutputStream, scratch: File) {
         scratch.mkdirs()
@@ -99,12 +116,8 @@ object Exporter {
                 val icon = fitWithin(bitmap, 256)
                 IcoEncoder.write(pngBytes(icon), icon.width, icon.height, buffered)
             }
-            ExportFormat.Ora -> {
-                val layer = File(scratch, "layer0.png").apply { delete() }
-                layer.outputStream().buffered().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
-                OraEncoder.write(layer, pngBytes(fitWithin(bitmap, 256)), bitmap.width, bitmap.height, "Background", buffered)
-                layer.delete()
-            }
+            ExportFormat.Ora -> OraFile.write(DocOps.fromBitmap(bitmap), buffered)
+            ExportFormat.Xcf -> XcfWriter.write(DocOps.fromBitmap(bitmap), buffered)
         }
         buffered.flush()
     }

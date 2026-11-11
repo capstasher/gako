@@ -23,6 +23,13 @@ class MainActivity : ComponentActivity() {
         uri?.let(vm::open)
     }
 
+    private var openAsLayers = false
+
+    /** Any file: photos, but also .ora and .xcf projects, which the photo picker hides. */
+    private val filePicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let { vm.open(it, asLayers = openAsLayers) }
+    }
+
     private val folderPicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let(vm::setExportFolder)
     }
@@ -41,6 +48,11 @@ class MainActivity : ComponentActivity() {
                     vm = vm,
                     onPickImage = {
                         picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                    },
+                    onPickFile = { asLayers ->
+                        openAsLayers = asLayers
+                        filePicker.launch(arrayOf("image/*", "application/octet-stream", "application/zip",
+                            "image/openraster", "image/x-xcf", "application/x-xcf"))
                     },
                     onPickFolder = { folderPicker.launch(null) },
                     onShare = ::share,
