@@ -249,10 +249,15 @@ class ToolInput(private val vm: EditorViewModel) {
                 dragRect = null
                 if (r.width() < 2 || r.height() < 2) { tapSelect(); return }
                 val path = Path().apply {
-                    if (tool == Tool.RectSelect) addRect(snap(r), Path.Direction.CW) else addOval(r, Path.Direction.CW)
+                    val radius = options.cornerRadius
+                    when {
+                        tool == Tool.RectSelect && radius > 0f -> addRoundRect(snap(r), radius, radius, Path.Direction.CW)
+                        tool == Tool.RectSelect -> addRect(snap(r), Path.Direction.CW)
+                        else -> addOval(r, Path.Direction.CW)
+                    }
                 }
                 select(d, if (tool == Tool.RectSelect) "Rectangle Select" else "Ellipse Select") {
-                    Selections.fromPath(d.width, d.height, path, antialias = tool == Tool.EllipseSelect)
+                    Selections.fromPath(d.width, d.height, path, antialias = tool == Tool.EllipseSelect || options.cornerRadius > 0f)
                 }
             }
             Tool.FreeSelect -> {

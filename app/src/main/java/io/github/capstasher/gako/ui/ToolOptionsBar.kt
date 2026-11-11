@@ -84,6 +84,7 @@ fun ToolOptionsBar(vm: EditorViewModel) {
     val exposure = NumOption("exposure", "Exposure", o.exposure, 0.05f, 1f, 1f, ::pct) { v -> set { it.copy(exposure = v) } }
     val feather = NumOption("feather", "Feather", o.feather, 0f, 200f, 2f, { "${it.roundToInt()} px" }) { v -> set { it.copy(feather = v) } }
     val strength = NumOption("strength", if (tool == Tool.Smudge) "Rate" else "Strength", o.strength, 0f, 1f, 1f, ::pct) { v -> set { it.copy(strength = v) } }
+    val corners = NumOption("corners", "Corners", o.cornerRadius, 0f, 500f, 2f, { "${it.roundToInt()} px" }) { v -> set { it.copy(cornerRadius = v) } }
     val threshold = NumOption("threshold", "Threshold", o.threshold.toFloat(), 0f, 255f, 1f, { "${it.roundToInt()}" }) { v -> set { it.copy(threshold = v.roundToInt()) } }
 
     val numbers: List<NumOption> = when (tool) {
@@ -92,7 +93,8 @@ fun ToolOptionsBar(vm: EditorViewModel) {
         Tool.Airbrush -> listOf(size, opacity, rate)
         Tool.DodgeBurn -> listOf(size, exposure, hardness)
         Tool.Smudge, Tool.Blur -> listOf(size, strength, hardness)
-        Tool.RectSelect, Tool.EllipseSelect, Tool.FreeSelect -> listOf(feather)
+        Tool.RectSelect -> listOf(feather, corners)
+        Tool.EllipseSelect, Tool.FreeSelect -> listOf(feather)
         Tool.FuzzySelect, Tool.ColorSelect -> listOf(threshold, feather)
         Tool.BucketFill -> if (o.fillArea == FillArea.Similar) listOf(threshold, opacity) else listOf(opacity)
         Tool.Gradient -> listOf(opacity)

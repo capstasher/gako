@@ -103,4 +103,6 @@ data class ToolOptions(
     val cloneAligned: Boolean = true,
     /** Smudge: how far colour is carried; Blur: how strongly it softens. */
     val strength: Float = 0.5f,
+    /** Rectangle Select: rounded corners (GIMP's "Rounded corners" radius). */
+    val cornerRadius: Float = 0f,
 )
