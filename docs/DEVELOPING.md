@@ -31,7 +31,7 @@ app/src/main/java/io/github/capstasher/gako/
   export/               flat formats (PNG, JPEG, WebP, HEIF, TIFF, GIF, BMP, TGA, ICO, PPM) + ORA/XCF
   ui/                   Compose: EditorScreen (layout, dock), ImageCanvas (GPU drawing + gestures),
                         MenuBar/Menus, ToolOptionsBar (+ ToolPalette), LayersPanel, ParamPanel,
-                        CurvesPanel, TextPanel, ExportPanel, Dialogs (incl. colour picker)
+                        CurvesPanel, TextPanel, ExportPanel, PathsDialog, Dialogs (incl. colour picker)
 native/bridge/          C bridge over GEGL: list/describe/apply operations, bounds, apply_rect
 ```
 
@@ -95,5 +95,7 @@ Stage 3 was tested on an Android 15 x86_64 emulator (Pixel 7 profile), driving i
 - Filters that grow a layer (drop shadow…) grow it only within the canvas.
 - During a stroke the canvas draws the pre-stroke copy plus 256 px tiles; other edits on huge layers
   still re-upload the whole texture once per change.
-- One path per image (the first path of an XCF is loaded; GIMP 3 files that store paths the new way load none); no guides.
+- Paths: any number per image, each with several strokes (`EditorViewModel.pathIndex`/`strokeIndex` pick the
+  one the tool edits; one past the end means "new"). Path edits aren't undo steps of their own (the tool
+  has Undo point); rename/duplicate/reorder/delete are. No guides.
 - ORA bakes masks (the format has none); XCF keeps them.

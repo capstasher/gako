@@ -40,6 +40,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import io.github.capstasher.gako.doc.SelectMode
@@ -199,6 +200,16 @@ fun ToolOptionsBar(vm: EditorViewModel) {
                     style = MaterialTheme.typography.labelMedium, color = Gako.Gold)
                 Tool.Paths -> {
                     val p = vm.input.path
+                    var listOpen by remember { mutableStateOf(false) }
+                    val ap = vm.activePath
+                    val label = when {
+                        ap == null -> "New path"
+                        ap.strokes.size > 1 || vm.strokeIndex >= ap.strokes.size ->
+                            "${ap.name} · ${if (vm.strokeIndex >= ap.strokes.size) "new stroke" else "stroke ${vm.strokeIndex + 1}"}"
+                        else -> ap.name
+                    }
+                    OptChip("$label ▾", listOpen) { listOpen = true }
+                    if (listOpen) PathsDialog(vm) { listOpen = false }
                     OptChip("To selection", false) { vm.input.pathToSelection() }
                     OptChip("Stroke ${o.size.roundToInt()} px", false) { vm.input.strokePath() }
                     OptChip("Fill", false) { vm.input.fillPath() }
@@ -320,12 +331,14 @@ private fun PresetsDialog(vm: EditorViewModel, onDismiss: () -> Unit) {
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 if (naming) {
+                    val focus = remember { androidx.compose.ui.focus.FocusRequester() }
+                    androidx.compose.runtime.LaunchedEffect(Unit) { focus.requestFocus() }
                     androidx.compose.material3.OutlinedTextField(name, { name = it }, label = { Text("Name") }, singleLine = true,
                         keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Done),
                         keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = {
                             if (name.isNotBlank()) { vm.savePreset(name); naming = false }
                         }),
-                        modifier = Modifier.fillMaxWidth())
+                        modifier = Modifier.fillMaxWidth().focusRequester(focus))
                 } else {
                     Text("Save current brush…", color = Gako.Gold, style = MaterialTheme.typography.bodyLarge,
                         modifier = Modifier.fillMaxWidth().clickable { naming = true; name = "" }.padding(vertical = 12.dp))

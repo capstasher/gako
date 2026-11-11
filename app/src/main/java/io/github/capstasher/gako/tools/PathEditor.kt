@@ -126,17 +126,22 @@ class PathEditor {
         pushed = false
     }
 
-    /** A tap: close the path on its first point, otherwise add a corner. */
-    fun tap(x: Float, y: Float, tol: Float) {
+    /**
+     * A tap: close the path on its first point, otherwise add a corner. False if it did nothing
+     * because the path is closed and the tap missed it.
+     */
+    fun tap(x: Float, y: Float, tol: Float): Boolean {
         val h = hit(x, y, tol)
         if (h is Drag.Anchor && h.i == 0 && !closed && points.size >= 3) {
             remember()
             closed = true
-            return
+            return true
         }
-        if (h != null || closed) return
+        if (h != null) return true
+        if (closed) return false
         remember()
         points = points + PathPoint(x, y)
+        return true
     }
 
     fun undoPoint() {

@@ -145,18 +145,29 @@ class ToolInput(private val vm: EditorViewModel) {
 
     // ------------------------------------------------------------ paths
 
+    /**
+     * The path being edited, all its strokes, as one Android path ([closed]: every stroke closed,
+     * holes where strokes overlap an odd number of times — how GIMP fills a path). Null if empty.
+     */
+    private fun activeGeometry(closed: Boolean, minAnchors: Int): Path? {
+        val strokes = vm.activeStrokes()
+        if (strokes.sumOf { it.anchors } < minAnchors) return null
+        return Path().apply {
+            fillType = Path.FillType.EVEN_ODD
+            strokes.forEach { it.addTo(this, close = closed || it.closed) }
+        }
+    }
+
     /** Select > From Path, combined with the selection in the current mode. */
     fun pathToSelection() {
         val d = doc ?: return
-        if (path.points.size < 2) { vm.say("Draw a path first"); return }
-        val p = path.toPath().apply { close() }
+        val p = activeGeometry(true, 2) ?: run { vm.say("Draw a path first"); return }
         select(d, "Selection from Path") { Selections.fromPath(d.width, d.height, p) }
     }
 
     /** Edit > Stroke Path: the brush size and FG colour along the path, on the active layer. */
     fun strokePath() {
-        if (path.points.size < 2) { vm.say("Draw a path first"); return }
-        val p = path.toPath()
+        val p = activeGeometry(false, 2) ?: run { vm.say("Draw a path first"); return }
         val width = options.size
         val color = vm.paintColor(vm.fg) or (0xFF shl 24)
         val opacity = options.opacity
@@ -165,8 +176,7 @@ class ToolInput(private val vm: EditorViewModel) {
 
     /** Fills the inside of the path with the FG colour. */
     fun fillPath() {
-        if (path.points.size < 3) { vm.say("A fill needs at least three points"); return }
-        val p = path.toPath().apply { close() }
+        val p = activeGeometry(true, 3) ?: run { vm.say("A fill needs at least three points"); return }
         val color = vm.paintColor(vm.fg) or (0xFF shl 24)
         vm.editActiveLayer("Fill Path") { l, sel -> paintPath(l, sel, p, color, options.opacity, null) }
     }
@@ -460,7 +470,7 @@ class ToolInput(private val vm: EditorViewModel) {
             Tool.BucketFill -> bucketFill(d, x, y)
             Tool.ColorPicker -> pick(d, x, y)
             Tool.Text -> vm.startText(x.roundToInt(), y.roundToInt())
-            Tool.Paths -> path.tap(x, y, tol)
+            Tool.Paths -> if (!path.tap(x, y, tol)) vm.say("The path is closed: tap its name ▾ for a new path or stroke")
             Tool.Transform -> Unit
             else -> Unit
         }

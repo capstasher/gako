@@ -36,6 +36,7 @@ import io.github.capstasher.gako.doc.OraFile
 import io.github.capstasher.gako.doc.Selections
 import io.github.capstasher.gako.doc.Step
 import io.github.capstasher.gako.doc.Tree
+import io.github.capstasher.gako.doc.VectorPath
 import io.github.capstasher.gako.engine.Engine
 import io.github.capstasher.gako.engine.OpDescription
 import io.github.capstasher.gako.engine.OpInfo
@@ -585,6 +586,9 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     private fun newDocument(state: DocState, name: String, keepRecovery: Boolean = false) {
         if (!keepRecovery) clearRecovery()
         filterBrush = null
+        pathIndex = 0
+        strokeIndex = 0
+        pendingPathName = null
         input.path.load(state.paths.firstOrNull()?.strokes?.firstOrNull())
         metadata = null
         projectUri = null
@@ -719,35 +723,137 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** The document as it is (the Paths tool keeps it up to date). */
     private fun withPaths(d: DocState): DocState = d
 
+    // ---------------------------------------------------------------- paths
+
     /**
-     * The Paths tool edits the first stroke of the document's first path; the others are kept as
-     * they came from the file. Called whenever the tool's path changes.
+     * Which path, and which stroke of it, the Paths tool is editing. Either may be one past the
+     * end: the tool then holds a new path (or a new stroke of this path) that joins the document
+     * once it has two points.
      */
+    var pathIndex by mutableIntStateOf(0); private set
+    var strokeIndex by mutableIntStateOf(0); private set
+    /** The name a cleared path gets back if its stroke is restored with Undo point. */
+    private var pendingPathName: String? = null
+
+    private fun strokeAt(paths: List<VectorPath>, pi: Int, si: Int) = paths.getOrNull(pi)?.strokes?.getOrNull(si)
+
+    /** The path being edited, if it is in the document yet. */
+    val activePath: VectorPath? get() = doc?.paths?.getOrNull(pathIndex)
+
+    /** Every stroke of the path being edited, with the tool's stroke as it is right now. */
+    fun activeStrokes(): List<io.github.capstasher.gako.doc.PathStroke> {
+        val stored = activePath?.strokes.orEmpty().toMutableList()
+        val e = input.path.toStroke()
+        if (e != null) { if (strokeIndex < stored.size) stored[strokeIndex] = e else stored += e }
+        return stored
+    }
+
+    private fun nextPathName(paths: List<VectorPath>): String {
+        var n = paths.size + 1
+        while (paths.any { it.name == "Path $n" }) n++
+        return "Path $n"
+    }
+
+    /** Starts editing stroke [si] of path [pi] (either may be one past the end: a new one). */
+    fun editPath(pi: Int, si: Int = 0) {
+        val d = doc ?: return
+        if (blockedByBusy()) return
+        pathIndex = pi.coerceIn(0, d.paths.size)
+        strokeIndex = si.coerceIn(0, d.paths.getOrNull(pathIndex)?.strokes?.size ?: 0)
+        pendingPathName = null
+        input.path.load(strokeAt(d.paths, pathIndex, strokeIndex))
+        selectTool(Tool.Paths)
+    }
+
+    fun newPath() = editPath(doc?.paths?.size ?: 0)
+
+    /** Another stroke in the current path (for holes, or shapes in several pieces). */
+    fun newStroke() {
+        val p = activePath ?: run { say("Draw the path's first stroke first"); return }
+        editPath(pathIndex, p.strokes.size)
+    }
+
+    fun renamePath(i: Int, name: String) {
+        val d = doc ?: return
+        val p = d.paths.getOrNull(i) ?: return
+        val n = name.trim().ifEmpty { return }
+        if (n == p.name) return
+        change("Rename Path", d.copy(paths = d.paths.toMutableList().also { it[i] = VectorPath(n, p.strokes) }))
+    }
+
+    fun duplicatePath(i: Int) {
+        val d = doc ?: return
+        val p = d.paths.getOrNull(i) ?: return
+        val copy = VectorPath("${p.name} copy", p.strokes)
+        change("Duplicate Path", d.copy(paths = d.paths.toMutableList().also { it.add(i + 1, copy) }))
+        editPath(i + 1)
+    }
+
+    fun deletePath(i: Int) {
+        val d = doc ?: return
+        if (i !in d.paths.indices) return
+        val paths = d.paths.toMutableList().also { it.removeAt(i) }
+        if (i < pathIndex || (i == pathIndex && pathIndex >= paths.size)) pathIndex = (pathIndex - 1).coerceAtLeast(0)
+        if (i == pathIndex || pathIndex >= paths.size) strokeIndex = 0
+        change("Delete Path", d.copy(paths = paths))
+        input.path.load(strokeAt(paths, pathIndex, strokeIndex))
+    }
+
+    /** Moves path [i] up or down the list. */
+    fun movePath(i: Int, delta: Int) {
+        val d = doc ?: return
+        val j = i + delta
+        if (i !in d.paths.indices || j !in d.paths.indices) return
+        val paths = d.paths.toMutableList().also { java.util.Collections.swap(it, i, j) }
+        if (pathIndex == i) pathIndex = j else if (pathIndex == j) pathIndex = i
+        change("Reorder Paths", d.copy(paths = paths))
+    }
+
+    /** Called whenever the tool's stroke changes: writes it into its slot in the document. */
     private fun syncPath() {
         val d = doc ?: return
         val edited = input.path.toStroke()
-        val first = d.paths.firstOrNull()
-        val current = first?.strokes?.firstOrNull()
+        val current = strokeAt(d.paths, pathIndex, strokeIndex)
         if (edited == null && current == null) return
         if (edited != null && edited.sameAs(current)) return
-        val paths = when {
-            edited != null && first != null -> listOf(io.github.capstasher.gako.doc.VectorPath(first.name, listOf(edited) + first.strokes.drop(1))) + d.paths.drop(1)
-            edited != null -> listOf(io.github.capstasher.gako.doc.VectorPath("Path", listOf(edited)))
-            else -> {
-                // Cleared (or down to one point): drop that stroke, then show the next one, if any.
-                if (input.path.points.isNotEmpty()) return
-                val rest = first!!.strokes.drop(1)
-                (if (rest.isEmpty()) emptyList() else listOf(io.github.capstasher.gako.doc.VectorPath(first.name, rest))) + d.paths.drop(1)
+        val paths = d.paths.toMutableList()
+        if (edited != null) {
+            val p = paths.getOrNull(pathIndex)
+            if (p == null) {
+                paths += VectorPath(pendingPathName ?: nextPathName(paths), listOf(edited))
+                pathIndex = paths.lastIndex
+                strokeIndex = 0
+            } else {
+                val strokes = p.strokes.toMutableList()
+                if (strokeIndex < strokes.size) strokes[strokeIndex] = edited else { strokes += edited; strokeIndex = strokes.lastIndex }
+                paths[pathIndex] = VectorPath(p.name, strokes)
+            }
+            pendingPathName = null
+        } else {
+            // Cleared (a stroke down to one point keeps its stored copy until it has two again).
+            if (input.path.points.isNotEmpty()) return
+            val p = paths[pathIndex]
+            val rest = p.strokes.toMutableList().also { it.removeAt(strokeIndex) }
+            if (rest.isEmpty()) {
+                paths.removeAt(pathIndex)
+                pendingPathName = p.name
+                pathIndex = paths.size           // the tool now holds a new, empty path
+                strokeIndex = 0
+            } else {
+                paths[pathIndex] = VectorPath(p.name, rest)
+                strokeIndex = rest.size          // a new, empty stroke of this path
             }
         }
         doc = d.copy(paths = paths)
         dirty = true
-        if (edited == null) input.path.load(paths.firstOrNull()?.strokes?.firstOrNull())
     }
 
     /** After undo/redo or an operation that moved the paths (crop, rotate…), show them in the tool. */
     private fun reloadPath(before: DocState?, after: DocState?) {
-        if (after != null && before?.paths !== after.paths) input.path.load(after.paths.firstOrNull()?.strokes?.firstOrNull())
+        if (after == null || before?.paths === after.paths) return
+        pathIndex = pathIndex.coerceIn(0, after.paths.size)
+        strokeIndex = strokeIndex.coerceIn(0, after.paths.getOrNull(pathIndex)?.strokes?.size ?: 0)
+        input.path.load(strokeAt(after.paths, pathIndex, strokeIndex))
     }
 
     // ---------------------------------------------------------------- recovery
