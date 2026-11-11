@@ -114,6 +114,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
      */
     var previewPlacement by mutableStateOf<Triple<Int, Int, Double>?>(null); private set
     var documentName by mutableStateOf("Untitled"); private set
+    /** EXIF of the photo this image was opened from, for exports. */
+    var metadata by mutableStateOf<Map<String, String>?>(null); private set
     var dirty by mutableStateOf(false); private set
     var busy by mutableStateOf<Busy?>(null); internal set
     var session by mutableStateOf<FilterSession?>(null); private set
@@ -487,6 +489,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun newDocument(state: DocState, name: String, keepRecovery: Boolean = false) {
         if (!keepRecovery) clearRecovery()
+        metadata = null
         projectUri = null
         projectFormat = null
         endInteractions()
@@ -547,6 +550,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                     change("Open as Layers", d.copy(layers = layers, activeId = added.last().id))
                 } else {
                     newDocument(state, name)
+                    metadata = pendingMetadata
                     val lower = name.lowercase()
                     projectFormat = when {
                         lower.endsWith(".xcf") -> ExportFormat.Xcf
@@ -566,7 +570,10 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    @Volatile private var pendingMetadata: Map<String, String>? = null
+
     private fun load(uri: Uri, name: String): Pair<DocState, String?> {
+        pendingMetadata = null
         val mime = runCatching { resolver.getType(uri) }.getOrNull()
         val lower = name.lowercase()
         if (lower.endsWith(".ora") || mime == "image/openraster") {
@@ -576,6 +583,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             return resolver.openInputStream(uri)!!.use { io.github.capstasher.gako.doc.XcfReader.read(it) } to null
         }
         val (bitmap, note) = decode(uri)
+        pendingMetadata = runCatching { resolver.openInputStream(uri)?.use { io.github.capstasher.gako.export.Metadata.read(it) } }.getOrNull()
         return DocOps.fromBitmap(bitmap) to note
     }
 
@@ -753,6 +761,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             gifDither = prefs.getBoolean("gifDither", true),
             tiffDeflate = prefs.getBoolean("tiffDeflate", true),
             tgaRle = prefs.getBoolean("tgaRle", true),
+            keepMetadata = prefs.getBoolean("keepMetadata", true),
+            keepLocation = prefs.getBoolean("keepLocation", false),
         )
         exportSession = ExportSession("${baseName()}.${format.ext}", format, options,
             if (project) "Save Project" else "Export Image")
@@ -787,6 +797,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             .putBoolean("gifDither", s.options.gifDither)
             .putBoolean("tiffDeflate", s.options.tiffDeflate)
             .putBoolean("tgaRle", s.options.tgaRle)
+            .putBoolean("keepMetadata", s.options.keepMetadata)
+            .putBoolean("keepLocation", s.options.keepLocation)
             .putBoolean("toFolder", exportToFolder)
         if (!format.layered) e.putString("format", format.name)
         e.apply()
@@ -796,7 +808,23 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val (where, uri) = withContext(Dispatchers.IO) {
                     val scratch = File(getApplication<Application>().cacheDir, "export")
-                    val write: (java.io.OutputStream) -> Unit = { Exporter.encode(d, format, s.options, it, scratch) }
+                    val meta = metadata.takeIf { s.options.keepMetadata && io.github.capstasher.gako.export.Metadata.supports(format) }
+                    val write: (java.io.OutputStream) -> Unit = { out ->
+                        if (meta == null) Exporter.encode(d, format, s.options, out, scratch)
+                        else {
+                            // EXIF is written into a finished file, so encode to a temp file first.
+                            scratch.mkdirs()
+                            val tmp = File(scratch, "meta.${format.ext}").apply { delete() }
+                            tmp.outputStream().buffered(1 shl 16).use { Exporter.encode(d, format, s.options, it, scratch) }
+                            val k = if (s.options.scale in 1..99) s.options.scale else 100
+                            runCatching {
+                                io.github.capstasher.gako.export.Metadata.write(tmp, meta, s.options.keepLocation,
+                                    (d.width * k / 100).coerceAtLeast(1), (d.height * k / 100).coerceAtLeast(1))
+                            }
+                            tmp.inputStream().use { it.copyTo(out, 1 shl 16) }
+                            tmp.delete()
+                        }
+                    }
                     if (folder != null) writeToFolder(folder, fileName, format, write)
                     else writeToPictures(fileName, format, write)
                 }

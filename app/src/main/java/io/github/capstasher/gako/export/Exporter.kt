@@ -57,6 +57,11 @@ data class ExportOptions(
     val gifDither: Boolean = true,
     val tiffDeflate: Boolean = true,
     val tgaRle: Boolean = true,
+    /** Export at this percentage of the image's size (flat formats). */
+    val scale: Int = 100,
+    /** Carry the photo's EXIF over (JPEG, PNG, WebP), and its location only if asked. */
+    val keepMetadata: Boolean = true,
+    val keepLocation: Boolean = false,
 )
 
 /** Encodes a bitmap in any [ExportFormat]. Runs on a background thread. */
@@ -67,7 +72,12 @@ object Exporter {
         when (format) {
             ExportFormat.Ora -> { OraFile.write(doc, out); return }
             ExportFormat.Xcf -> { XcfWriter.write(doc, out); return }
-            else -> encode(Compositor.flatten(doc), format, options, out, scratch)
+            else -> {
+                val flat = Compositor.flatten(doc)
+                val sized = if (options.scale in 1..99) DocOps.scaled(flat,
+                    (flat.width * options.scale / 100).coerceAtLeast(1), (flat.height * options.scale / 100).coerceAtLeast(1)) else flat
+                encode(sized, format, options, out, scratch)
+            }
         }
     }
 

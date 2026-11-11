@@ -33,6 +33,7 @@ import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.foundation.clickable
 import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.outlined.NoteAdd
+import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -71,6 +72,7 @@ fun EditorScreen(
     vm: EditorViewModel,
     onPickImage: () -> Unit,
     onPickFile: (asLayers: Boolean) -> Unit,
+    onTakePhoto: () -> Unit,
     onPickFolder: () -> Unit,
     onShare: (Uri) -> Unit,
 ) {
@@ -89,6 +91,7 @@ fun EditorScreen(
     val roots = buildMenus(vm, MenuCallbacks(
         openImage = onPickImage,
         openFile = onPickFile,
+        takePhoto = onTakePhoto,
         share = { scope.launch { vm.shareableUri()?.let(onShare) } },
         about = { showAbout = true },
         layersPanel = { LayersPanel(vm) },
@@ -128,7 +131,7 @@ fun EditorScreen(
                             SideSubmenu(roots, menu, onSearchPick = { vm.startFilter(it.name) })
                         }
                         Column(Modifier.weight(1f).fillMaxHeight()) {
-                            CanvasArea(vm, menu, onPickImage, Modifier.weight(1f))
+                            CanvasArea(vm, menu, onPickImage, onTakePhoto, Modifier.weight(1f))
                             if (!modal && vm.doc != null) ToolOptionsBar(vm)
                         }
                         val side = Modifier.width(360.dp).fillMaxHeight()
@@ -141,7 +144,7 @@ fun EditorScreen(
                     }
                 } else {
                     Column(Modifier.fillMaxSize()) {
-                        CanvasArea(vm, menu, onPickImage, Modifier.weight(1f))
+                        CanvasArea(vm, menu, onPickImage, onTakePhoto, Modifier.weight(1f))
                         val panel = Modifier.fillMaxWidth().heightIn(max = panelMax)
                         when {
                             session != null -> ParamPanel(session, vm, panel)
@@ -175,11 +178,11 @@ fun EditorScreen(
 }
 
 @Composable
-private fun CanvasArea(vm: EditorViewModel, menu: MenuState, onPickImage: () -> Unit, modifier: Modifier) {
+private fun CanvasArea(vm: EditorViewModel, menu: MenuState, onPickImage: () -> Unit, onTakePhoto: () -> Unit, modifier: Modifier) {
     Box(modifier.fillMaxWidth().background(Gako.CanvasSurround), contentAlignment = Alignment.Center) {
         val doc = vm.doc
         if (doc == null) {
-            EmptyState(vm, onPickImage)
+            EmptyState(vm, onPickImage, onTakePhoto)
             return@Box
         }
         ImageCanvas(vm, doc)
@@ -261,7 +264,7 @@ private fun Dock(vm: EditorViewModel, menu: MenuState, modifier: Modifier) {
 }
 
 @Composable
-private fun EmptyState(vm: EditorViewModel, onPickImage: () -> Unit) {
+private fun EmptyState(vm: EditorViewModel, onPickImage: () -> Unit, onTakePhoto: () -> Unit) {
     Column(
         Modifier.widthIn(max = 360.dp).padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -277,10 +280,17 @@ private fun EmptyState(vm: EditorViewModel, onPickImage: () -> Unit) {
             Spacer(Modifier.width(8.dp))
             Text("Open")
         }
-        OutlinedButton(onClick = { vm.dialog = io.github.capstasher.gako.editor.Dialog.NewImage }, shape = RoundedCornerShape(4.dp)) {
-            Icon(Icons.Outlined.NoteAdd, null, tint = Gako.Parchment)
-            Spacer(Modifier.width(8.dp))
-            Text("New image", color = Gako.Parchment)
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            OutlinedButton(onClick = onTakePhoto, shape = RoundedCornerShape(4.dp)) {
+                Icon(Icons.Outlined.PhotoCamera, null, tint = Gako.Parchment)
+                Spacer(Modifier.width(8.dp))
+                Text("Camera", color = Gako.Parchment)
+            }
+            OutlinedButton(onClick = { vm.dialog = io.github.capstasher.gako.editor.Dialog.NewImage }, shape = RoundedCornerShape(4.dp)) {
+                Icon(Icons.Outlined.NoteAdd, null, tint = Gako.Parchment)
+                Spacer(Modifier.width(8.dp))
+                Text("New", color = Gako.Parchment)
+            }
         }
         Text(
             "One finger uses the tool. Two fingers pan and zoom.",

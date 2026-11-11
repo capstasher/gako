@@ -25,6 +25,7 @@ import androidx.compose.material.icons.outlined.HighlightAlt
 import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.outlined.NoteAdd
 import androidx.compose.material.icons.outlined.PhotoLibrary
+import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.outlined.PhotoSizeSelectLarge
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.SaveAs
@@ -181,6 +182,7 @@ private val colourShelves = listOf(
 class MenuCallbacks(
     val openImage: () -> Unit,
     val openFile: (asLayers: Boolean) -> Unit,
+    val takePhoto: () -> Unit,
     val share: () -> Unit,
     val about: () -> Unit,
     val layersPanel: @Composable () -> Unit,
@@ -207,6 +209,7 @@ fun buildMenus(vm: EditorViewModel, callbacks: MenuCallbacks): List<MenuGroup> {
         act("new", "New…", Icons.Outlined.NoteAdd, true) { vm.dialog = Dialog.NewImage },
         act("open", "Open…", Icons.Outlined.FolderOpen, true) { callbacks.openFile(false) },
         act("open-photo", "Open Photo…", Icons.Outlined.PhotoLibrary, true) { callbacks.openImage() },
+        act("camera", "Take Photo…", Icons.Outlined.PhotoCamera, true) { callbacks.takePhoto() },
         act("open-layers", "Open as Layers…", Icons.Outlined.Layers) { callbacks.openFile(true) },
         act("save", "Save", Icons.Outlined.Save) { vm.save() },
         act("save-as", "Save As…", Icons.Outlined.SaveAs) { vm.startExport(project = true) },

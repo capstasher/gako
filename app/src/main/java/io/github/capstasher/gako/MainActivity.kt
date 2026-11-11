@@ -31,6 +31,32 @@ class MainActivity : ComponentActivity() {
         uri?.let { vm.open(it, asLayers = openAsLayers) }
     }
 
+    /** Where the camera app writes the photo it takes for us. */
+    private var cameraUri: Uri? = null
+    private val camera = registerForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
+        val uri = cameraUri
+        if (ok && uri != null) vm.open(uri)
+    }
+
+    private fun takePhoto() {
+        val dir = java.io.File(cacheDir, "camera").apply { mkdirs() }
+        // Keep the last few photos in case they're open; drop older ones.
+        dir.listFiles()?.sortedByDescending { it.lastModified() }?.drop(3)?.forEach { it.delete() }
+        val file = java.io.File(dir, "photo-${System.currentTimeMillis()}.jpg")
+        val uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.files", file)
+        cameraUri = uri
+        try {
+            camera.launch(uri)
+        } catch (e: android.content.ActivityNotFoundException) {
+            android.widget.Toast.makeText(this, "No camera app found", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        cameraUri?.let { outState.putParcelable("cameraUri", it) }
+    }
+
     private val folderPicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let(vm::setExportFolder)
     }
@@ -41,6 +67,7 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
         )
         super.onCreate(savedInstanceState)
+        cameraUri = savedInstanceState?.let { androidx.core.os.BundleCompat.getParcelable(it, "cameraUri", Uri::class.java) }
         if (savedInstanceState == null) handleIntent(intent)
         // Back on the editor itself leaves the app running (and the image open) rather than closing it.
         onBackPressedDispatcher.addCallback(this) { moveTaskToBack(true) }
@@ -57,6 +84,7 @@ class MainActivity : ComponentActivity() {
                         filePicker.launch(arrayOf("image/*", "application/octet-stream", "application/zip",
                             "image/openraster", "image/x-xcf", "application/x-xcf"))
                     },
+                    onTakePhoto = ::takePhoto,
                     onPickFolder = { folderPicker.launch(null) },
                     onShare = ::share,
                 )
