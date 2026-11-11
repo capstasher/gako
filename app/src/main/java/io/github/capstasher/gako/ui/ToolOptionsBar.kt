@@ -147,6 +147,15 @@ fun ToolOptionsBar(vm: EditorViewModel) {
                     GradientColors.entries.forEach { g -> OptChip(g.label, o.gradientColors == g) { set { it.copy(gradientColors = g) } } }
                 }
                 Tool.ColorPicker -> OptChip("Sample merged", o.sampleMerged) { set { it.copy(sampleMerged = !it.sampleMerged) } }
+                Tool.Paths -> {
+                    val p = vm.input.path
+                    OptChip("To selection", false) { vm.input.pathToSelection() }
+                    OptChip("Stroke ${o.size.roundToInt()} px", false) { vm.input.strokePath() }
+                    OptChip("Fill", false) { vm.input.fillPath() }
+                    OptChip(if (p.closed) "Open" else "Close", p.closed) { p.toggleClosed() }
+                    OptChip("Undo point", false) { p.undoPoint() }
+                    OptChip("Clear", false) { p.clear() }
+                }
                 Tool.DodgeBurn -> {
                     OptChip("Dodge", !o.burn) { set { it.copy(burn = false) } }
                     OptChip("Burn", o.burn) { set { it.copy(burn = true) } }
@@ -188,7 +197,7 @@ fun ToolOptionsBar(vm: EditorViewModel) {
                 else -> Unit
             }
             if (numbers.isEmpty() && tool !in setOf(Tool.Crop, Tool.Transform, Tool.RectSelect, Tool.EllipseSelect,
-                    Tool.FreeSelect, Tool.FuzzySelect, Tool.ColorSelect, Tool.BucketFill, Tool.Gradient, Tool.ColorPicker)) {
+                    Tool.FreeSelect, Tool.FuzzySelect, Tool.ColorSelect, Tool.BucketFill, Tool.Gradient, Tool.ColorPicker, Tool.Paths)) {
                 Text(tool.hint, style = MaterialTheme.typography.labelMedium, color = Gako.Muted)
             }
         }

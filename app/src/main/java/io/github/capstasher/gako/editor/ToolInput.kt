@@ -101,6 +101,9 @@ class ToolInput(private val vm: EditorViewModel) {
         }
     }
 
+    /** The Paths tool's path; it stays while other tools are used, until cleared or a new image. */
+    val path = io.github.capstasher.gako.tools.PathEditor()
+
     var dragRect by mutableStateOf<RectF?>(null); private set
     var lasso by mutableStateOf<Path?>(null); private set
     var lassoRevision by mutableIntStateOf(0); private set
@@ -131,6 +134,56 @@ class ToolInput(private val vm: EditorViewModel) {
     var toolOverride: Tool? = null
     private val tool get() = toolOverride ?: vm.tool
     private val options get() = vm.options
+
+    // ------------------------------------------------------------ paths
+
+    /** Select > From Path, combined with the selection in the current mode. */
+    fun pathToSelection() {
+        val d = doc ?: return
+        if (path.points.size < 2) { vm.say("Draw a path first"); return }
+        val p = path.toPath().apply { close() }
+        select(d, "Selection from Path") { Selections.fromPath(d.width, d.height, p) }
+    }
+
+    /** Edit > Stroke Path: the brush size and FG colour along the path, on the active layer. */
+    fun strokePath() {
+        if (path.points.size < 2) { vm.say("Draw a path first"); return }
+        val p = path.toPath()
+        val width = options.size
+        val color = vm.paintColor(vm.fg) or (0xFF shl 24)
+        val opacity = options.opacity
+        vm.editActiveLayer("Stroke Path") { l, sel -> paintPath(l, sel, p, color, opacity, width) }
+    }
+
+    /** Fills the inside of the path with the FG colour. */
+    fun fillPath() {
+        if (path.points.size < 3) { vm.say("A fill needs at least three points"); return }
+        val p = path.toPath().apply { close() }
+        val color = vm.paintColor(vm.fg) or (0xFF shl 24)
+        vm.editActiveLayer("Fill Path") { l, sel -> paintPath(l, sel, p, color, options.opacity, null) }
+    }
+
+    private fun paintPath(l: Layer, sel: Bitmap?, p: Path, color: Int, opacity: Float, strokeWidth: Float?) {
+        val c = Canvas(l.bitmap)
+        val save = c.saveLayer(RectF(0f, 0f, l.width.toFloat(), l.height.toFloat()), Paint().apply {
+            alpha = (opacity * 255).roundToInt()
+            blendMode = if (l.lockAlpha) BlendMode.SRC_ATOP else BlendMode.SRC_OVER
+        })
+        c.translate(-l.x.toFloat(), -l.y.toFloat())
+        c.drawPath(p, Paint().apply {
+            this.color = color
+            isAntiAlias = true
+            if (strokeWidth != null) {
+                style = Paint.Style.STROKE
+                this.strokeWidth = strokeWidth
+                strokeCap = Paint.Cap.ROUND
+                strokeJoin = Paint.Join.ROUND
+            }
+        })
+        c.translate(l.x.toFloat(), l.y.toFloat())
+        sel?.let { Bitmaps.maskIn(c, it) }
+        c.restoreToCount(save)
+    }
 
     // ------------------------------------------------------------ crop & transform state
 
@@ -212,6 +265,7 @@ class ToolInput(private val vm: EditorViewModel) {
                 transformAtDown = t
                 mode = hitTransform(t, x, y, tol)
             }
+            Tool.Paths -> path.down(x, y, tol)
             else -> Unit
         }
     }
@@ -234,6 +288,7 @@ class ToolInput(private val vm: EditorViewModel) {
             Tool.ColorPicker -> pick(d, x, y)
             Tool.Crop -> dragCrop(d, x, y)
             Tool.Transform -> dragTransform(x, y)
+            Tool.Paths -> path.move(x, y)
             else -> Unit
         }
     }
@@ -281,6 +336,7 @@ class ToolInput(private val vm: EditorViewModel) {
                 if (hypot(b.x - a.x, b.y - a.y) < 1f) return
                 applyGradient(a, b)
             }
+            Tool.Paths -> path.up()
             Tool.Move -> {
                 val delta = moveDelta ?: return
                 moveDelta = null
@@ -303,6 +359,7 @@ class ToolInput(private val vm: EditorViewModel) {
         lasso = null
         gradient = null
         moveDelta = null
+        if (tool == Tool.Paths) path.cancel()
         if (tool == Tool.Crop && mode != Drag.None) doc?.let { cropState = (it.width to it.height) to cropAtDown }
         if (tool == Tool.Transform && mode != Drag.None) transformState = transformAtDown
         mode = Drag.None
@@ -325,6 +382,7 @@ class ToolInput(private val vm: EditorViewModel) {
             Tool.BucketFill -> bucketFill(d, x, y)
             Tool.ColorPicker -> pick(d, x, y)
             Tool.Text -> vm.startText(x.roundToInt(), y.roundToInt())
+            Tool.Paths -> path.tap(x, y, tol)
             Tool.Transform -> Unit
             else -> Unit
         }

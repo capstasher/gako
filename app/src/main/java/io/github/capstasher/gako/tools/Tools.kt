@@ -20,6 +20,7 @@ import androidx.compose.material.icons.outlined.OpenWith
 import androidx.compose.material.icons.outlined.PanTool
 import androidx.compose.material.icons.outlined.PanoramaFishEye
 import androidx.compose.material.icons.outlined.Rectangle
+import androidx.compose.material.icons.outlined.Polyline
 import androidx.compose.material.icons.outlined.OpenInFull
 import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material.icons.outlined.Tonality
@@ -37,6 +38,8 @@ enum class Tool(val label: String, val icon: ImageVector, val group: ToolGroup, 
     FreeSelect("Free Select", Icons.Outlined.Gesture, ToolGroup.Select, "Draw around the area"),
     FuzzySelect("Fuzzy Select", Icons.Outlined.AutoFixNormal, ToolGroup.Select, "Tap a region of similar colour"),
     ColorSelect("Select by Colour", Icons.Outlined.InvertColors, ToolGroup.Select, "Tap a colour to select it everywhere"),
+    Paths("Paths", Icons.Outlined.Polyline, ToolGroup.Select,
+        "Tap for corners, drag for curves, tap the first point to close"),
     Paintbrush("Paintbrush", Icons.Outlined.Brush, ToolGroup.Paint, "Paint with the foreground colour"),
     Pencil("Pencil", Icons.Outlined.Edit, ToolGroup.Paint, "Hard-edged lines"),
     Airbrush("Airbrush", Icons.Outlined.Draw, ToolGroup.Paint, "Paint builds up where you linger"),
