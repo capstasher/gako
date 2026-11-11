@@ -195,7 +195,8 @@ object XcfWriter {
         }
     }
 
-    fun write(doc: DocState, out: OutputStream, level: Int = 6) {
+    fun write(all: DocState, out: OutputStream, level: Int = 6) {
+        val doc = all.forFiles()
         val b = Buf()
         b.bytes("gimp xcf v010".toByteArray(Charsets.US_ASCII)); b.u8(0)
         b.u32(doc.width); b.u32(doc.height); b.u32(0)     // RGB

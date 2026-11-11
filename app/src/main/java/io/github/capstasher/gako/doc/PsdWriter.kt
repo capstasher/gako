@@ -30,7 +30,8 @@ object PsdWriter {
      * Writes [doc]. Channel data goes through a temporary file in [scratch] (one layer's worth in
      * memory at a time), since the section lengths must come before it.
      */
-    fun write(doc: DocState, out: OutputStream, scratch: java.io.File? = null) {
+    fun write(all: DocState, out: OutputStream, scratch: java.io.File? = null) {
+        val doc = all.forFiles()
         val tmp = java.io.File.createTempFile("psd", ".chan", scratch)
         try {
             val records = ByteArrayOutputStream()

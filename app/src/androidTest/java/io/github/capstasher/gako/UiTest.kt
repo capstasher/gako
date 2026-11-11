@@ -133,6 +133,34 @@ class UiTest {
 
     // ------------------------------------------------------------------ tests
 
+    @Test fun quickMaskPaintsTheSelection() {
+        fresh()
+        rule.runOnUiThread { vm.selectAll(); vm.toggleQuickMask() }
+        idle()
+        assertTrue(vm.quickMaskOn)
+        assertEquals(null, vm.doc!!.selection)
+        // Paint black (not selected) across the middle: shown as GIMP's red tint, never in the image.
+        tool(Tool.Paintbrush, size = 40f) { it.copy(opacity = 1f, brushShape = BrushShape.Round, symmetry = io.github.capstasher.gako.tools.Symmetry.Off) }
+        rule.runOnUiThread { vm.setForeground(Color.BLACK) }
+        canvas.performTouchInput { stroke(line(50f, 150f, 350f, 150f)) }
+        idle()
+        val tint = onScreen(200f, 150f)
+        assertTrue("red tint where not selected", Color.red(tint) > Color.green(tint) + 60)
+        assertEquals("the image itself is untouched", Color.WHITE, Compositor.flatten(vm.doc!!).getPixel(200, 150))
+        rule.runOnUiThread { vm.toggleQuickMask() }
+        idle()
+        assertTrue(!vm.quickMaskOn)
+        val sel = vm.doc!!.selection!!
+        val bytes = io.github.capstasher.gako.doc.Selections.bytesOf(sel.mask)
+        assertEquals("the stroke is out of the selection", 0, bytes[150 * 400 + 200].toInt() and 255)
+        assertEquals("the rest is in", 255, bytes[50 * 400 + 200].toInt() and 255)
+        // Undo goes back into Quick Mask, stroke and all.
+        rule.runOnUiThread { vm.undo() }
+        idle()
+        assertTrue(vm.quickMaskOn)
+        assertEquals(Color.BLACK, vm.doc!!.quickMask!!.bitmap.getPixel(200, 150))
+    }
+
     @Test fun canvasShowsWhatGimpDraws() {
         fresh()
         // A GIMP 2.10+ (linear light) layer: black at 50% over white is 188 in GIMP (127 blended in sRGB).

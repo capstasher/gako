@@ -71,6 +71,10 @@ native/bridge/          C bridge over GEGL: list/describe/apply operations, boun
   stores masks linear); pass-through groups at less than full opacity mix back like GIMP's Replace;
   flattening puts the background under in the bottom layer's composite space. PSD and ORA layers
   come in as GIMP's PSD import makes them (the mode in sRGB, composited over what's below).
+- **Quick Mask** is a layer (`Layer.quickMask`, on top, opaque grey, white selected) so every tool
+  and filter works on it unchanged; `Compositor` leaves it out of composites and draws it on screen as
+  GIMP's red tint, `DocState.forFiles()` leaves it out of files, the Layers list hides it, and paint on
+  it turns grey (as on masks). Turning it on and off are undo steps.
 - **The canvas** (`ImageCanvas`) draws plain images (only sRGB Normal layers, no masks:
   `Compositor.canvasIsExact`) on the GPU every frame, each layer through `Compositor.drawLayer`.
   Others show `Projection`: GIMP's composite, made in the background ~30 ms after the last change

@@ -34,6 +34,7 @@ import androidx.compose.material.icons.outlined.BorderInner
 import androidx.compose.material.icons.outlined.BorderOuter
 import androidx.compose.material.icons.outlined.BorderVertical
 import androidx.compose.material.icons.outlined.GridOn
+import androidx.compose.material.icons.outlined.Masks
 import androidx.compose.material.icons.outlined.SaveAs
 import androidx.compose.material.icons.outlined.Replay
 import androidx.compose.material.icons.outlined.History
@@ -258,6 +259,8 @@ fun buildMenus(vm: EditorViewModel, callbacks: MenuCallbacks): List<MenuGroup> {
         act("sel-shrink", "Shrink…", Icons.Outlined.ZoomInMap, hasSelection) { vm.dialog = Dialog.ModifySelection(EditorViewModel.SelectionChange.Shrink) },
         act("sel-border", "Border…", Icons.Outlined.BorderStyle, hasSelection) { vm.dialog = Dialog.ModifySelection(EditorViewModel.SelectionChange.Border) },
         act("sel-alpha", "From Layer Alpha", Icons.Outlined.Opacity) { vm.alphaToSelection() },
+        MenuAction("sel-quickmask", if (vm.quickMaskOn) "Quick Mask Off" else "Quick Mask", Icons.Outlined.Masks,
+            enabled = hasImage, selected = vm.quickMaskOn, closesMenu = true) { vm.toggleQuickMask() },
     ))
 
     // ---- Image
