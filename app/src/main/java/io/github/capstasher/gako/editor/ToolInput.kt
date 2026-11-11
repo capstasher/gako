@@ -116,7 +116,9 @@ class ToolInput(private val vm: EditorViewModel) {
     private enum class Drag { None, Move, Corner0, Corner1, Corner2, Corner3, Left, Top, Right, Bottom, New, Scale, Rotate }
 
     private val doc get() = vm.doc
-    private val tool get() = vm.tool
+    /** A tool used just for this gesture: the pen's eraser end erases. */
+    var toolOverride: Tool? = null
+    private val tool get() = toolOverride ?: vm.tool
     private val options get() = vm.options
 
     // ------------------------------------------------------------ crop & transform state
