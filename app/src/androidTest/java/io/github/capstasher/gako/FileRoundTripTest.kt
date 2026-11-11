@@ -146,6 +146,8 @@ class FileRoundTripTest {
         val ora = OraFile.read(ByteArrayInputStream(ByteArrayOutputStream().also { OraFile.write(on, it) }.toByteArray()))
         val psd = PsdReader.read(ByteArrayInputStream(ByteArrayOutputStream().also { PsdWriter.write(on, it) }.toByteArray()))
         for (back in listOf(xcf, ora, psd)) assertEquals(doc.layers.map { it.name }, back.layers.map { it.name })
+        // XCF keeps what the Quick Mask held as the selection (here all of it), as GIMP keeps its Qmask.
+        assertEquals(android.graphics.Rect(0, 0, 64, 48), xcf.selection?.bounds)
         assertEquals(0, maxDiff(io.github.capstasher.gako.doc.Compositor.flatten(doc), io.github.capstasher.gako.doc.Compositor.flatten(on)))
     }
 
