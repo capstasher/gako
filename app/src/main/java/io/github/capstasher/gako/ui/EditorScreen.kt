@@ -58,6 +58,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.foundation.layout.height
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import io.github.capstasher.gako.editor.EditorViewModel
@@ -273,7 +275,7 @@ private fun Dock(vm: EditorViewModel, menu: MenuState, modifier: Modifier) {
 @Composable
 private fun EmptyState(vm: EditorViewModel, onPickImage: () -> Unit, onTakePhoto: () -> Unit) {
     Column(
-        Modifier.widthIn(max = 360.dp).padding(24.dp),
+        Modifier.widthIn(max = 480.dp).padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -304,11 +306,41 @@ private fun EmptyState(vm: EditorViewModel, onPickImage: () -> Unit, onTakePhoto
             style = MaterialTheme.typography.labelMedium, color = Gako.Muted, textAlign = TextAlign.Center,
             modifier = Modifier.padding(top = 8.dp),
         )
+        val recent = vm.recents
+        if (recent.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            Text("RECENT", style = EngravedLabel, modifier = Modifier.fillMaxWidth())
+            RecentRow(recent, onOpen = vm::openRecent, onForget = vm::forgetRecent)
+        }
         val engine = vm.engine
         if (engine is EngineState.Failed) {
             Text("Engine failed to start: ${engine.message}",
                 style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error,
                 textAlign = TextAlign.Center)
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun RecentRow(items: List<io.github.capstasher.gako.editor.Recents.Item>, onOpen: (io.github.capstasher.gako.editor.Recents.Item) -> Unit,
+                      onForget: (Uri) -> Unit) {
+    androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        items(items.size) { i ->
+            val item = items[i]
+            val thumb = remember(item.thumb.path, item.time) {
+                android.graphics.BitmapFactory.decodeFile(item.thumb.path)?.asImageBitmap()
+            }
+            Column(
+                Modifier.width(104.dp).combinedClickable(onLongClick = { onForget(item.uri) }) { onOpen(item) },
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Box(Modifier.size(104.dp).background(Gako.InkHigh, RoundedCornerShape(6.dp)), contentAlignment = Alignment.Center) {
+                    if (thumb != null) androidx.compose.foundation.Image(thumb, contentDescription = item.name, modifier = Modifier.size(96.dp))
+                }
+                Text(item.name, style = MaterialTheme.typography.labelSmall, color = Gako.Muted, maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
+            }
         }
     }
 }
