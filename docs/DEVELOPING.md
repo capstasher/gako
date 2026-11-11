@@ -87,14 +87,26 @@ which drives the real screens (buttons found by label, the canvas touched at ima
 ### The fast loop
 
 - **Build with the Gradle daemon** (don't pass `--no-daemon`): a one-file rebuild drops from ~10 s to ~3 s.
-- **`scripts/devtest.sh [Class[#test] …]`** installs the app and test APKs and runs the tests with
-  `am instrument` (~13 s for all of them). Unlike `connectedDebugAndroidTest` it doesn't uninstall the
-  app afterwards, so its data and test files stay.
+- **`scripts/devtest.sh [Class[#test] …]`** runs the tests with `am instrument` (~10 s for all of
+  them on an idle machine). It installs the app and test APKs with plain `adb install` (0.4 s, against
+  2.4 s through Gradle) and only when they changed: same file hash, and the device's install time
+  matches the last install (so a reinstall by anything else, or an emulator snapshot, is noticed).
+  It never uninstalls, so the app keeps its data. It waits for a restarting emulator, and with
+  several devices connected it splits the tests between them (`numShards`) and runs them in parallel.
 - **`scripts/ui.py`** drives the app over adb by what's on screen: `tap "Layers"`, `wait "Saved"`,
-  `text`, `ls`, `img 120 80` / `drag` / `path` at image pixels, `open photo.jpg`, `shot name`;
-  join commands with `+`. No coordinates to guess.
+  `text`, `ls`, `state`, `img 120 80` / `drag` / `path` at image pixels, `open photo.jpg`,
+  `shot name`; join commands with `+`. No coordinates to guess. Debug builds answer from an
+  inspector inside the app (`app/src/debug/…/debug/Inspector.kt`, on the abstract socket
+  `gako-inspector`): ~0.1 s a look instead of uiautomator's ~2.3 s, image pixels mapped at any zoom
+  or turn, and `state` prints the document, layers, selection, paths, tool and history. Release
+  builds don't contain it (ui.py then falls back to uiautomator, view at Fit).
 - **`scripts/stress.sh [events] [seed]`** runs the monkey (touch, drag and pinch only) and prints any
   crash or freeze with its stack.
+- **Emulator:** boot it once, then save a snapshot (`adb emu avd snapshot save ready`) and start from
+  it (`-snapshot ready -no-snapshot-save`): ~6 s instead of ~26 s. On a Linux desktop the host-GPU
+  emulator talks to the GPU through the X server (XWayland on Wayland) and can drop its GL context
+  when the desktop is busy; restarting from the snapshot keeps that cheap. `-gpu swangle_indirect`
+  never crashed but runs the UI tests ~6× slower; `-gpu swiftshader_indirect` crashes on some dialogs.
 
 Stage 3 was tested on an Android 15 x86_64 emulator (Pixel 7 profile), driving it with
 `adb shell input` and screenshots, plus:
