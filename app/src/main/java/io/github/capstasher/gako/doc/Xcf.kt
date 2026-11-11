@@ -23,7 +23,7 @@ import kotlin.math.roundToInt
  * The reader takes any XCF from GIMP 1.x to 3.x: RGB/grey/indexed, every precision, RLE or zlib,
  * layer masks and groups (flattened into their children).
  */
-private object XcfProps {
+internal object XcfProps {
     const val END = 0
     const val COLORMAP = 1
     const val ACTIVE_LAYER = 2
@@ -53,6 +53,16 @@ private object XcfProps {
         LayerMode.Dodge to 16, LayerMode.Burn to 17, LayerMode.HardLight to 18, LayerMode.SoftLight to 19,
         LayerMode.Exclusion to 52,
     )
+
+    /** The mode number to write: the file's own while it still means the same, else GAKO's. */
+    fun modeFor(l: Layer): Int = when {
+        l.mode == LayerMode.PassThrough -> PASS_THROUGH
+        l.xcfMode != null && read(l.xcfMode) == l.mode -> l.xcfMode
+        else -> write[l.mode] ?: 0
+    }
+
+    /** GIMP 2.10+'s modes (all but 0–22), which GIMP blends in linear light. */
+    fun isLinear(mode: Int) = mode >= 23 && mode != PASS_THROUGH
 
     fun read(mode: Int): LayerMode = when (mode) {
         PASS_THROUGH -> LayerMode.PassThrough
@@ -226,7 +236,7 @@ object XcfWriter {
             b.prop(XcfProps.VISIBLE, if (l.visible) 1 else 0)
             b.prop(XcfProps.LOCK_ALPHA, if (l.lockAlpha) 1 else 0)
             b.prop(XcfProps.OFFSETS, l.x, l.y)
-            b.prop(XcfProps.MODE, if (l.mode == LayerMode.PassThrough) XcfProps.PASS_THROUGH else XcfProps.write[l.mode] ?: 0)
+            b.prop(XcfProps.MODE, XcfProps.modeFor(l))
             if (l.group) b.prop(XcfProps.GROUP_ITEM_FLAGS, if (l.expanded) 1 else 0)
             if (l.parent != null) paths[l.id]?.let { p -> b.prop(XcfProps.ITEM_PATH, *p.toIntArray()) }
             if (l.mask != null) b.prop(XcfProps.APPLY_MASK, if (l.maskEnabled) 1 else 0)
@@ -285,7 +295,7 @@ object XcfReader {
 
     private class LayerInfo(
         val name: String, val w: Int, val h: Int, val type: Int, var x: Int = 0, var y: Int = 0,
-        var opacity: Float = 1f, var visible: Boolean = true, var mode: LayerMode = LayerMode.Normal,
+        var opacity: Float = 1f, var visible: Boolean = true, var mode: LayerMode = LayerMode.Normal, var rawMode: Int? = null,
         var lockAlpha: Boolean = false, var active: Boolean = false, var group: Boolean = false,
         var applyMask: Boolean = true,
         var text: TextInfo? = null,
@@ -480,7 +490,7 @@ object XcfReader {
                     XcfProps.OPACITY -> info.opacity = (u32() / 255f).coerceIn(0f, 1f)
                     XcfProps.FLOAT_OPACITY -> opacityFloat = buf.float
                     XcfProps.VISIBLE -> info.visible = u32() != 0
-                    XcfProps.MODE -> info.mode = XcfProps.read(u32())
+                    XcfProps.MODE -> { val m = u32(); info.rawMode = m; info.mode = XcfProps.read(m) }
                     XcfProps.LOCK_ALPHA -> info.lockAlpha = u32() != 0
                     XcfProps.OFFSETS -> { info.x = u32(); info.y = u32() }
                     XcfProps.GROUP_ITEM -> info.group = true
@@ -507,7 +517,8 @@ object XcfReader {
                 val id = Layer.newId()
                 groups[info.path] = id
                 return Layer(id, info.name.ifEmpty { "Group" }, Bitmaps.blank(1, 1), visible = info.visible,
-                    opacity = info.opacity, mode = info.mode, group = true, parent = parent, expanded = info.expanded) to info.active
+                    opacity = info.opacity, mode = info.mode, group = true, parent = parent, expanded = info.expanded,
+                    xcfMode = info.rawMode) to info.active
             }
             if (w <= 0 || h <= 0) return null
             val bmp = readHierarchy(hierarchy, type, baseType) ?: return null
@@ -515,7 +526,7 @@ object XcfReader {
             return Layer(Layer.newId(), info.name.ifEmpty { "Layer" }, bmp, info.x, info.y, info.visible,
                 info.opacity, if (info.mode == LayerMode.PassThrough) LayerMode.Normal else info.mode, info.lockAlpha, info.text,
                 mask = maskBitmap?.takeIf { it.width == bmp.width && it.height == bmp.height },
-                maskEnabled = info.applyMask, parent = parent) to info.active
+                maskEnabled = info.applyMask, parent = parent, xcfMode = info.rawMode) to info.active
         }
 
         /** A layer mask channel, as an opaque grey bitmap. */
