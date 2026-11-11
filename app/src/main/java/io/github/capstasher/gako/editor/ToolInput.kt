@@ -60,22 +60,33 @@ class ToolInput(private val vm: EditorViewModel) {
         val sx: Float = 1f, val sy: Float = 1f,
         val angle: Float = 0f,     // degrees
         val tx: Float = 0f, val ty: Float = 0f,
+        /** Perspective mode: where the four corners go (canvas x,y × 4, clockwise from top-left). */
+        val quad: FloatArray? = null,
     ) {
         val cx get() = x + bitmap.width / 2f
         val cy get() = y + bitmap.height / 2f
-        val changed get() = sx != 1f || sy != 1f || angle != 0f || tx != 0f || ty != 0f
+        val perspective get() = quad != null
+        val changed get() = quad != null || sx != 1f || sy != 1f || angle != 0f || tx != 0f || ty != 0f
+
+        private fun source() = floatArrayOf(0f, 0f, bitmap.width.toFloat(), 0f, bitmap.width.toFloat(), bitmap.height.toFloat(), 0f, bitmap.height.toFloat())
 
         /** Layer pixel space to canvas. */
         fun matrix() = Matrix().apply {
-            postTranslate(-bitmap.width / 2f, -bitmap.height / 2f)
-            postScale(sx, sy)
-            postRotate(angle)
-            postTranslate(cx + tx, cy + ty)
+            val q = quad
+            if (q != null) {
+                setPolyToPoly(source(), 0, q, 0, 4)
+            } else {
+                postTranslate(-bitmap.width / 2f, -bitmap.height / 2f)
+                postScale(sx, sy)
+                postRotate(angle)
+                postTranslate(cx + tx, cy + ty)
+            }
         }
 
+        fun cornerArray(): FloatArray = source().also { matrix().mapPoints(it) }
+
         fun corners(): List<PointF> {
-            val pts = floatArrayOf(0f, 0f, bitmap.width.toFloat(), 0f, bitmap.width.toFloat(), bitmap.height.toFloat(), 0f, bitmap.height.toFloat())
-            matrix().mapPoints(pts)
+            val pts = cornerArray()
             return List(4) { PointF(pts[it * 2], pts[it * 2 + 1]) }
         }
 
@@ -558,6 +569,14 @@ class ToolInput(private val vm: EditorViewModel) {
     // ------------------------------------------------------------ transform
 
     private fun hitTransform(t: LayerTransform, x: Float, y: Float, tol: Float): Drag {
+        if (t.perspective) {
+            t.corners().forEachIndexed { i, c ->
+                if (hypot(x - c.x, y - c.y) < tol * 1.4f) return listOf(Drag.Corner0, Drag.Corner1, Drag.Corner2, Drag.Corner3)[i]
+            }
+            val inv = Matrix().also { t.matrix().invert(it) }
+            val p = floatArrayOf(x, y).also { inv.mapPoints(it) }
+            return if (p[0] in 0f..t.bitmap.width.toFloat() && p[1] in 0f..t.bitmap.height.toFloat()) Drag.Move else Drag.None
+        }
         val knob = t.knob(tol * 2.2f)
         if (hypot(x - knob.x, y - knob.y) < tol * 1.2f) return Drag.Rotate
         t.corners().forEach { c -> if (hypot(x - c.x, y - c.y) < tol * 1.2f) return Drag.Scale }
@@ -568,6 +587,22 @@ class ToolInput(private val vm: EditorViewModel) {
 
     private fun dragTransform(x: Float, y: Float) {
         val t0 = transformAtDown ?: return
+        val q0 = t0.quad
+        if (q0 != null) {
+            val dx = x - down.x
+            val dy = y - down.y
+            val q = q0.copyOf()
+            when (mode) {
+                Drag.Move -> for (i in 0 until 4) { q[i * 2] += dx; q[i * 2 + 1] += dy }
+                Drag.Corner0, Drag.Corner1, Drag.Corner2, Drag.Corner3 -> {
+                    val i = mode.ordinal - Drag.Corner0.ordinal
+                    q[i * 2] += dx; q[i * 2 + 1] += dy
+                }
+                else -> return
+            }
+            transformState = t0.copy(quad = q)
+            return
+        }
         val cx = t0.cx + t0.tx
         val cy = t0.cy + t0.ty
         transformState = when (mode) {

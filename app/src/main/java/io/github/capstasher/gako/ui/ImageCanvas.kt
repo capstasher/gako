@@ -284,10 +284,12 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
                 val outline = Path().apply { moveTo(c[0].x, c[0].y); c.drop(1).forEach { lineTo(it.x, it.y) }; close() }
                 nc.drawPath(outline, ink)
                 nc.drawPath(outline, gold)
-                val knob = t.knob(handlePx * px * 2.2f)
-                nc.drawLine((c[0].x + c[1].x) / 2, (c[0].y + c[1].y) / 2, knob.x, knob.y, gold)
                 c.forEach { handle(nc, it.x, it.y, 9 * px, px) }
-                handle(nc, knob.x, knob.y, 10 * px, px, round = true)
+                if (!t.perspective) {
+                    val knob = t.knob(handlePx * px * 2.2f)
+                    nc.drawLine((c[0].x + c[1].x) / 2, (c[0].y + c[1].y) / 2, knob.x, knob.y, gold)
+                    handle(nc, knob.x, knob.y, 10 * px, px, round = true)
+                }
             }
             if (tool == Tool.Clone) input.cloneSource?.let { src ->
                 val r = 12 * px
