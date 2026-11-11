@@ -333,6 +333,13 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
                     handle(nc, knob.x, knob.y, 10 * px, px, round = true)
                 }
             }
+            // Symmetry axes while a mirroring paint tool is in use.
+            val sym = vm.options.symmetry
+            if (tool.paints && tool != Tool.Smudge && !tool.cloning && sym != io.github.capstasher.gako.tools.Symmetry.Off) {
+                val axis = Paint(dash).apply { color = Gako.Gold.toArgb(); alpha = 170 }
+                if (sym.vertical) nc.drawLine(d.width / 2f, 0f, d.width / 2f, d.height.toFloat(), axis)
+                if (sym.horizontal) nc.drawLine(0f, d.height / 2f, d.width.toFloat(), d.height / 2f, axis)
+            }
             // The Paths tool's path: always shown while it's the tool, faintly otherwise.
             val pts = input.path.points
             if (pts.isNotEmpty() && vm.session == null) {

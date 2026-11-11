@@ -78,6 +78,12 @@ enum class Tool(val label: String, val icon: ImageVector, val group: ToolGroup, 
 
 enum class ToolGroup(val label: String) { View("View"), Select("Select"), Paint("Paint"), Transform("Transform") }
 
+/** Painting mirrored across the canvas centre. */
+enum class Symmetry(val label: String, val vertical: Boolean, val horizontal: Boolean) {
+    Off("Mirror off", false, false), LeftRight("Mirror ↔", true, false), TopBottom("Mirror ↕", false, true),
+    Both("Mirror ✚", true, true),
+}
+
 enum class BrushShape(val label: String) { Round("Round"), Square("Square"), Calligraphy("Calligraphy") }
 
 enum class GradientShape(val label: String) { Linear("Linear"), Radial("Radial"), Mirrored("Mirrored") }
@@ -113,6 +119,7 @@ data class ToolOptions(
     val brushAngle: Float = 30f,
     /** Stroke smoothing for paint tools, 0 (off) … 1 (heavy). */
     val smoothing: Float = 0f,
+    val symmetry: Symmetry = Symmetry.Off,
     /** Rectangle Select: rounded corners (GIMP's "Rounded corners" radius). */
     val cornerRadius: Float = 0f,
 )

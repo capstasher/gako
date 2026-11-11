@@ -302,6 +302,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             .putFloat("size", o.size).putFloat("opacity", o.opacity).putFloat("hardness", o.hardness)
             .putInt("threshold", o.threshold).putFloat("feather", o.feather).putBoolean("sampleMerged", o.sampleMerged)
             .putString("brushShape", o.brushShape.name).putFloat("brushAngle", o.brushAngle).putFloat("smoothing", o.smoothing)
+            .putString("symmetry", o.symmetry.name)
             .apply()
     }
 
@@ -316,6 +317,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             .getOrDefault(io.github.capstasher.gako.tools.BrushShape.Round),
         brushAngle = toolPrefs.getFloat("brushAngle", 30f),
         smoothing = toolPrefs.getFloat("smoothing", 0f),
+        symmetry = runCatching { io.github.capstasher.gako.tools.Symmetry.valueOf(toolPrefs.getString("symmetry", "Off")!!) }
+            .getOrDefault(io.github.capstasher.gako.tools.Symmetry.Off),
     )
 
     fun setForeground(c: Int) {

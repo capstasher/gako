@@ -135,6 +135,12 @@ fun ToolOptionsBar(vm: EditorViewModel) {
                     OptChip(b.label, o.brushShape == b) { set { it.copy(brushShape = b) } }
                 }
             }
+            if (tool.paints && tool != Tool.Smudge && tool != Tool.Clone && tool != Tool.Heal) {
+                val all = io.github.capstasher.gako.tools.Symmetry.entries
+                OptChip(o.symmetry.label, o.symmetry != io.github.capstasher.gako.tools.Symmetry.Off) {
+                    set { it.copy(symmetry = all[(all.indexOf(it.symmetry) + 1) % all.size]) }
+                }
+            }
             when (tool) {
                 Tool.RectSelect, Tool.EllipseSelect, Tool.FreeSelect, Tool.FuzzySelect, Tool.ColorSelect -> {
                     SelectMode.entries.forEach { m ->

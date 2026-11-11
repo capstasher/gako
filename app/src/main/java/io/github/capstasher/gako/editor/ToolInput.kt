@@ -415,7 +415,11 @@ class ToolInput(private val vm: EditorViewModel) {
         val color = vm.paintColor(if (tool == Tool.Eraser && target.lockAlpha) vm.bg else vm.fg)
         strokeOnMask = vm.editingMask
         stroke = try {
-            PaintStroke(tool, target, sel, color, options, cloneOffset?.let { it.x to it.y }).also { it.begin(x, y, pressure) }
+            val sym = options.symmetry
+            PaintStroke(tool, target, sel, color, options, cloneOffset?.let { it.x to it.y },
+                mirrorX = if (sym.vertical) d.width / 2f else null,
+                mirrorY = if (sym.horizontal) d.height / 2f else null,
+            ).also { it.begin(x, y, pressure) }
         } catch (e: OutOfMemoryError) {
             vm.say("Not enough memory to paint on a layer this big")
             return
