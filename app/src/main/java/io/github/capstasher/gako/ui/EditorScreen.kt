@@ -29,6 +29,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.Layers
+import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.outlined.NoteAdd
 import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material3.AlertDialog
@@ -227,7 +229,28 @@ private fun Dock(vm: EditorViewModel, menu: MenuState, modifier: Modifier) {
                 Icon(Icons.Outlined.SwapHoriz, contentDescription = "Swap colours", tint = Gako.Muted, modifier = Modifier.size(18.dp))
             }
         }
-        Spacer(Modifier.weight(1f))
+        // Which layer the tools work on (a classic "why isn't it painting?"); tap for the Layers panel.
+        val active = vm.doc?.active
+        Box(Modifier.weight(1f).padding(horizontal = 6.dp), contentAlignment = Alignment.Center) {
+            if (active != null) {
+                Row(
+                    pill.clickable {
+                        if (menu.path.firstOrNull() == "layers") menu.close() else menu.openRoot("layers")
+                    }.padding(horizontal = 12.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Outlined.Layers, null, tint = Gako.Muted, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        active.name + if (vm.editingMask) " · mask" else "",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (active.visible) Gako.Parchment else Gako.Muted,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
         val idle = vm.session == null && vm.busy == null
         Row(pill) {
             HistoryButton(true, History(vm.canUndo && idle, vm.canRedo && idle, vm::undo, vm::redo))
@@ -258,6 +281,11 @@ private fun EmptyState(vm: EditorViewModel, onPickImage: () -> Unit) {
             Spacer(Modifier.width(8.dp))
             Text("New image", color = Gako.Parchment)
         }
+        Text(
+            "One finger uses the tool. Two fingers pan and zoom.",
+            style = MaterialTheme.typography.labelMedium, color = Gako.Muted, textAlign = TextAlign.Center,
+            modifier = Modifier.padding(top = 8.dp),
+        )
         val engine = vm.engine
         if (engine is EngineState.Failed) {
             Text("Engine failed to start: ${engine.message}",
