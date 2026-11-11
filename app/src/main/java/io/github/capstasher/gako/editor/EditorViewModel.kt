@@ -346,6 +346,29 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         if (t == Tool.Transform) input.startTransform()
     }
 
+    val presets = io.github.capstasher.gako.tools.Presets(app)
+    var presetList by mutableStateOf(presets.all()); private set
+
+    fun usePreset(p: io.github.capstasher.gako.tools.BrushPreset) {
+        selectTool(p.tool)
+        updateOptions(p.applyTo(options))
+        say("Brush: ${p.name}")
+    }
+
+    fun savePreset(name: String) {
+        val o = options
+        val t = if (tool.paints) tool else Tool.Paintbrush
+        presets.save(io.github.capstasher.gako.tools.BrushPreset(name.trim().ifEmpty { "My brush" }, t, o.size, o.opacity,
+            o.hardness, o.brushShape, o.brushAngle, o.smoothing))
+        presetList = presets.all()
+        say("Saved brush “${name.trim()}”")
+    }
+
+    fun deletePreset(name: String) {
+        presets.delete(name)
+        presetList = presets.all()
+    }
+
     fun updateOptions(o: ToolOptions) {
         options = o
         toolPrefs.edit()

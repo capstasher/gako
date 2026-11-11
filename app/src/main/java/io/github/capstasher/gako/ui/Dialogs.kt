@@ -312,6 +312,23 @@ private val palette = listOf(
 ).map { it.toInt() }
 
 private val recentColors = ArrayDeque<Int>()
+private var recentLoaded = false
+
+/** Recent colours live in preferences, so they survive restarts. */
+private fun loadRecent(context: android.content.Context) {
+    if (recentLoaded) return
+    recentLoaded = true
+    context.getSharedPreferences("tools", 0).getString("recentColors", "")!!.split(',')
+        .mapNotNull { it.toLongOrNull(16)?.toInt() }.take(12).forEach { recentColors.addLast(it) }
+}
+
+private fun rememberRecent(context: android.content.Context, c: Int) {
+    recentColors.remove(c)
+    recentColors.addFirst(c)
+    while (recentColors.size > 12) recentColors.removeLast()
+    context.getSharedPreferences("tools", 0).edit()
+        .putString("recentColors", recentColors.joinToString(",") { Integer.toHexString(it) }).apply()
+}
 
 /** Hue bar, saturation/value square, hex entry, a palette and recent colours. */
 @Composable
@@ -322,6 +339,8 @@ fun ColorPickerDialog(title: String, initial: Int, onDismiss: () -> Unit, onSet:
     var value by remember { mutableFloatStateOf(hsv0[2]) }
     val argb = android.graphics.Color.HSVToColor(floatArrayOf(hue, sat, value))
     var hex by remember { mutableStateOf(hexOf(initial)) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    remember { loadRecent(context) }
     fun setColor(c: Int) {
         val f = FloatArray(3).also { android.graphics.Color.colorToHSV(c, it) }
         hue = f[0]; sat = f[1]; value = f[2]; hex = hexOf(c)
@@ -395,9 +414,7 @@ fun ColorPickerDialog(title: String, initial: Int, onDismiss: () -> Unit, onSet:
         },
         confirmButton = {
             TextButton(onClick = {
-                recentColors.remove(argb)
-                recentColors.addFirst(argb)
-                while (recentColors.size > 12) recentColors.removeLast()
+                rememberRecent(context, argb)
                 onSet(argb)
             }) { Text("Set") }
         },

@@ -3,6 +3,7 @@ package io.github.capstasher.gako.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -133,6 +134,11 @@ fun ToolOptionsBar(vm: EditorViewModel) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
+            if (tool.paints) {
+                var presetsOpen by remember { mutableStateOf(false) }
+                OptChip("★ Brushes", presetsOpen) { presetsOpen = true }
+                if (presetsOpen) PresetsDialog(vm) { presetsOpen = false }
+            }
             numbers.forEach { n ->
                 OptChip("${n.label} ${n.format(n.value)}", expanded == n.key) {
                     expanded = if (expanded == n.key) null else n.key
@@ -299,4 +305,65 @@ fun ToolPalette(vm: EditorViewModel, onPicked: () -> Unit) {
             }
         }
     }
+}
+
+/** Brush presets: tap to use, “Save current” to keep this brush, long-press a saved one to delete it. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun PresetsDialog(vm: EditorViewModel, onDismiss: () -> Unit) {
+    var naming by remember { mutableStateOf(false) }
+    var name by remember { mutableStateOf("") }
+    var deleting by remember { mutableStateOf<String?>(null) }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Brushes") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                if (naming) {
+                    androidx.compose.material3.OutlinedTextField(name, { name = it }, label = { Text("Name") }, singleLine = true,
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Done),
+                        keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = {
+                            if (name.isNotBlank()) { vm.savePreset(name); naming = false }
+                        }),
+                        modifier = Modifier.fillMaxWidth())
+                } else {
+                    Text("Save current brush…", color = Gako.Gold, style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.fillMaxWidth().clickable { naming = true; name = "" }.padding(vertical = 12.dp))
+                }
+                if (vm.presetList.any { !it.builtIn })
+                    Text("Long-press a saved brush to delete it", style = MaterialTheme.typography.labelSmall, color = Gako.Muted)
+                vm.presetList.forEach { p ->
+                    if (deleting == p.name) {
+                        Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text("Delete “${p.name}”?", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                            androidx.compose.material3.TextButton(onClick = { deleting = null }) { Text("Keep") }
+                            androidx.compose.material3.TextButton(onClick = { vm.deletePreset(p.name); deleting = null }) { Text("Delete") }
+                        }
+                        return@forEach
+                    }
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .combinedClickable(onLongClick = { if (!p.builtIn) deleting = p.name }) { vm.usePreset(p); onDismiss() }
+                            .padding(vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(p.tool.icon, null, tint = Gako.GoldDim, modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(p.name, style = MaterialTheme.typography.bodyLarge)
+                            Text("${p.tool.short} · ${p.size.roundToInt()} px · ${p.shape.label}" +
+                                (if (p.opacity < 1f) " · ${(p.opacity * 100).roundToInt()}%" else "") +
+                                (if (p.builtIn) "" else " · saved"),
+                                style = MaterialTheme.typography.labelSmall, color = Gako.Muted)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            if (naming) androidx.compose.material3.TextButton(enabled = name.isNotBlank(), onClick = { vm.savePreset(name); naming = false }) { Text("Save") }
+            else androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Close") }
+        },
+        dismissButton = if (naming) ({ androidx.compose.material3.TextButton(onClick = { naming = false }) { Text("Cancel") } }) else null,
+    )
 }
