@@ -55,6 +55,7 @@ object OraFile {
                 xml.append(" gako-text=\"${esc(t.text)}\" gako-size=\"${t.size}\" gako-color=\"${t.color}\"")
                 xml.append(" gako-font=\"${t.font.name}\" gako-bold=\"${t.bold}\" gako-italic=\"${t.italic}\" gako-align=\"${t.align.name}\"")
                 xml.append(" gako-outline=\"${t.outline}\" gako-outline-color=\"${t.outlineColor}\"")
+                t.fontFile?.let { xml.append(" gako-font-file=\"${esc(it)}\"") }
             }
             xml.append("/>\n")
         }
@@ -131,6 +132,7 @@ object OraFile {
                             align = runCatching { TextAlign.valueOf(attr("gako-align")!!) }.getOrDefault(TextAlign.Left),
                             outline = attr("gako-outline")?.toFloatOrNull() ?: 0f,
                             outlineColor = attr("gako-outline-color")?.toIntOrNull() ?: -0x1000000,
+                            fontFile = attr("gako-font-file"),
                         )
                     }
                     entries += Entry(

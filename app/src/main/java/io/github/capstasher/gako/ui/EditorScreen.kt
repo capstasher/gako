@@ -73,6 +73,7 @@ fun EditorScreen(
     onPickImage: () -> Unit,
     onPickFile: (asLayers: Boolean) -> Unit,
     onTakePhoto: () -> Unit,
+    onPickFont: () -> Unit,
     onPickFolder: () -> Unit,
     onShare: (Uri) -> Unit,
 ) {
@@ -141,7 +142,7 @@ fun EditorScreen(
                             session != null -> ParamPanel(session, vm, side)
                             export != null -> ExportPanel(export, vm, onPickFolder, side)
                             curves != null -> CurvesPanel(curves, vm, side)
-                            text != null -> TextPanel(text, vm, side)
+                            text != null -> TextPanel(text, vm, onPickFont, side)
                             tablet && vm.doc != null -> Column(Modifier.width(320.dp).fillMaxHeight().background(Gako.InkRaised)) {
                                 Text("LAYERS", style = EngravedLabel, modifier = Modifier.padding(start = 16.dp, top = 14.dp, bottom = 6.dp))
                                 LayersPanel(vm)
@@ -156,7 +157,7 @@ fun EditorScreen(
                             session != null -> ParamPanel(session, vm, panel)
                             export != null -> ExportPanel(export, vm, onPickFolder, panel)
                             curves != null -> CurvesPanel(curves, vm, panel)
-                            text != null -> TextPanel(text, vm, panel)
+                            text != null -> TextPanel(text, vm, onPickFont, panel)
                             else -> BottomMenu(roots, menu, onSearchPick = { vm.startFilter(it.name) }) {
                                 if (vm.doc != null) ToolOptionsBar(vm)
                             }

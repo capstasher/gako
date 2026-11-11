@@ -48,6 +48,8 @@ data class TextInfo(
     /** An outline around the letters (0 = none), in pixels, and its colour. */
     val outline: Float = 0f,
     val outlineColor: Int = -0x1000000,
+    /** A font file (system or added by the user) instead of [font]; [font] is the fallback. */
+    val fontFile: String? = null,
 )
 
 /**
