@@ -135,6 +135,14 @@ class UiTest {
 
     @Test fun quickMaskPaintsTheSelection() {
         fresh()
+        // A GIMP 2.10+ layer as well, so the canvas shows GIMP's composite (and must add the tint to it).
+        rule.runOnUiThread {
+            val d = vm.doc!!
+            val haze = Layer(Layer.newId(), "Haze", Bitmaps.blank(d.width, d.height, Color.BLACK), opacity = 0.2f, legacy = false)
+            vm.doc = d.copy(layers = d.layers + haze, activeId = haze.id)
+        }
+        projected()
+        val plain = onScreen(200f, 150f)
         rule.runOnUiThread { vm.selectAll(); vm.toggleQuickMask() }
         idle()
         assertTrue(vm.quickMaskOn)
@@ -144,9 +152,12 @@ class UiTest {
         rule.runOnUiThread { vm.setForeground(Color.BLACK) }
         canvas.performTouchInput { stroke(line(50f, 150f, 350f, 150f)) }
         idle()
+        projected()
         val tint = onScreen(200f, 150f)
         assertTrue("red tint where not selected", Color.red(tint) > Color.green(tint) + 60)
-        assertEquals("the image itself is untouched", Color.WHITE, Compositor.flatten(vm.doc!!).getPixel(200, 150))
+        assertTrue("no tint where selected", near(plain, onScreen(200f, 50f)))
+        assertEquals("the image itself is untouched", Compositor.flatten(vm.doc!!.forFiles()).getPixel(200, 150),
+            Compositor.flatten(vm.doc!!).getPixel(200, 150))
         rule.runOnUiThread { vm.toggleQuickMask() }
         idle()
         assertTrue(!vm.quickMaskOn)
