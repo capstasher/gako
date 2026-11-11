@@ -4,7 +4,7 @@
 
 GAKO doesn't run desktop GIMP behind an X server. It cross-compiles the parts of GIMP that do
 the actual image work (**babl** for pixel formats and colour, **GEGL** for every filter and
-operation) for Android, and puts a touch interface on top designed for one hand and no stylus.
+operation) for Android, and puts a touch interface on top designed for one hand (a stylus is welcome, not needed).
 
 ## Status: stage 3 (layers and tools)
 
@@ -16,7 +16,7 @@ operation) for Android, and puts a touch interface on top designed for one hand 
 **Images and layers**
 - Layered documents: new, duplicate, delete, reorder, merge down, merge visible, flatten, new from visible
 - 17 layer modes (multiply, screen, overlay, soft/hard light, dodge, burn, HSL…), opacity, visibility, lock alpha
-- Layers can be any size and sit anywhere; scale layer, layer to image size, alpha to selection
+- Layers can be any size and sit anywhere; scale layer, layer to image size, crop to content, alpha to selection
 - Layer masks (white, black, from alpha, selection or a grey copy): paint, fill, filter or curve the mask;
   disable, apply or delete it. Masks survive XCF in both directions
 - Undo/redo for everything, with GIMP's Undo History; painting only stores the pixels a stroke touched
