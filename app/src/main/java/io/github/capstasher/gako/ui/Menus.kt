@@ -53,6 +53,7 @@ import androidx.compose.material.icons.outlined.Functions
 import androidx.compose.material.icons.outlined.Grain
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.InvertColors
 import androidx.compose.material.icons.outlined.Map
 import androidx.compose.material.icons.outlined.MoreHoriz
@@ -187,6 +188,7 @@ class MenuCallbacks(
     val takePhoto: () -> Unit,
     val share: () -> Unit,
     val about: () -> Unit,
+    val help: () -> Unit,
     val layersPanel: @Composable () -> Unit,
     val toolsPanel: @Composable () -> Unit,
 )
@@ -217,6 +219,7 @@ fun buildMenus(vm: EditorViewModel, callbacks: MenuCallbacks): List<MenuGroup> {
         act("save-as", "Save As…", Icons.Outlined.SaveAs) { vm.startExport(project = true) },
         act("export", "Export As…", Icons.Outlined.SaveAlt) { vm.startExport() },
         act("share", "Share", Icons.Outlined.Share) { callbacks.share() },
+        act("help", "Help", Icons.Outlined.HelpOutline, true) { callbacks.help() },
         act("about", "About", Icons.Outlined.Info, true) { callbacks.about() },
     ))
 

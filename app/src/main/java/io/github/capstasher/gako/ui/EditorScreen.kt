@@ -83,6 +83,7 @@ fun EditorScreen(
     val scope = rememberCoroutineScope()
     val menu = rememberMenuState()
     var showAbout by remember { mutableStateOf(false) }
+    var showHelp by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         vm.messages.collect {
@@ -97,6 +98,7 @@ fun EditorScreen(
         takePhoto = onTakePhoto,
         share = { scope.launch { vm.shareableUri()?.let(onShare) } },
         about = { showAbout = true },
+        help = { showHelp = true },
         layersPanel = { LayersPanel(vm) },
         toolsPanel = { ToolPalette(vm) { menu.close() } },
     ))
@@ -173,6 +175,7 @@ fun EditorScreen(
         }
 
         if (showAbout) AboutDialog(vm) { showAbout = false }
+        if (showHelp) HelpDialog { showHelp = false }
         vm.dialog?.let { DialogHost(vm, it) }
         vm.confirm?.let { c ->
             AlertDialog(
@@ -302,7 +305,7 @@ private fun EmptyState(vm: EditorViewModel, onPickImage: () -> Unit, onTakePhoto
             }
         }
         Text(
-            "One finger uses the tool. Two fingers pan and zoom.",
+            "One finger uses the tool. Two fingers pan, zoom and turn. File › Help has the rest.",
             style = MaterialTheme.typography.labelMedium, color = Gako.Muted, textAlign = TextAlign.Center,
             modifier = Modifier.padding(top = 8.dp),
         )
