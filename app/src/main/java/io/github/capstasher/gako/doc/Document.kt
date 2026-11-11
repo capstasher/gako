@@ -8,30 +8,64 @@ import android.graphics.Path
 import android.graphics.Rect
 import java.util.concurrent.atomic.AtomicLong
 
-/** GIMP's layer modes that Android's compositor can reproduce. */
-enum class LayerMode(val label: String, val blend: BlendMode) {
-    Normal("Normal", BlendMode.SRC_OVER),
-    Multiply("Multiply", BlendMode.MULTIPLY),
-    Screen("Screen", BlendMode.SCREEN),
-    Overlay("Overlay", BlendMode.OVERLAY),
-    SoftLight("Soft light", BlendMode.SOFT_LIGHT),
-    HardLight("Hard light", BlendMode.HARD_LIGHT),
-    Dodge("Dodge", BlendMode.COLOR_DODGE),
-    Burn("Burn", BlendMode.COLOR_BURN),
-    Darken("Darken only", BlendMode.DARKEN),
-    Lighten("Lighten only", BlendMode.LIGHTEN),
-    Addition("Addition", BlendMode.PLUS),
-    Difference("Difference", BlendMode.DIFFERENCE),
-    Exclusion("Exclusion", BlendMode.EXCLUSION),
-    Hue("HSL Hue", BlendMode.HUE),
-    Saturation("HSL Saturation", BlendMode.SATURATION),
-    Color("HSL Color", BlendMode.COLOR),
-    Luminosity("Luminosity", BlendMode.LUMINOSITY),
+/**
+ * GIMP's layer modes, in the order of GIMP's menu ([section] separates its groups). [gimp] is the
+ * mode's number in GIMP 2.10+ (blending in linear light or its own space), [legacyGimp] the number
+ * of its "legacy" (sRGB) form, if it has one. [blend] is the nearest Android blend mode, used for
+ * quick on-screen drawing while something is being edited.
+ */
+enum class LayerMode(val label: String, val gimp: Int, val legacyGimp: Int?, val blend: BlendMode, val section: Int) {
+    Normal("Normal", 28, 0, BlendMode.SRC_OVER, 0),
+    Lighten("Lighten only", 36, 10, BlendMode.LIGHTEN, 1),
+    LumaLighten("Luma lighten only", 55, null, BlendMode.LIGHTEN, 1),
+    Screen("Screen", 31, 4, BlendMode.SCREEN, 1),
+    Dodge("Dodge", 42, 16, BlendMode.COLOR_DODGE, 1),
+    Addition("Addition", 33, 7, BlendMode.PLUS, 1),
+    Darken("Darken only", 35, 9, BlendMode.DARKEN, 2),
+    LumaDarken("Luma darken only", 54, null, BlendMode.DARKEN, 2),
+    Multiply("Multiply", 30, 3, BlendMode.MULTIPLY, 2),
+    Burn("Burn", 43, 17, BlendMode.COLOR_BURN, 2),
+    LinearBurn("Linear burn", 53, null, BlendMode.COLOR_BURN, 2),
+    Overlay("Overlay", 23, 5, BlendMode.OVERLAY, 3),
+    SoftLight("Soft light", 45, 19, BlendMode.SOFT_LIGHT, 3),
+    HardLight("Hard light", 44, 18, BlendMode.HARD_LIGHT, 3),
+    VividLight("Vivid light", 48, null, BlendMode.HARD_LIGHT, 3),
+    PinLight("Pin light", 49, null, BlendMode.HARD_LIGHT, 3),
+    LinearLight("Linear light", 50, null, BlendMode.HARD_LIGHT, 3),
+    HardMix("Hard mix", 51, null, BlendMode.HARD_LIGHT, 3),
+    Difference("Difference", 32, 6, BlendMode.DIFFERENCE, 4),
+    Exclusion("Exclusion", 52, null, BlendMode.EXCLUSION, 4),
+    Subtract("Subtract", 34, 8, BlendMode.DIFFERENCE, 4),
+    GrainExtract("Grain extract", 46, 20, BlendMode.DIFFERENCE, 4),
+    GrainMerge("Grain merge", 47, 21, BlendMode.OVERLAY, 4),
+    Divide("Divide", 41, 15, BlendMode.COLOR_DODGE, 4),
+    Hue("HSV Hue", 37, 11, BlendMode.HUE, 5),
+    Saturation("HSV Saturation", 38, 12, BlendMode.SATURATION, 5),
+    Color("HSL Color", 39, 13, BlendMode.COLOR, 5),
+    Value("HSV Value", 40, 14, BlendMode.LUMINOSITY, 5),
+    LchHue("LCh Hue", 24, null, BlendMode.HUE, 6),
+    LchChroma("LCh Chroma", 25, null, BlendMode.SATURATION, 6),
+    LchColor("LCh Color", 26, null, BlendMode.COLOR, 6),
+    LchLightness("LCh Lightness", 27, null, BlendMode.LUMINOSITY, 6),
+    Luminance("Luminance", 56, null, BlendMode.LUMINOSITY, 6),
     /** Groups only: the children blend straight onto what's below, as if there were no group. */
-    PassThrough("Pass through", BlendMode.SRC_OVER);
+    PassThrough("Pass through", 61, null, BlendMode.SRC_OVER, 7);
+
+    /** GIMP's number for this mode, in its legacy form if [legacy] and it has one. */
+    fun number(legacy: Boolean) = if (legacy && legacyGimp != null) legacyGimp else gimp
 
     companion object {
         fun fromName(name: String?) = entries.firstOrNull { it.name.equals(name, true) } ?: Normal
+
+        /** GIMP's mode [n] as GAKO's mode and whether it's the legacy form (unknown modes read as Normal). */
+        fun ofGimp(n: Int): Pair<LayerMode, Boolean> {
+            entries.firstOrNull { it.gimp == n }?.let { return it to false }
+            entries.firstOrNull { it.legacyGimp == n }?.let { return it to true }
+            return when (n) {
+                1, 2, 22 -> Normal to true          // dissolve, behind, colour erase (legacy)
+                else -> Normal to false             // behind, colour erase, erase, merge, split, replace, anti-erase
+            }
+        }
     }
 }
 
@@ -80,11 +114,38 @@ data class Layer(
     /** Groups: children shown in the Layers panel. */
     val expanded: Boolean = true,
     /**
-     * The GIMP layer-mode number this layer had in the XCF it came from. Written back as long as it
-     * still reads as [mode], so a GIMP file keeps its (linear-light, or unsupported) modes.
+     * The GIMP layer-mode number this layer had in the file it came from. Kept while it still reads
+     * as [mode] and [legacy], so modes GAKO draws as Normal (Dissolve, Behind…) survive a round trip.
      */
     val xcfMode: Int? = null,
+    /**
+     * Use the mode's legacy form, as GIMP 2.8 and older did: blended and composited in sRGB, which
+     * is what most phone apps (and Photoshop) do. Otherwise GIMP 2.10+'s, which composites in linear
+     * light. Modes without a legacy form ignore it.
+     */
+    val legacy: Boolean = true,
+    /** GIMP's per-layer blend space, composite space and composite mode (0 = the mode's own). */
+    val blendSpace: Int = 0,
+    val compositeSpace: Int = 0,
+    val compositeMode: Int = 0,
 ) {
+    /** GIMP's number for how this layer blends. */
+    val gimpMode: Int get() = when {
+        mode == LayerMode.PassThrough -> if (group) LayerMode.PassThrough.gimp else LayerMode.Normal.number(legacy)
+        xcfMode != null && LayerMode.ofGimp(xcfMode) == (mode to legacyFor(mode)) -> xcfMode
+        else -> mode.number(legacy)
+    }
+
+    /** [legacy] as it applies to [m] (always false for modes without a legacy form). */
+    fun legacyFor(m: LayerMode) = legacy && m.legacyGimp != null
+
+    /**
+     * Set to blend the way Photoshop and OpenRaster files expect: in sRGB, over what's below
+     * (as GIMP's own PSD import does).
+     */
+    fun gammaBlended(): Layer = if (mode == LayerMode.Normal || mode == LayerMode.PassThrough) copy(legacy = true)
+        else copy(legacy = false, blendSpace = 4, compositeSpace = 4, compositeMode = 1)
+
     /** The mask that affects how the layer looks right now. */
     val activeMask: Bitmap? get() = mask.takeIf { maskEnabled }
 
@@ -337,6 +398,12 @@ data class DocState(
     val activeIndex: Int get() = layers.indexOfFirst { it.id == activeId }.takeIf { it >= 0 } ?: layers.lastIndex
 
     fun layer(id: Long) = layers.firstOrNull { it.id == id }
+
+    /**
+     * Whether a new layer should use the legacy (sRGB) modes: like the active layer, so a file from
+     * GIMP 2.10+ gets layers that blend like its own, and GAKO's images keep sRGB blending.
+     */
+    val newLayerLegacy: Boolean get() = (active?.takeIf { !it.group } ?: layers.lastOrNull { !it.group })?.legacy ?: true
 
     fun replace(layer: Layer) = copy(layers = layers.map { if (it.id == layer.id) layer else it })
 

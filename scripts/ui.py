@@ -20,6 +20,7 @@ editor's state); otherwise the script falls back to uiautomator (~2 s a look, vi
   scripts/ui.py type "Hello" | key ENTER | back
   scripts/ui.py open photo.jpg             # copy a file into the app and open it (answers "Discard")
   scripts/ui.py shot name                  # screenshot (40%) into $GAKO_SHOTS (default /tmp/gako-shots)
+  scripts/ui.py color 120 80 [x y …]       # the colour on screen at image pixels (what the canvas shows)
   scripts/ui.py start                      # launch GAKO
 
 Join several commands with "+":  scripts/ui.py tap Layers + tap "More layer actions" + text
@@ -31,6 +32,7 @@ import json
 import os
 import re
 import socket
+import struct
 import subprocess
 import sys
 import time
@@ -284,6 +286,18 @@ def cmd(args):
         except ImportError:
             open(out, "wb").write(png)
         print(out)
+    elif c == "color":
+        f = canvas()
+        raw = subprocess.run(["adb", "-s", SERIAL, "exec-out", "screencap"], capture_output=True).stdout
+        w, h = struct.unpack_from("<II", raw, 0)
+        head = len(raw) - w * h * 4            # 12 or 16 bytes, by Android version
+        for i in range(0, len(rest) - 1, 2):
+            sx, sy = (int(round(v)) for v in f(float(rest[i]), float(rest[i + 1])))
+            if not (0 <= sx < w and 0 <= sy < h):
+                print(f"{rest[i]},{rest[i + 1]}: off screen")
+                continue
+            r, g, b, a = raw[head + (sy * w + sx) * 4: head + (sy * w + sx) * 4 + 4]
+            print(f"{rest[i]},{rest[i + 1]}: #{r:02x}{g:02x}{b:02x} ({r}, {g}, {b})")
     elif c == "sleep":
         time.sleep(float(rest[0]))
     else:

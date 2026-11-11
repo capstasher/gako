@@ -299,7 +299,7 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
             cc.nativeCanvas.restore()
         }
 
-        @Suppress("UNUSED_VARIABLE") val rev = vm.revision   // repaint on in-place pixel edits
+        val rev = vm.revision   // read so in-place pixel edits repaint
         val preview = vm.preview
         val comparing = vm.comparing
         val input = vm.input
@@ -366,9 +366,32 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
                 }
             }
             var textShown = false
-            Compositor.drawTree(nc, d.layers, bounds, tight = false) { c, l ->
+            fun drawLayersLive(layers: List<Layer>) = Compositor.drawTree(nc, layers, bounds, tight = false) { c, l ->
                 drawLeaf(c, l)
                 if (text != null && (text.layerId == l.id || (text.layerId == null && l === active))) textShown = true
+            }
+            val projection = vm.projection
+            if (!projection.needed) {
+                drawLayersLive(d.layers)
+            } else {
+                // GIMP's exact composite when nothing's being edited; while something is, the
+                // exact composite of what's below the edited layer, and the rest drawn live.
+                val editing = vm.editingLive
+                val frame = projection.frame?.takeIf { it.doc === d && it.revision == rev }
+                val below = projection.belowFor(d)
+                val pixels = Paint().apply { isFilterBitmap = smooth }
+                when {
+                    !editing && frame != null -> {
+                        frame.bitmap.setHasMipMap(smooth)
+                        nc.drawBitmap(frame.bitmap, 0f, 0f, pixels)
+                    }
+                    below != null -> {
+                        below.bitmap.setHasMipMap(smooth)
+                        nc.drawBitmap(below.bitmap, 0f, 0f, pixels)
+                        drawLayersLive(d.layers.subList(below.start, d.layers.size))
+                    }
+                    else -> drawLayersLive(d.layers)
+                }
             }
             // Text being typed always shows, even if its layer is hidden (or a group is active).
             if (text != null && textBitmap != null && !textShown) {

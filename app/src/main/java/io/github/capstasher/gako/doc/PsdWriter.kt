@@ -12,12 +12,18 @@ import java.io.OutputStream
  */
 object PsdWriter {
 
+    /** Photoshop's nearest blend mode for each of GIMP's (GIMP's PSD export table); others are Normal. */
     private val modes = mapOf(
         LayerMode.Normal to "norm", LayerMode.Multiply to "mul ", LayerMode.Screen to "scrn", LayerMode.Overlay to "over",
         LayerMode.SoftLight to "sLit", LayerMode.HardLight to "hLit", LayerMode.Dodge to "div ", LayerMode.Burn to "idiv",
         LayerMode.Darken to "dark", LayerMode.Lighten to "lite", LayerMode.Addition to "lddg", LayerMode.Difference to "diff",
-        LayerMode.Exclusion to "smud", LayerMode.Hue to "hue ", LayerMode.Saturation to "sat ", LayerMode.Color to "colr",
-        LayerMode.Luminosity to "lum ", LayerMode.PassThrough to "pass",
+        LayerMode.Exclusion to "smud", LayerMode.Subtract to "fsub", LayerMode.Divide to "fdiv",
+        LayerMode.LinearBurn to "lbrn", LayerMode.VividLight to "vLit", LayerMode.PinLight to "pLit",
+        LayerMode.LinearLight to "lLit", LayerMode.HardMix to "hMix", LayerMode.LumaDarken to "dark",
+        LayerMode.LumaLighten to "lite",
+        LayerMode.Hue to "hue ", LayerMode.Saturation to "sat ", LayerMode.Color to "colr", LayerMode.Value to "lum ",
+        LayerMode.LchHue to "hue ", LayerMode.LchChroma to "sat ", LayerMode.LchColor to "colr",
+        LayerMode.LchLightness to "lum ", LayerMode.Luminance to "lum ", LayerMode.PassThrough to "pass",
     )
 
     /**

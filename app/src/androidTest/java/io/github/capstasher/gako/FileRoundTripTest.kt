@@ -48,8 +48,8 @@ class FileRoundTripTest {
 
     @Test fun xcfKeepsEverything() {
         val doc = document().let { d ->
-            // A mode GAKO can't show (GIMP's Grain merge) on the hidden layer: it should survive.
-            d.copy(layers = d.layers.map { if (it.name == "Top") it.copy(xcfMode = 47) else it })
+            // A mode GAKO draws as Normal (GIMP's Dissolve) on the hidden layer: it should survive.
+            d.copy(layers = d.layers.map { if (it.name == "Top") it.copy(xcfMode = 1) else it })
         }
         val bytes = ByteArrayOutputStream().also { XcfWriter.write(doc, it) }.toByteArray()
         val back = XcfReader.read(ByteArrayInputStream(bytes))
@@ -57,12 +57,13 @@ class FileRoundTripTest {
         for (l in doc.layers) {
             val r = back.named(l.name)
             assertEquals("${l.name} mode", l.mode, r.mode)
+            assertEquals("${l.name} GIMP mode", l.gimpMode, r.gimpMode)
             if (l.group) continue
             assertEquals("${l.name} pixels", 0, maxDiff(l.bitmap, r.bitmap))
             assertEquals("${l.name} has mask", l.mask != null, r.mask != null)
             l.mask?.let { assertEquals("${l.name} mask", 0, maxDiff(it, r.mask!!)) }
         }
-        assertEquals(47, back.named("Top").xcfMode)
+        assertEquals(1, back.named("Top").gimpMode)
         assertEquals("Inside", back.active?.name)
         // The path, point for point.
         assertEquals(1, back.paths.size)
@@ -74,17 +75,24 @@ class FileRoundTripTest {
         for (i in s0.points.indices) assertEquals(s0.points[i], s1.points[i], 0.001f)
     }
 
-    @Test fun xcfWritesBackTheFilesModeOnlyWhileUnchanged() {
+    @Test fun xcfKeepsGimpsModeNumbers() {
         val doc = document()
-        // Read as GIMP 2.10's (linear) Multiply: written back as such…
-        val kept = doc.copy(layers = doc.layers.map { if (it.name == "Group") it.copy(xcfMode = 30) else it })
+        // GIMP 2.10+'s (linear) Multiply and its legacy one are different modes, and both stay what they were.
+        for ((legacy, number) in listOf(false to 30, true to 3)) {
+            val d = doc.copy(layers = doc.layers.map { if (it.name == "Group") it.copy(legacy = legacy) else it })
+            val back = XcfReader.read(ByteArrayInputStream(ByteArrayOutputStream().also { XcfWriter.write(d, it) }.toByteArray()))
+            assertEquals(number, back.named("Group").gimpMode)
+            assertEquals(legacy, back.named("Group").legacy)
+        }
+        // A mode GAKO draws as Normal (Dissolve) is written back while the layer stays Normal…
+        val kept = doc.copy(layers = doc.layers.map { if (it.name == "Top") it.copy(xcfMode = 1) else it })
         val back1 = XcfReader.read(ByteArrayInputStream(ByteArrayOutputStream().also { XcfWriter.write(kept, it) }.toByteArray()))
-        assertEquals(30, back1.named("Group").xcfMode)
-        // …but once the mode is changed in GAKO, GAKO's own (legacy) number is written.
-        val changed = kept.copy(layers = kept.layers.map { if (it.name == "Group") it.copy(mode = LayerMode.Screen) else it })
+        assertEquals(1, back1.named("Top").gimpMode)
+        // …but once the mode is changed in GAKO, GAKO's number is written.
+        val changed = kept.copy(layers = kept.layers.map { if (it.name == "Top") it.copy(mode = LayerMode.Screen) else it })
         val back2 = XcfReader.read(ByteArrayInputStream(ByteArrayOutputStream().also { XcfWriter.write(changed, it) }.toByteArray()))
-        assertEquals(LayerMode.Screen, back2.named("Group").mode)
-        assertEquals(4, back2.named("Group").xcfMode)
+        assertEquals(LayerMode.Screen, back2.named("Top").mode)
+        assertEquals(4, back2.named("Top").gimpMode)
     }
 
     @Test fun psdKeepsLayersGroupsAndMasks() {

@@ -52,6 +52,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -109,6 +110,16 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var doc by mutableStateOf<DocState?>(null); internal set
     /** Bumped whenever pixels change in place, so the canvas redraws. */
     var revision by mutableIntStateOf(0); private set
+    /** GIMP's exact composite for the canvas, kept up to date in the background (see [Projection]). */
+    val projection = Projection()
+
+    /** Whether a layer is changing live right now (a stroke, a move, a filter preview, text…). */
+    val editingLive: Boolean get() {
+        val d = doc ?: return false
+        return (preview != null && !comparing) || input.moveDelta != null || input.liveStroke != null ||
+            input.gradient != null || text != null ||
+            (tool == io.github.capstasher.gako.tools.Tool.Transform && session == null && input.transformFor(d)?.changed == true)
+    }
     /** The filter/curves preview of the active layer (a downscaled copy), or null. */
     var preview by mutableStateOf<Bitmap?>(null); internal set
     /**
@@ -232,6 +243,11 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     init {
         viewModelScope.launch {
             androidx.compose.runtime.snapshotFlow { input.path.points to input.path.closed }.collect { syncPath() }
+        }
+        viewModelScope.launch {
+            // A new change cancels the refresh under way and starts again.
+            androidx.compose.runtime.snapshotFlow { Triple(doc, revision, editingLive) }
+                .collectLatest { (d, rev, editing) -> projection.refresh(d, rev, editing) }
         }
         viewModelScope.launch {
             val error = try {
@@ -725,14 +741,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             return resolver.openInputStream(uri)!!.use { io.github.capstasher.gako.doc.PsdReader.read(it) } to null
         }
         if (lower.endsWith(".xcf") || mime == "image/x-xcf") {
-            val d = resolver.openInputStream(uri)!!.use { io.github.capstasher.gako.doc.XcfReader.read(it) }
-            // GIMP 2.10+ blends these in linear light, GAKO in sRGB: say so where it shows (opacity, modes).
-            val linear = d.layers.size > 1 && d.layers.any { l ->
-                !l.group && l.xcfMode?.let { io.github.capstasher.gako.doc.XcfProps.isLinear(it) } == true &&
-                    (l.opacity < 1f || l.mode != LayerMode.Normal)
-            }
-            return d to (if (linear) "GIMP blends some of these layers in linear light; here they blend in sRGB, " +
-                "so see-through parts can look darker. Saving keeps their GIMP modes." else null)
+            return resolver.openInputStream(uri)!!.use { io.github.capstasher.gako.doc.XcfReader.read(it) } to null
         }
         val (bitmap, note) = decode(uri)
         pendingMetadata = runCatching { resolver.openInputStream(uri)?.use { io.github.capstasher.gako.export.Metadata.read(it) } }.getOrNull()
@@ -1299,7 +1308,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             NewFill.Background -> bg
             NewFill.White -> Color.WHITE
         }
-        val l = Layer(Layer.newId(), layerName(d, "Layer"), Bitmaps.blank(d.width, d.height, color))
+        val l = Layer(Layer.newId(), layerName(d, "Layer"), Bitmaps.blank(d.width, d.height, color), legacy = d.newLayerLegacy)
         change("New Layer", insertAboveActive(d, l))
     }
 
@@ -1459,8 +1468,18 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         val d = doc ?: return
         if (blockedByBusy()) return
         val l = d.active ?: return
-        // A deliberate change: from now on the file's own GIMP mode number no longer applies.
-        if (l.mode != mode || l.xcfMode != null) change("Layer Mode", d.replace(l.copy(mode = mode, xcfMode = null)))
+        // A deliberate change: the file's own GIMP mode number and blend settings no longer apply.
+        if (l.mode != mode || l.xcfMode != null) change("Layer Mode", d.replace(l.copy(mode = mode, xcfMode = null,
+            blendSpace = 0, compositeSpace = 0, compositeMode = 0)))
+    }
+
+    /** Legacy (sRGB) or GIMP 2.10+ (linear light) blending for the active layer. */
+    fun setLayerLegacy(legacy: Boolean) {
+        val d = doc ?: return
+        if (blockedByBusy()) return
+        val l = d.active ?: return
+        if (l.legacy != legacy) change("Layer Mode", d.replace(l.copy(legacy = legacy, xcfMode = null,
+            blendSpace = 0, compositeSpace = 0, compositeMode = 0)))
     }
 
     fun renameLayer(id: Long, name: String) {
@@ -1552,7 +1571,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun newFromVisible() = docJob("New from Visible") {
-        val l = Layer(Layer.newId(), layerName(it, "Visible"), Compositor.flatten(it))
+        val l = Layer(Layer.newId(), layerName(it, "Visible"), Compositor.flatten(it), legacy = it.newLayerLegacy)
         insertAboveActive(it, l)
     }
 
@@ -1749,7 +1768,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         val d = doc ?: return
         val x = if (r.right <= d.width && r.bottom <= d.height) r.left else (d.width - b.width) / 2
         val y = if (r.right <= d.width && r.bottom <= d.height) r.top else (d.height - b.height) / 2
-        val l = Layer(Layer.newId(), layerName(d, "Pasted Layer"), Bitmaps.copy(b), x, y)
+        val l = Layer(Layer.newId(), layerName(d, "Pasted Layer"), Bitmaps.copy(b), x, y, legacy = d.newLayerLegacy)
         change("Paste", insertAboveActive(d, l))
         if (tool != Tool.Move && tool != Tool.Transform) selectTool(Tool.Move)
         say("Pasted as a new layer. Drag to place it.")
@@ -1874,7 +1893,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             change("Edit Text", d.replace(existing.copy(bitmap = bmp, text = t.info, x = t.x, y = t.y, mask = mask)))
         } else {
             val name = t.info.text.lineSequence().first().take(24)
-            change("Add Text", insertAboveActive(d, Layer(Layer.newId(), name, bmp, t.x, t.y, text = t.info)))
+            change("Add Text", insertAboveActive(d, Layer(Layer.newId(), name, bmp, t.x, t.y, text = t.info, legacy = d.newLayerLegacy)))
         }
     }
 

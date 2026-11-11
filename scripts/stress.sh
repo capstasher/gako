@@ -30,7 +30,8 @@ for i in "${!devices[@]}"; do
       --pct-rotation 0 --pct-flip 0 --pct-appswitch 0 --pct-syskeys 0 --pct-nav 0 --pct-anyevent 0 --pct-trackball 0 \
       "$events" > "$tmp/$i.monkey" 2>&1
     adb -s "$d" shell cmd statusbar collapse >/dev/null 2>&1
-    adb -s "$d" logcat -d | grep -E -A 25 "FATAL EXCEPTION|ANR in $pkg" |
+    # Only GAKO's own crashes (the monkey can also upset the launcher in the background).
+    adb -s "$d" logcat -d | grep -E -A 25 "FATAL EXCEPTION|ANR in $pkg" | grep -B2 -A25 -E "Process: $pkg|ANR in $pkg" |
       grep -E "FATAL|ANR|Exception|Error|at io\.github" | head -30 > "$tmp/$i.problems"
   ) &
 done
@@ -40,8 +41,8 @@ bad=0
 for i in "${!devices[@]}"; do
   d=${devices[$i]}; s=$((seed + i))
   injected=$(grep -o "Events injected: [0-9]*" "$tmp/$i.monkey" | grep -o "[0-9]*$" || echo 0)
-  if [ -s "$tmp/$i.problems" ] || grep -qE "CRASH|NOT RESPONDING" "$tmp/$i.monkey"; then
-    echo "PROBLEMS on $d (seed $s, $injected events):"; cat "$tmp/$i.problems"; grep -E "CRASH|NOT RESPONDING" "$tmp/$i.monkey"
+  if [ -s "$tmp/$i.problems" ] || grep -qE "(CRASH|NOT RESPONDING): $pkg" "$tmp/$i.monkey"; then
+    echo "PROBLEMS on $d (seed $s, $injected events):"; cat "$tmp/$i.problems"; grep -E "(CRASH|NOT RESPONDING): $pkg" "$tmp/$i.monkey"
     bad=1
   else
     echo "$d: no crashes or freezes in $injected events (seed $s)"

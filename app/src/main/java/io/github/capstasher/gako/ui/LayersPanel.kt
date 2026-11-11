@@ -34,6 +34,7 @@ import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
@@ -75,7 +76,7 @@ fun LayersPanel(vm: EditorViewModel) {
     Column(Modifier.fillMaxWidth()) {
         if (active != null) {
             Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                ModePicker(active.mode, active.group) { vm.setLayerMode(it) }
+                ModePicker(active, onPick = { vm.setLayerMode(it) }, onLegacy = { vm.setLayerLegacy(it) })
                 Slider(
                     value = active.opacity,
                     onValueChange = { vm.setLayerOpacityLive(it) },
@@ -198,6 +199,7 @@ private fun LayerRow(vm: EditorViewModel, layer: Layer, active: Boolean, depth: 
             }
             val info = buildList {
                 if (layer.mode != LayerMode.Normal) add(layer.mode.label)
+                if (!layer.group && !layer.legacyFor(layer.mode)) add("linear")
                 if (layer.opacity < 1f) add("${(layer.opacity * 100).roundToInt()}%")
                 if (layer.lockAlpha) add("alpha locked")
                 if (layer.mask != null && !layer.maskEnabled) add("mask off")
@@ -208,15 +210,33 @@ private fun LayerRow(vm: EditorViewModel, layer: Layer, active: Boolean, depth: 
     }
 }
 
+/**
+ * GIMP's layer mode menu: the modes in GIMP's groups, and (as GIMP's switch between its default
+ * and legacy mode lists) whether the layer blends in linear light like GIMP 2.10+ or in sRGB.
+ */
 @Composable
-private fun ModePicker(mode: LayerMode, group: Boolean, onPick: (LayerMode) -> Unit) {
+private fun ModePicker(layer: Layer, onPick: (LayerMode) -> Unit, onLegacy: (Boolean) -> Unit) {
     var open by remember { mutableStateOf(false) }
+    val mode = layer.mode
     Box {
         TextButton(onClick = { open = true }) {
             Text(mode.label, color = Gako.Gold, maxLines = 1)
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            LayerMode.entries.filter { group || it != LayerMode.PassThrough }.forEach { m ->
+            if (mode != LayerMode.PassThrough) {
+                val linear = !layer.legacyFor(mode)
+                DropdownMenuItem(
+                    text = { Text("Linear light (GIMP 2.10+)", color = Gako.Parchment) },
+                    leadingIcon = { Checkbox(checked = linear, onCheckedChange = null, enabled = mode.legacyGimp != null) },
+                    enabled = mode.legacyGimp != null,
+                    onClick = { onLegacy(linear) },
+                )
+                HorizontalDivider(color = Gako.InkHigh)
+            }
+            var section = -1
+            LayerMode.entries.filter { layer.group || it != LayerMode.PassThrough }.forEach { m ->
+                if (section >= 0 && m.section != section) HorizontalDivider(color = Gako.InkHigh)
+                section = m.section
                 DropdownMenuItem(
                     text = { Text(m.label, color = if (m == mode) Gako.Gold else Gako.Parchment) },
                     onClick = { open = false; onPick(m) },

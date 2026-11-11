@@ -8,7 +8,8 @@ A map of the code after stage 3 (layers and tools), the ideas it rests on, and h
 app/src/main/java/io/github/capstasher/gako/
   doc/        the document model, no UI
     Document.kt    Layer, DocState, Selection, Step (undo), Bitmaps helpers (maskIn!)
-    Compositor.kt  software compositing (flatten, drawLayer with masks, mergeThroughMask)
+    Compositor.kt  compositing: composite/flatten/sample through GIMP's layer modes (native), and the
+                   quick Canvas drawing (drawTree, drawLayer with masks) the GPU canvas uses
     DocOps.kt      whole-image operations: rotate, flip, crop, canvas size, scale, merge, flatten
     Selections.kt  masks: from paths, combine, invert, outline (marching ants), flood fill, by colour
     OraFile.kt     OpenRaster read/write (layers; masks are baked in)
@@ -18,6 +19,7 @@ app/src/main/java/io/github/capstasher/gako/
   editor/
     EditorViewModel.kt  the hub: document + history, files, export/save, layers, selection,
                         edit, text, curves, filters, masks, keyboard, autosave/recovery
+    Projection.kt       GIMP's exact composite for the canvas, refreshed in the background
     ToolInput.kt        gestures → tools (strokes, selections, fill, gradient, crop, transform)
     TextSession.kt      text tool state and rendering (StaticLayout)
     Curves.kt           Curves/Levels state, LUTs, histogram
@@ -35,7 +37,8 @@ app/src/main/java/io/github/capstasher/gako/
                         MenuBar/Menus, ToolOptionsBar (+ ToolPalette), LayersPanel, ParamPanel,
                         CurvesPanel, TextPanel, ExportPanel, PathsDialog, Dialogs (incl. colour picker)
 native/bridge/          C bridge over GEGL: list/describe/apply operations, bounds, apply_rect, matting
-                        (gegl:matting-global with a trimap, for Foreground Select)
+                        (gegl:matting-global with a trimap, for Foreground Select); gako_modes.c is
+                        GIMP's layer modes (ported from GIMP 3), compositing a whole layer stack
 ```
 
 ## The ideas
@@ -56,8 +59,23 @@ native/bridge/          C bridge over GEGL: list/describe/apply operations, boun
 - **Painting** (`PaintStroke`): dabs build a coverage mask for the whole stroke; the layer is
   re-composited from its untouched copy wherever the mask grew, so opacity doesn't stack within a
   stroke. Clone/Heal/Blur/Dodge reveal a source bitmap through that mask instead of a colour.
-- **The canvas is GPU-composited** every frame (`ImageCanvas`), with each layer drawn through
-  `Compositor.drawLayer`. In-place pixel edits bump `vm.revision` to trigger a redraw.
+- **Layer modes are GIMP's.** A layer has GIMP's mode (`LayerMode`, 33 of them, in GIMP's menu order),
+  `legacy` (GIMP's sRGB "legacy" form, GAKO's default for its own images; else GIMP 2.10+'s, which blends
+  in its own space and composites in linear light, clipped to the backdrop) and GIMP's per-layer blend
+  space, composite space and composite mode; `Layer.gimpMode` is GIMP's number. `gako_modes.c` is
+  GIMP's blend and composite functions ported to C, run in 64×64 float tiles on all cores
+  (`Compositor.composite`); flatten, export, merge, the colour picker and the canvas use it. GIMP's
+  rules it keeps: the bottom layer of a stack draws as if Normal; a mask's byte is its opacity (GIMP
+  stores masks linear); pass-through groups at less than full opacity mix back like GIMP's Replace;
+  flattening puts the background under in the bottom layer's composite space. PSD and ORA layers
+  come in as GIMP's PSD import makes them (the mode in sRGB, composited over what's below).
+- **The canvas** (`ImageCanvas`) draws plain images (only sRGB Normal layers, no masks:
+  `Compositor.canvasIsExact`) on the GPU every frame, each layer through `Compositor.drawLayer`.
+  Others show `Projection`: GIMP's composite, made in the background ~30 ms after the last change
+  (a stroke in progress waits); while a layer is being edited (stroke, filter preview, move, text),
+  the exact composite of everything below it plus that layer and those above drawn live on the GPU
+  (approximate modes, for the length of the edit). In-place pixel edits bump `vm.revision` to
+  trigger a redraw and a refresh.
 - **Long work** goes through `vm.docJob` (background, busy pill, one undo step) or the filter
   session (`startFilter` → previews on proxies → `runCommit`). Filters may grow the layer:
   `gako_core_bounds` reports where an operation draws and `gako_core_apply_rect` renders that area.
@@ -79,7 +97,9 @@ native/bridge/          C bridge over GEGL: list/describe/apply operations, boun
 engine for the emulator; then `gradle :app:assembleDebug -Pgako.abis=x86_64`.
 `gradle :app:testDebugUnitTest` runs the JVM tests (curves, levels, fuzzy select, by colour, layer-tree moves).
 Instrumented tests (`app/src/androidTest`) run on a device or emulator: XCF/PSD/ORA round trips
-(structure, pixels, masks, paths, kept GIMP modes), Warp, Straighten, layer transforms, and `UiTest`,
+(structure, pixels, masks, paths, kept GIMP modes), Warp, Straighten, layer transforms, `GimpModesTest`
+(127 small XCFs made by GIMP 3.2 itself, every mode legacy and linear, groups, masks, spaces, each drawn by
+GAKO and compared with GIMP's own render; `scripts/gimp_modes_oracle.py` remakes them), and `UiTest`,
 which drives the real screens (buttons found by label, the canvas touched at image pixels through
 `EditorViewModel.docToView`, the editor's state checked directly). Use a host-GPU emulator
 (`-gpu host`); the SwiftShader one can crash.
@@ -98,7 +118,7 @@ supports, so other machines get their own best setup.
   emulator can lose its GL context when the desktop is busy). Overrides: `GAKO_AVD`, `GAKO_EMU_GPU`,
   `GAKO_EMULATORS`.
 - **`scripts/devtest.sh [Class[#test] …]`** runs the on-device tests across every connected device:
-  ~4 s for all 19 on three emulators (plus the 16 JVM unit tests alongside, on a full run), against
+  ~4–5 s for all 22 on three emulators (plus the 16 JVM unit tests alongside, on a full run), against
   ~8 s on one. It splits the tests so each device gets about the same total time, from per-test
   durations it records on every run (`app/build/devtest/timings.tsv`; without python3 it falls back
   to Android's `numShards`). It builds only the ABIs the devices need (warm daemon, configuration
@@ -106,8 +126,8 @@ supports, so other machines get their own best setup.
   time, so reinstalls elsewhere and emulator snapshots are noticed), never uninstalls, and waits for
   an emulator that's restarting.
 - **`scripts/ui.py`** drives the app over adb by what's on screen: `tap "Layers"`, `wait "Saved"`,
-  `text`, `ls`, `state`, `img 120 80` / `drag` / `path` at image pixels, `open photo.jpg`,
-  `shot name`; join commands with `+`; `-s SERIAL` (or `$ANDROID_SERIAL`) picks a device. Debug builds
+  `text`, `ls`, `state`, `img 120 80` / `drag` / `path` at image pixels, `color 120 80` (the colour the
+  screen shows there), `open photo.jpg`, `shot name`; join commands with `+`; `-s SERIAL` (or `$ANDROID_SERIAL`) picks a device. Debug builds
   answer from an inspector inside the app (`app/src/debug/…/debug/Inspector.kt`, abstract socket
   `gako-inspector`): ~30 ms a look instead of uiautomator's ~2.3 s, image pixels mapped at any zoom
   or turn, and `state` prints the document, layers, selection, paths, tool and history. Release
@@ -132,13 +152,12 @@ Stage 3 was tested on an Android 15 x86_64 emulator (Pixel 7 profile), driving i
 
 ## Known limits / next steps
 
-- GIMP 2.10+'s default ("non-legacy") modes blend in linear light; GAKO blends in sRGB like GIMP's
-  legacy modes (which it writes). The difference is large for semi-transparency: black at 50% over
-  white is 188 in GIMP 3.2's Normal, 127 in GAKO (and in GIMP's Normal (legacy)). Doing it right needs
-  a linear compositor for the screen too (AGSL on Android 13+, or tiled F16 compositing on the CPU).
-  Meanwhile `Layer.xcfMode` keeps each layer's GIMP mode number from the file and writes it back while
-  the mode is unchanged, so GIMP → GAKO → GIMP keeps the look in GIMP (and modes GAKO shows as Normal,
-  like Grain merge or Dissolve, survive).
+- Layer modes match GIMP 3.2 to within 1/255 where opaque (`GimpModesTest`). Where they can't:
+  see-through pixels carry less colour precision (Android keeps them premultiplied in 8 bits); LCh Hue
+  with a grey layer and LCh Chroma over a grey backdrop leave greys alone where GIMP tints them from
+  babl's rounding noise; Dissolve, Behind, Colour erase, Erase, Merge, Split and Anti-erase draw as
+  Normal (their numbers survive a round trip). While a layer is being edited, it and the layers above
+  it show the GPU's approximation until the edit ends (~0.1–0.2 s for a 12 MP image to catch up).
 - Group masks aren't supported (groups have no mask); filters and painting work on layers, not groups.
 - Filters that grow a layer (drop shadow…) grow it only within the canvas.
 - During a stroke the canvas draws the pre-stroke copy plus 256 px tiles; other edits on huge layers

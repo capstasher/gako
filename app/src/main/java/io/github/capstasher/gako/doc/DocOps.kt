@@ -295,11 +295,16 @@ object DocOps {
         val top = doc.layers[i]
         val below = doc.layers[i - 1]
         val r = Rect(below.bounds).apply { if (top.visible) union(top.bounds) }
-        val b = Bitmaps.blank(r.width(), r.height())
-        val c = Canvas(b)
-        c.translate(-r.left.toFloat(), -r.top.toFloat())
-        Compositor.drawLayer(c, below, Paint())
-        if (top.visible) Compositor.drawLayer(c, top, Compositor.layerPaint(top))
+        // The lower layer as it is (with its mask) and the upper one blended onto it with its mode,
+        // as GIMP merges; the result keeps the lower layer's mode and opacity.
+        val plain = below.copy(visible = true, opacity = 1f, mode = LayerMode.Normal, legacy = true, xcfMode = null, parent = null)
+        val b = Compositor.composite(listOf(plain, top.copy(parent = null)), r.left, r.top, r.width(), r.height())
+            ?: Bitmaps.blank(r.width(), r.height()).also {
+                val c = Canvas(it)
+                c.translate(-r.left.toFloat(), -r.top.toFloat())
+                Compositor.drawLayer(c, below, Paint())
+                if (top.visible) Compositor.drawLayer(c, top, Compositor.layerPaint(top))
+            }
         val merged = below.copy(bitmap = b, x = r.left, y = r.top, text = null, mask = null)
         val layers = doc.layers.toMutableList().apply { removeAt(i); set(i - 1, merged) }
         return doc.copy(layers = layers, activeId = merged.id)
@@ -313,11 +318,12 @@ object DocOps {
         // The contents composited as an isolated group at full strength; the group's own mode and
         // opacity move onto the merged layer, so it blends with what's below exactly as before.
         val sub = doc.copy(layers = inside.map {
-            if (it.id == id) it.copy(visible = true, parent = null, opacity = 1f, mode = LayerMode.Normal) else it
+            if (it.id == id) it.copy(visible = true, parent = null, opacity = 1f, mode = LayerMode.Normal, legacy = true, xcfMode = null) else it
         })
         val b = Compositor.flatten(sub)
         val merged = Layer(Layer.newId(), g.name, b, visible = g.visible, parent = g.parent,
-            opacity = g.opacity, mode = if (g.mode == LayerMode.PassThrough) LayerMode.Normal else g.mode)
+            opacity = g.opacity, mode = if (g.mode == LayerMode.PassThrough) LayerMode.Normal else g.mode,
+            legacy = g.legacy, blendSpace = g.blendSpace, compositeSpace = g.compositeSpace, compositeMode = g.compositeMode)
         val layers = doc.layers.toMutableList()
         for (k in range.reversed()) layers.removeAt(k)
         layers.add(range.first, merged)

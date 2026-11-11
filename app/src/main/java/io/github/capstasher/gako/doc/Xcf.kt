@@ -45,45 +45,14 @@ internal object XcfProps {
     const val FLOAT_OPACITY = 33
     const val TILE = 64
 
-    /** GIMP layer-mode numbers. GAKO writes the perceptual ("legacy") ones, which match its compositing. */
-    val write = mapOf(
-        LayerMode.Normal to 0, LayerMode.Multiply to 3, LayerMode.Screen to 4, LayerMode.Overlay to 23,
-        LayerMode.Difference to 6, LayerMode.Addition to 7, LayerMode.Darken to 9, LayerMode.Lighten to 10,
-        LayerMode.Hue to 11, LayerMode.Saturation to 12, LayerMode.Color to 13, LayerMode.Luminosity to 14,
-        LayerMode.Dodge to 16, LayerMode.Burn to 17, LayerMode.HardLight to 18, LayerMode.SoftLight to 19,
-        LayerMode.Exclusion to 52,
-    )
+    const val COMPOSITE_MODE = 35
+    const val COMPOSITE_SPACE = 36
+    const val BLEND_SPACE = 37
 
-    /** The mode number to write: the file's own while it still means the same, else GAKO's. */
-    fun modeFor(l: Layer): Int = when {
-        l.mode == LayerMode.PassThrough -> PASS_THROUGH
-        l.xcfMode != null && read(l.xcfMode) == l.mode -> l.xcfMode
-        else -> write[l.mode] ?: 0
-    }
+    /** The mode number to write (GIMP's own numbers: see [LayerMode]). */
+    fun modeFor(l: Layer): Int = l.gimpMode
 
-    /** GIMP 2.10+'s modes (all but 0–22), which GIMP blends in linear light. */
-    fun isLinear(mode: Int) = mode >= 23 && mode != PASS_THROUGH
-
-    fun read(mode: Int): LayerMode = when (mode) {
-        PASS_THROUGH -> LayerMode.PassThrough
-        3, 30 -> LayerMode.Multiply
-        4, 31 -> LayerMode.Screen
-        5, 23 -> LayerMode.Overlay
-        6, 32 -> LayerMode.Difference
-        7, 33 -> LayerMode.Addition
-        9, 35, 54 -> LayerMode.Darken
-        10, 36, 55 -> LayerMode.Lighten
-        11, 37, 24 -> LayerMode.Hue
-        12, 38, 25 -> LayerMode.Saturation
-        13, 39, 26 -> LayerMode.Color
-        14, 40, 27, 56 -> LayerMode.Luminosity
-        16, 42 -> LayerMode.Dodge
-        17, 43 -> LayerMode.Burn
-        18, 44 -> LayerMode.HardLight
-        19, 45 -> LayerMode.SoftLight
-        52 -> LayerMode.Exclusion
-        else -> LayerMode.Normal
-    }
+    fun read(mode: Int): LayerMode = LayerMode.ofGimp(mode).first
 }
 
 object XcfWriter {
@@ -237,6 +206,10 @@ object XcfWriter {
             b.prop(XcfProps.LOCK_ALPHA, if (l.lockAlpha) 1 else 0)
             b.prop(XcfProps.OFFSETS, l.x, l.y)
             b.prop(XcfProps.MODE, XcfProps.modeFor(l))
+            // GIMP's per-layer blend settings, when changed from the mode's own (GIMP reads <= 0 as "auto").
+            if (l.blendSpace > 0) b.prop(XcfProps.BLEND_SPACE, l.blendSpace)
+            if (l.compositeSpace > 0) b.prop(XcfProps.COMPOSITE_SPACE, l.compositeSpace)
+            if (l.compositeMode > 0) b.prop(XcfProps.COMPOSITE_MODE, l.compositeMode)
             if (l.group) b.prop(XcfProps.GROUP_ITEM_FLAGS, if (l.expanded) 1 else 0)
             if (l.parent != null) paths[l.id]?.let { p -> b.prop(XcfProps.ITEM_PATH, *p.toIntArray()) }
             if (l.mask != null) b.prop(XcfProps.APPLY_MASK, if (l.maskEnabled) 1 else 0)
@@ -296,6 +269,7 @@ object XcfReader {
     private class LayerInfo(
         val name: String, val w: Int, val h: Int, val type: Int, var x: Int = 0, var y: Int = 0,
         var opacity: Float = 1f, var visible: Boolean = true, var mode: LayerMode = LayerMode.Normal, var rawMode: Int? = null,
+        var legacy: Boolean = true, var blendSpace: Int = 0, var compositeSpace: Int = 0, var compositeMode: Int = 0,
         var lockAlpha: Boolean = false, var active: Boolean = false, var group: Boolean = false,
         var applyMask: Boolean = true,
         var text: TextInfo? = null,
@@ -490,7 +464,15 @@ object XcfReader {
                     XcfProps.OPACITY -> info.opacity = (u32() / 255f).coerceIn(0f, 1f)
                     XcfProps.FLOAT_OPACITY -> opacityFloat = buf.float
                     XcfProps.VISIBLE -> info.visible = u32() != 0
-                    XcfProps.MODE -> { val m = u32(); info.rawMode = m; info.mode = XcfProps.read(m) }
+                    XcfProps.MODE -> {
+                        val m = u32()
+                        info.rawMode = m
+                        LayerMode.ofGimp(m).let { (mode, legacy) -> info.mode = mode; info.legacy = legacy }
+                    }
+                    // Negative: "auto" (GIMP saves what auto meant, negated).
+                    XcfProps.BLEND_SPACE -> info.blendSpace = u32().coerceAtLeast(0)
+                    XcfProps.COMPOSITE_SPACE -> info.compositeSpace = u32().coerceAtLeast(0)
+                    XcfProps.COMPOSITE_MODE -> info.compositeMode = u32().coerceAtLeast(0)
                     XcfProps.LOCK_ALPHA -> info.lockAlpha = u32() != 0
                     XcfProps.OFFSETS -> { info.x = u32(); info.y = u32() }
                     XcfProps.GROUP_ITEM -> info.group = true
@@ -517,14 +499,18 @@ object XcfReader {
                 val id = Layer.newId()
                 groups[info.path] = id
                 return Layer(id, info.name.ifEmpty { "Group" }, Bitmaps.blank(1, 1), visible = info.visible,
-                    opacity = info.opacity, mode = info.mode, group = true, parent = parent, expanded = info.expanded,
+                    opacity = info.opacity, mode = info.mode, legacy = info.legacy, blendSpace = info.blendSpace,
+                    compositeSpace = info.compositeSpace, compositeMode = info.compositeMode,
+                    group = true, parent = parent, expanded = info.expanded,
                     xcfMode = info.rawMode) to info.active
             }
             if (w <= 0 || h <= 0) return null
             val bmp = readHierarchy(hierarchy, type, baseType) ?: return null
             val maskBitmap = if (mask != 0L) readMask(mask) else null
             return Layer(Layer.newId(), info.name.ifEmpty { "Layer" }, bmp, info.x, info.y, info.visible,
-                info.opacity, if (info.mode == LayerMode.PassThrough) LayerMode.Normal else info.mode, info.lockAlpha, info.text,
+                info.opacity, if (info.mode == LayerMode.PassThrough) LayerMode.Normal else info.mode,
+                legacy = info.legacy, blendSpace = info.blendSpace, compositeSpace = info.compositeSpace,
+                compositeMode = info.compositeMode, lockAlpha = info.lockAlpha, text = info.text,
                 mask = maskBitmap?.takeIf { it.width == bmp.width && it.height == bmp.height },
                 maskEnabled = info.applyMask, parent = parent, xcfMode = info.rawMode) to info.active
         }

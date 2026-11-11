@@ -147,7 +147,7 @@ object Inspector {
         val layers = JSONArray()
         for (l in d.layers) layers.put(JSONObject()
             .put("name", l.name).put("group", l.group).put("visible", l.visible)
-            .put("opacity", l.opacity.toDouble()).put("mode", l.mode.name)
+            .put("opacity", l.opacity.toDouble()).put("mode", l.mode.name).put("gimpMode", l.gimpMode)
             .put("box", JSONArray(listOf(l.x, l.y, l.x + l.width, l.y + l.height)))
             .put("mask", l.mask != null).put("text", l.text?.text ?: JSONObject.NULL)
             .put("parent", l.parent?.let { p -> d.layer(p)?.name } ?: JSONObject.NULL))
