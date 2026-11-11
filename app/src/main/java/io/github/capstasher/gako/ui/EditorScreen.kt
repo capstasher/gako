@@ -121,13 +121,15 @@ fun EditorScreen(
         BoxWithConstraints(Modifier.fillMaxSize().background(Gako.Ink)) {
             // Side layout when there's width to spare: landscape phones, tablets, unfolded foldables.
             val wide = (maxWidth > maxHeight && maxWidth >= 600.dp) || maxWidth >= 840.dp
+            // Tablets and unfolded foldables keep the Layers dock open, as GIMP does.
+            val tablet = maxWidth >= 1000.dp
             val panelMax = maxHeight * 0.5f
 
             Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
                 if (wide) {
                     Row(Modifier.fillMaxSize()) {
                         SideRail(roots, menu)
-                        if (!modal && menu.path.isNotEmpty()) {
+                        if (!modal && menu.path.isNotEmpty() && !(tablet && menu.path.first() == "layers")) {
                             SideSubmenu(roots, menu, onSearchPick = { vm.startFilter(it.name) })
                         }
                         Column(Modifier.weight(1f).fillMaxHeight()) {
@@ -140,6 +142,10 @@ fun EditorScreen(
                             export != null -> ExportPanel(export, vm, onPickFolder, side)
                             curves != null -> CurvesPanel(curves, vm, side)
                             text != null -> TextPanel(text, vm, side)
+                            tablet && vm.doc != null -> Column(Modifier.width(320.dp).fillMaxHeight().background(Gako.InkRaised)) {
+                                Text("LAYERS", style = EngravedLabel, modifier = Modifier.padding(start = 16.dp, top = 14.dp, bottom = 6.dp))
+                                LayersPanel(vm)
+                            }
                         }
                     }
                 } else {
