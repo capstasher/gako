@@ -245,6 +245,13 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         restoreRecovery()
     }
 
+    /**
+     * Where an image pixel is on the canvas right now (canvas pixels, from its top-left), as the
+     * canvas last laid it out. For tests and tools that need to touch a spot on the image.
+     */
+    @Volatile var docToView: (Float, Float) -> androidx.compose.ui.geometry.Offset = { x, y -> androidx.compose.ui.geometry.Offset(x, y) }
+        internal set
+
     internal fun say(message: String) {
         messageChannel.trySend(message)
     }
@@ -652,7 +659,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun newImage(w: Int, h: Int, fill: Int?) = guardDiscard("A new image") { newImageNow(w, h, fill) }
 
-    private fun newImageNow(w: Int, h: Int, fill: Int?) {
+    /** Without asking about unsaved changes (the New dialog asks first; tests call this). */
+    internal fun newImageNow(w: Int, h: Int, fill: Int?) {
         if (blockedByBusy()) return
         if (w <= 0 || h <= 0 || w.toLong() * h > MAX_PIXELS) { say("That size isn't possible (max ${MAX_PIXELS / 1_000_000} MP)"); return }
         newDocument(DocOps.newImage(w, h, fill), "Untitled")

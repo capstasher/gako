@@ -81,6 +81,15 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
     fun fit(w: Float, h: Float) = min(w / docState.width, h / docState.height) * 0.94f
     fun effective(w: Float, h: Float) = if (scale > 0f) scale else fit(w, h)
     var viewSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
+    // The inverse of toDoc below, for tests and tools: image pixel → canvas pixel (reads the view state when called).
+    androidx.compose.runtime.SideEffect {
+        vm.docToView = { x, y ->
+            val w = viewSize.width.toFloat()
+            val h = viewSize.height.toFloat()
+            val s = effective(w, h)
+            rotate(Offset((x - docState.width / 2f) * s, (y - docState.height / 2f) * s), angle) + pan + Offset(w / 2, h / 2)
+        }
+    }
     // The unsnapped angle during a twist, so snapping to straight doesn't stick.
     var rawAngle by remember { mutableFloatStateOf(0f) }
 
@@ -132,6 +141,8 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
                     val toolDrags = !modal && !fingerOnly && tool != Tool.Navigate && tool !in tapTools && vm.busy == null
                     val downPos = first.position
                     val downTime = first.uptimeMillis
+                    // When the finger came down by this device's clock (events can carry timestamps on another base).
+                    val downClock = SystemClock.uptimeMillis()
                     val slop = viewConfiguration.touchSlop
                     var multi = false
                     var started = false
@@ -160,7 +171,7 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
                         val waiting = canPick && !moved && !multi && !picked
                         val ev = if (waiting) {
                             // A resting finger still sends tiny moves: wait out what's left of the hold either way.
-                            val left = LONG_PRESS_MS - (SystemClock.uptimeMillis() - downTime)
+                            val left = LONG_PRESS_MS - (SystemClock.uptimeMillis() - downClock)
                             if (left <= 0) { pickHere(); null } else withTimeoutOrNull(left) { awaitPointerEvent() } ?: run { pickHere(); null }
                         } else awaitPointerEvent()
                         if (ev == null) continue

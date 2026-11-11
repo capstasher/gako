@@ -78,10 +78,23 @@ native/bridge/          C bridge over GEGL: list/describe/apply operations, boun
 `native/build-native.sh android-x86_64` + `native/stage-jnilibs.sh android-x86_64 x86_64` build the
 engine for the emulator; then `gradle :app:assembleDebug -Pgako.abis=x86_64`.
 `gradle :app:testDebugUnitTest` runs the JVM tests (curves, levels, fuzzy select, by colour, layer-tree moves).
-`gradle :app:connectedDebugAndroidTest -Pgako.abis=x86_64` runs the instrumented tests on a device or
-emulator (`app/src/androidTest`): XCF/PSD/ORA round trips (structure, pixels, masks, paths, kept GIMP
-modes), Warp (undo data, erase, cancel) and Straighten. Use a host-GPU emulator (`-gpu host`); the
-SwiftShader one can crash.
+Instrumented tests (`app/src/androidTest`) run on a device or emulator: XCF/PSD/ORA round trips
+(structure, pixels, masks, paths, kept GIMP modes), Warp, Straighten, layer transforms, and `UiTest`,
+which drives the real screens (buttons found by label, the canvas touched at image pixels through
+`EditorViewModel.docToView`, the editor's state checked directly). Use a host-GPU emulator
+(`-gpu host`); the SwiftShader one can crash.
+
+### The fast loop
+
+- **Build with the Gradle daemon** (don't pass `--no-daemon`): a one-file rebuild drops from ~10 s to ~3 s.
+- **`scripts/devtest.sh [Class[#test] …]`** installs the app and test APKs and runs the tests with
+  `am instrument` (~13 s for all of them). Unlike `connectedDebugAndroidTest` it doesn't uninstall the
+  app afterwards, so its data and test files stay.
+- **`scripts/ui.py`** drives the app over adb by what's on screen: `tap "Layers"`, `wait "Saved"`,
+  `text`, `ls`, `img 120 80` / `drag` / `path` at image pixels, `open photo.jpg`, `shot name`;
+  join commands with `+`. No coordinates to guess.
+- **`scripts/stress.sh [events] [seed]`** runs the monkey (touch, drag and pinch only) and prints any
+  crash or freeze with its stack.
 
 Stage 3 was tested on an Android 15 x86_64 emulator (Pixel 7 profile), driving it with
 `adb shell input` and screenshots, plus:
