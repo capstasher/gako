@@ -304,7 +304,11 @@ class ToolInput(private val vm: EditorViewModel) {
                 transformAtDown = t
                 mode = hitTransform(t, x, y, tol)
             }
-            Tool.Paths -> path.down(x, y, tol)
+            Tool.Paths -> {
+                // A point of another path or stroke: switch to it (then the drag reshapes it).
+                if (!path.hits(x, y, tol)) vm.otherPathAt(x, y, tol)?.let { (pi, si) -> vm.editPath(pi, si) }
+                path.down(x, y, tol)
+            }
             Tool.Warp -> beginWarp(d, x, y)
             Tool.Measure -> {
                 val m = measure
@@ -510,7 +514,11 @@ class ToolInput(private val vm: EditorViewModel) {
             Tool.BucketFill -> bucketFill(d, x, y)
             Tool.ColorPicker -> pick(d, x, y)
             Tool.Text -> vm.startText(x.roundToInt(), y.roundToInt())
-            Tool.Paths -> if (!path.tap(x, y, tol)) vm.say("The path is closed: tap its name ▾ for a new path or stroke")
+            Tool.Paths -> {
+                val other = if (!path.hits(x, y, tol)) vm.otherPathAt(x, y, tol) else null
+                if (other != null) vm.editPath(other.first, other.second)
+                else if (!path.tap(x, y, tol)) vm.say("The path is closed: tap its name ▾ for a new path or stroke")
+            }
             Tool.Transform -> Unit
             else -> Unit
         }

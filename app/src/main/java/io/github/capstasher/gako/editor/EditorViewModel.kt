@@ -789,6 +789,23 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun newPath() = editPath(doc?.paths?.size ?: 0)
 
+    /** The path and stroke with an anchor at ([x], [y]), other than the one being edited. */
+    fun otherPathAt(x: Float, y: Float, tol: Float): Pair<Int, Int>? {
+        val paths = doc?.paths ?: return null
+        var best: Pair<Int, Int>? = null
+        var bestD = tol
+        paths.forEachIndexed { pi, vp ->
+            vp.strokes.forEachIndexed { si, st ->
+                if (pi == pathIndex && si == strokeIndex) return@forEachIndexed
+                for (a in 0 until st.anchors) {
+                    val d = kotlin.math.hypot(st.points[a * 6 + 2] - x, st.points[a * 6 + 3] - y)
+                    if (d < bestD) { bestD = d; best = pi to si }
+                }
+            }
+        }
+        return best
+    }
+
     /** Another stroke in the current path (for holes, or shapes in several pieces). */
     fun newStroke() {
         val p = activePath ?: run { say("Draw the path's first stroke first"); return }

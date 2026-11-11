@@ -81,6 +81,9 @@ class PathEditor {
         return null
     }
 
+    /** Whether ([x], [y]) is on one of this path's points or handles. */
+    fun hits(x: Float, y: Float, tol: Float) = hit(x, y, tol) != null
+
     fun down(x: Float, y: Float, tol: Float) {
         down = PointF(x, y)
         start = points
