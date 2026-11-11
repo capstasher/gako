@@ -132,6 +132,11 @@ data class Layer(
     val compositeMode: Int = 0,
     /** GIMP 3 layer effects from an XCF, first applied first; GAKO applies them when it opens the file. */
     val effects: List<LayerEffect> = emptyList(),
+    /**
+     * GIMP's Quick Mask: the selection as an opaque grey layer (white selected) that any tool can
+     * paint or filter, shown as a red tint; never composited or saved (see [DocState.forFiles]).
+     */
+    val quickMask: Boolean = false,
 ) {
     /** GIMP's number for how this layer blends. */
     val gimpMode: Int get() = when {
@@ -412,6 +417,16 @@ data class DocState(
     val newLayerLegacy: Boolean get() = (active?.takeIf { !it.group } ?: layers.lastOrNull { !it.group })?.legacy ?: true
 
     fun replace(layer: Layer) = copy(layers = layers.map { if (it.id == layer.id) layer else it })
+
+    /** The Quick Mask layer, while Quick Mask is on. */
+    val quickMask: Layer? get() = layers.lastOrNull { it.quickMask }
+
+    /** What goes into files and the composite: everything but the Quick Mask. */
+    fun forFiles(): DocState {
+        if (layers.none { it.quickMask }) return this
+        val kept = layers.filterNot { it.quickMask }
+        return copy(layers = kept, activeId = kept.firstOrNull { it.id == activeId }?.id ?: kept.lastOrNull()?.id ?: activeId)
+    }
 
     fun bytes(): Long = layers.sumOf { it.bitmap.allocationByteCount.toLong() } +
         (selection?.mask?.allocationByteCount?.toLong() ?: 0L)

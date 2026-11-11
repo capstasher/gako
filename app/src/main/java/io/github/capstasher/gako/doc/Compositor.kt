@@ -25,7 +25,8 @@ object Compositor {
      * [layers] composited the way GIMP does into a [w]×[h] bitmap showing the canvas from ([x], [y]),
      * or null if the native engine isn't there (then callers fall back to the Canvas).
      */
-    fun composite(layers: List<Layer>, x: Int, y: Int, w: Int, h: Int, into: Bitmap? = null, background: Int? = null): Bitmap? {
+    fun composite(all: List<Layer>, x: Int, y: Int, w: Int, h: Int, into: Bitmap? = null, background: Int? = null): Bitmap? {
+        val layers = if (all.any { it.quickMask }) all.filterNot { it.quickMask } else all
         val out = into ?: Bitmaps.blank(w, h)
         val index = HashMap<Long, Int>(layers.size * 2)
         layers.forEachIndexed { i, l -> index[l.id] = i }
@@ -53,7 +54,7 @@ object Compositor {
 
     /** Whether the quick Canvas drawing shows [doc] exactly as GIMP would (only plain sRGB Normal layers). */
     fun canvasIsExact(doc: DocState, layers: List<Layer> = doc.layers): Boolean = layers.all { l ->
-        !l.visible || when {
+        !l.visible || l.quickMask || when {
             l.group -> l.gimpMode == 0 || (l.mode == LayerMode.PassThrough && l.opacity >= 1f)
             else -> l.gimpMode == 0 && l.activeMask == null
         }
@@ -63,13 +64,25 @@ object Compositor {
         alpha = (layer.opacity * 255).roundToInt().coerceIn(0, 255)
         blendMode = if (layer.mode == LayerMode.PassThrough && !layer.group) BlendMode.SRC_OVER else layer.mode.blend
         isFilterBitmap = filter
+        if (layer.quickMask) {
+            blendMode = BlendMode.SRC_OVER
+            colorFilter = quickMaskTint
+        }
     }
+
+    /** GIMP's Quick Mask look: red at half strength where the grey is dark (not selected). */
+    private val quickMaskTint = android.graphics.ColorMatrixColorFilter(floatArrayOf(
+        0f, 0f, 0f, 0f, 255f,
+        0f, 0f, 0f, 0f, 0f,
+        0f, 0f, 0f, 0f, 0f,
+        -0.5f, 0f, 0f, 0f, 127.5f,
+    ))
 
     /** Draws every visible layer onto [canvas] in canvas coordinates, isolated from what's below. */
     fun drawLayers(canvas: Canvas, doc: DocState, layers: List<Layer> = doc.layers) {
         val bounds = RectF(0f, 0f, doc.width.toFloat(), doc.height.toFloat())
         val save = canvas.saveLayer(bounds, null)
-        drawTree(canvas, layers, bounds) { c, l -> drawLayer(c, l, layerPaint(l)) }
+        drawTree(canvas, layers.filterNot { it.quickMask }, bounds) { c, l -> drawLayer(c, l, layerPaint(l)) }
         canvas.restoreToCount(save)
     }
 

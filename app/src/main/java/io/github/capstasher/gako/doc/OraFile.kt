@@ -35,7 +35,8 @@ object OraFile {
     private fun opFor(mode: LayerMode) = modeNames.firstOrNull { it.first == mode }?.second ?: "svg:src-over"
     private fun modeFor(op: String?) = modeNames.firstOrNull { it.second == op }?.first ?: LayerMode.Normal
 
-    fun write(doc: DocState, out: OutputStream) {
+    fun write(all: DocState, out: OutputStream) {
+        val doc = all.forFiles()
         val zip = ZipOutputStream(out.buffered(256 * 1024))
         val mime = "image/openraster".toByteArray(StandardCharsets.US_ASCII)
         zip.putNextEntry(ZipEntry("mimetype").apply {

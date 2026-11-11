@@ -42,7 +42,8 @@ operation) for Android, and puts a touch interface on top designed for one hand 
 - Select: rectangle (optionally rounded), ellipse, free (lasso), selection brush (paint it on), fuzzy, by colour,
   **foreground select** (draw roughly around an object, paint over it, and GEGL's matting finds its edge, as in GIMP);
   replace/add/subtract/intersect, feather;
-  Select menu: all, none, invert, feather, grow, shrink, border, from layer alpha
+  Select menu: all, none, invert, feather, grow, shrink, border, from layer alpha;
+  **Quick Mask** (Shift+Q): the selection as a red tint that any brush, gradient or filter edits
 - Transform: move, unified transform (scale/rotate/flip with handles, or perspective by dragging corners),
   crop (with aspect presets), warp (push, grow, shrink, swirl, erase, smooth: GIMP's Warp Transform),
   measure (length and angle; Straighten levels a tilted photo, cropping away the corners if you like)

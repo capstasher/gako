@@ -137,6 +137,18 @@ class FileRoundTripTest {
         java.io.File(ctx.targetContext.cacheDir, "fidelity-gako.xcf").writeBytes(bytes)
     }
 
+    @Test fun quickMaskIsNeverSaved() {
+        val doc = document()
+        val qm = Layer(Layer.newId(), "Quick Mask", io.github.capstasher.gako.doc.Bitmaps.blank(64, 48, android.graphics.Color.WHITE),
+            lockAlpha = true, quickMask = true)
+        val on = doc.copy(layers = doc.layers + qm, activeId = qm.id)
+        val xcf = XcfReader.read(ByteArrayInputStream(ByteArrayOutputStream().also { XcfWriter.write(on, it) }.toByteArray()))
+        val ora = OraFile.read(ByteArrayInputStream(ByteArrayOutputStream().also { OraFile.write(on, it) }.toByteArray()))
+        val psd = PsdReader.read(ByteArrayInputStream(ByteArrayOutputStream().also { PsdWriter.write(on, it) }.toByteArray()))
+        for (back in listOf(xcf, ora, psd)) assertEquals(doc.layers.map { it.name }, back.layers.map { it.name })
+        assertEquals(0, maxDiff(io.github.capstasher.gako.doc.Compositor.flatten(doc), io.github.capstasher.gako.doc.Compositor.flatten(on)))
+    }
+
     @Test fun psdKeepsLayersGroupsAndMasks() {
         val doc = document()
         val bytes = ByteArrayOutputStream().also { PsdWriter.write(doc, it) }.toByteArray()

@@ -74,7 +74,13 @@ fun LayersPanel(vm: EditorViewModel) {
     }
     val active = d.active
     Column(Modifier.fillMaxWidth()) {
-        if (active != null) {
+        if (active != null && active.quickMask) {
+            Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Quick Mask: painting edits the selection", style = MaterialTheme.typography.bodyMedium,
+                    color = Gako.Parchment, modifier = Modifier.weight(1f))
+                TextButton(onClick = vm::toggleQuickMask) { Text("End", color = Gako.Gold) }
+            }
+        } else if (active != null) {
             Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 ModePicker(active, onPick = { vm.setLayerMode(it) }, onLegacy = { vm.setLayerLegacy(it) })
                 Slider(
@@ -94,7 +100,7 @@ fun LayersPanel(vm: EditorViewModel) {
         }
         HorizontalDivider(color = Gako.InkHigh)
         val byId = io.github.capstasher.gako.doc.Tree.byId(d.layers)
-        val rows = d.layers.asReversed().filter { !io.github.capstasher.gako.doc.Tree.collapsedAway(it, byId) }
+        val rows = d.layers.asReversed().filter { !it.quickMask && !io.github.capstasher.gako.doc.Tree.collapsedAway(it, byId) }
         LazyColumn(Modifier.weight(1f, fill = false).fillMaxWidth()) {
             items(rows, key = { it.id }) { layer ->
                 LayerRow(vm, layer, layer.id == d.activeId, io.github.capstasher.gako.doc.Tree.depth(layer, byId),

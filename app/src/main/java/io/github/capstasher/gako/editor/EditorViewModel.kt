@@ -189,7 +189,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Masks are grey: paint with a colour's brightness. */
     internal fun paintColor(c: Int): Int {
-        if (!editingMask) return c
+        if (!editingMask && doc?.active?.quickMask != true) return c
         val l = (0.2126 * Color.red(c) + 0.7152 * Color.green(c) + 0.0722 * Color.blue(c)).roundToInt().coerceIn(0, 255)
         return Color.rgb(l, l, l)
     }
@@ -323,6 +323,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                 else -> false
             }
         }
+        if (code == android.view.KeyEvent.KEYCODE_Q && shift) { toggleQuickMask(); return true }   // GIMP's Shift+Q
         val t: Tool? = when (code) {
             android.view.KeyEvent.KEYCODE_P -> Tool.Paintbrush
             android.view.KeyEvent.KEYCODE_N -> Tool.Pencil
@@ -1260,6 +1261,45 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     fun cropToSelection() {
         val s = doc?.selection ?: run { say("Select something first"); return }
         cropTo(s.bounds)
+    }
+
+    // ---- GIMP's Quick Mask
+
+    /** The layer that was active before Quick Mask, to go back to. */
+    private var beforeQuickMask: Long? = null
+
+    val quickMaskOn: Boolean get() = doc?.quickMask != null
+
+    /**
+     * Select > Toggle Quick Mask (Shift+Q): the selection becomes a grey layer that any tool or filter
+     * edits (white selected; shown as a red tint where not), and back. Both are undo steps.
+     */
+    fun toggleQuickMask() {
+        val d = doc ?: return
+        if (blockedByBusy()) return
+        endInteractions()
+        val qm = d.quickMask
+        if (qm == null) {
+            val grey = Bitmaps.blank(d.width, d.height, Color.BLACK)
+            d.selection?.let { sel ->
+                val bytes = Selections.bytesOf(sel.mask)
+                val px = IntArray(bytes.size) { val v = bytes[it].toInt() and 255; (0xFF shl 24) or (v * 0x010101) }
+                grey.setPixels(px, 0, d.width, 0, 0, d.width, d.height)
+            }
+            val layer = Layer(Layer.newId(), "Quick Mask", grey, lockAlpha = true, quickMask = true)
+            beforeQuickMask = d.activeId
+            change("Quick Mask", d.copy(layers = d.layers + layer, activeId = layer.id, selection = null))
+        } else {
+            val mask = Bitmaps.blank(d.width, d.height, Color.BLACK).also {
+                // The grey where it lies on the canvas (it can have been moved).
+                android.graphics.Canvas(it).drawBitmap(qm.bitmap, qm.x.toFloat(), qm.y.toFloat(), null)
+            }
+            val all = IntArray(d.width * d.height).also { mask.getPixels(it, 0, d.width, 0, 0, d.width, d.height) }
+            val sel = Selections.make(Selections.maskFromBytes(ByteArray(all.size) { (all[it] shr 16).toByte() }, d.width, d.height))
+            val rest = d.layers.filterNot { it.quickMask }
+            val back = beforeQuickMask?.takeIf { id -> rest.any { it.id == id } } ?: rest.lastOrNull { !it.group }?.id ?: d.activeId
+            change("Quick Mask Off", d.copy(layers = rest, activeId = back, selection = sel))
+        }
     }
 
     // ---- guides (GIMP's Image > Guides)

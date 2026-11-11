@@ -647,6 +647,18 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
                     .padding(horizontal = 10.dp, vertical = 4.dp),
             )
         }
+        // GIMP's Quick Mask button: on while the selection is being painted; tap to turn it off.
+        if (vm.quickMaskOn) {
+            androidx.compose.material3.Text(
+                "Quick Mask · tap to end",
+                style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+                color = Gako.Parchment,
+                modifier = Modifier.align(androidx.compose.ui.Alignment.TopStart).padding(10.dp)
+                    .background(androidx.compose.ui.graphics.Color(0xCC8B1A1A), androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+                    .clickable { vm.toggleQuickMask() }
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
+            )
+        }
     }
 }
 
