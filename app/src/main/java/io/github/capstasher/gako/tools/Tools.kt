@@ -13,6 +13,7 @@ import androidx.compose.material.icons.outlined.CropFree
 import androidx.compose.material.icons.outlined.Draw
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.FormatColorFill
+import androidx.compose.material.icons.outlined.FormatPaint
 import androidx.compose.material.icons.outlined.Gesture
 import androidx.compose.material.icons.outlined.Healing
 import androidx.compose.material.icons.outlined.Gradient
@@ -37,6 +38,7 @@ enum class Tool(val label: String, val icon: ImageVector, val group: ToolGroup, 
     RectSelect("Rectangle Select", Icons.Outlined.Rectangle, ToolGroup.Select, "Drag a rectangle"),
     EllipseSelect("Ellipse Select", Icons.Outlined.PanoramaFishEye, ToolGroup.Select, "Drag an ellipse"),
     FreeSelect("Free Select", Icons.Outlined.Gesture, ToolGroup.Select, "Draw around the area"),
+    SelectBrush("Selection Brush", Icons.Outlined.FormatPaint, ToolGroup.Select, "Paint over what you want selected"),
     FuzzySelect("Fuzzy Select", Icons.Outlined.AutoFixNormal, ToolGroup.Select, "Tap a region of similar colour"),
     ColorSelect("Select by Colour", Icons.Outlined.InvertColors, ToolGroup.Select, "Tap a colour to select it everywhere"),
     Paths("Paths", Icons.Outlined.Polyline, ToolGroup.Select,
@@ -63,6 +65,7 @@ enum class Tool(val label: String, val icon: ImageVector, val group: ToolGroup, 
         RectSelect -> "Rectangle"
         EllipseSelect -> "Ellipse"
         FreeSelect -> "Lasso"
+        SelectBrush -> "Sel. Brush"
         FuzzySelect -> "Fuzzy"
         ColorSelect -> "By Colour"
         Paintbrush -> "Brush"

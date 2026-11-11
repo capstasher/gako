@@ -30,7 +30,8 @@ operation) for Android, and puts a touch interface on top designed for one hand 
   round, square or calligraphy brushes with angle, stroke smoothing, mirror symmetry (↔ ↕ ✚), stylus pressure
 - Paths: Bézier paths by tapping (corners) and dragging (curves); selection from path, stroke, fill;
   saved in XCF, so they open as paths in GIMP and back
-- Select: rectangle (optionally rounded), ellipse, free (lasso), fuzzy, by colour; replace/add/subtract/intersect, feather;
+- Select: rectangle (optionally rounded), ellipse, free (lasso), selection brush (paint it on), fuzzy, by colour;
+  replace/add/subtract/intersect, feather;
   Select menu: all, none, invert, feather, grow, shrink, border, from layer alpha
 - Transform: move, unified transform (scale/rotate/flip with handles, or perspective by dragging corners),
   crop (with aspect presets)
