@@ -97,6 +97,7 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
                     // With a pen around, fingers navigate and only the pen paints (palm rejection).
                     val isPen = first.type == PointerType.Stylus || first.type == PointerType.Eraser
                     if (isPen) vm.stylusSeen = true
+                    vm.input.toolOverride = if (first.type == PointerType.Eraser && vm.tool.paints) Tool.Eraser else null
                     val fingerOnly = vm.stylusSeen && !isPen
                     val toolDrags = !modal && !fingerOnly && tool != Tool.Navigate && tool !in tapTools && vm.busy == null
                     val downPos = first.position
