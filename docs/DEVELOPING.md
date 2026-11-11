@@ -135,7 +135,7 @@ supports, so other machines get their own best setup.
   time, so reinstalls elsewhere and emulator snapshots are noticed), never uninstalls, and waits for
   an emulator that's restarting.
 - **`scripts/ui.py`** drives the app over adb by what's on screen: `tap "Layers"`, `wait "Saved"`,
-  `text`, `ls`, `state`, `img 120 80` / `drag` / `path` at image pixels, `color 120 80` (the colour the
+  `text`, `ls`, `state` (incl. whether GIMP's exact composite is shown and current), `img 120 80` / `drag` / `path` at image pixels, `color 120 80` (the colour the
   screen shows there), `open photo.jpg`, `shot name`; join commands with `+`; `-s SERIAL` (or `$ANDROID_SERIAL`) picks a device. Debug builds
   answer from an inspector inside the app (`app/src/debug/…/debug/Inspector.kt`, abstract socket
   `gako-inspector`): ~30 ms a look instead of uiautomator's ~2.3 s, image pixels mapped at any zoom
