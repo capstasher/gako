@@ -116,6 +116,58 @@ class PaintStroke(
         }
     }
 
+    // ---- Heal: the source's detail with the destination's own tone (GIMP's heal, approximately):
+    // result = source + blur(destination) − blur(source), worked out tile by tile.
+    private val healSource: Bitmap? = if (tool == Tool.Heal) Bitmap.createBitmap(bmp.width, bmp.height, Bitmap.Config.ARGB_8888) else null
+    private val healDone: BooleanArray? = if (tool == Tool.Heal) BooleanArray(blurTilesX * ((bmp.height + blurTile - 1) / blurTile)) else null
+
+    private fun region(r: Rect): Bitmap = Bitmaps.blank(r.width(), r.height()).also {
+        Canvas(it).drawBitmap(before, -r.left.toFloat(), -r.top.toFloat(), null)
+    }
+
+    private fun boxBlur(b: Bitmap, levels: Int): Bitmap {
+        var p = b
+        repeat(levels) { p = Bitmap.createScaledBitmap(p, max(1, p.width / 2), max(1, p.height / 2), true) }
+        repeat(levels) { p = Bitmap.createScaledBitmap(p, p.width * 2, p.height * 2, true) }
+        return if (p.width == b.width && p.height == b.height) p else Bitmap.createScaledBitmap(p, b.width, b.height, true)
+    }
+
+    private fun ensureHealed(r: Rect) {
+        val out = healSource ?: return
+        val done = healDone ?: return
+        val (ox, oy) = cloneOffset ?: return
+        val dx = ox.roundToInt()
+        val dy = oy.roundToInt()
+        val levels = 4                         // ~16 px: the scale of "tone" carried over
+        val pad = 64
+        for (ty in max(0, r.top) / blurTile..(min(bmp.height, r.bottom) - 1) / blurTile) {
+            for (tx in max(0, r.left) / blurTile..(min(bmp.width, r.right) - 1) / blurTile) {
+                val i = ty * blurTilesX + tx
+                if (i !in done.indices || done[i]) continue
+                done[i] = true
+                val t = Rect(tx * blurTile, ty * blurTile, min(bmp.width, (tx + 1) * blurTile), min(bmp.height, (ty + 1) * blurTile))
+                val w = t.width()
+                val h = t.height()
+                val area = Rect(t).apply { inset(-pad, -pad) }
+                val dstBlur = boxBlur(region(area), levels)
+                val srcBlur = boxBlur(region(Rect(area).apply { offset(dx, dy) }), levels)
+                val src = region(Rect(t).apply { offset(dx, dy) })
+                val a = IntArray(w * h); val bd = IntArray(w * h); val bs = IntArray(w * h)
+                src.getPixels(a, 0, w, 0, 0, w, h)
+                dstBlur.getPixels(bd, 0, w, pad, pad, w, h)
+                srcBlur.getPixels(bs, 0, w, pad, pad, w, h)
+                for (k in a.indices) {
+                    val s = a[k]; val d = bd[k]; val q = bs[k]
+                    val rr = (((s shr 16) and 0xFF) + ((d shr 16) and 0xFF) - ((q shr 16) and 0xFF)).coerceIn(0, 255)
+                    val gg = (((s shr 8) and 0xFF) + ((d shr 8) and 0xFF) - ((q shr 8) and 0xFF)).coerceIn(0, 255)
+                    val bb = ((s and 0xFF) + (d and 0xFF) - (q and 0xFF)).coerceIn(0, 255)
+                    a[k] = (s and 0xFF000000.toInt()) or (rr shl 16) or (gg shl 8) or bb
+                }
+                out.setPixels(a, 0, w, t.left, t.top, w, h)
+            }
+        }
+    }
+
     // ---- Smudge: carry the colour under the brush along the stroke.
     private var accum: Bitmap? = null
     private val smudgeRate = 0.3f + options.strength * 0.65f
@@ -210,6 +262,7 @@ class PaintStroke(
         if (dirty.isEmpty || tool == Tool.Smudge) return
         total.union(dirty)
         if (tool == Tool.Blur) ensureBlurred(dirty)
+        if (tool == Tool.Heal) ensureHealed(dirty)
         val c = layerCanvas
         c.save()
         c.clipRect(dirty)
@@ -227,6 +280,10 @@ class PaintStroke(
             }
             Tool.Blur -> {
                 c.drawBitmap(blurSource!!, 0f, 0f, null)
+                Bitmaps.maskIn(c, mask)
+            }
+            Tool.Heal -> {
+                c.drawBitmap(healSource!!, 0f, 0f, null)
                 Bitmaps.maskIn(c, mask)
             }
             else -> c.drawBitmap(mask, 0f, 0f, maskTint)

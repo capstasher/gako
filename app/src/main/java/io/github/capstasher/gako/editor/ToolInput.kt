@@ -189,7 +189,7 @@ class ToolInput(private val vm: EditorViewModel) {
         down = PointF(x, y)
         lastPressure = pressure
         when (tool) {
-            Tool.Paintbrush, Tool.Pencil, Tool.Airbrush, Tool.Eraser, Tool.DodgeBurn, Tool.Clone, Tool.Smudge, Tool.Blur -> beginStroke(d, x, y, pressure)
+            Tool.Paintbrush, Tool.Pencil, Tool.Airbrush, Tool.Eraser, Tool.DodgeBurn, Tool.Clone, Tool.Heal, Tool.Smudge, Tool.Blur -> beginStroke(d, x, y, pressure)
             Tool.RectSelect, Tool.EllipseSelect -> dragRect = RectF(x, y, x, y)
             Tool.FreeSelect -> {
                 lassoPoints = arrayListOf(PointF(x, y))
@@ -216,7 +216,7 @@ class ToolInput(private val vm: EditorViewModel) {
         val d = doc ?: return
         lastPressure = pressure
         when (tool) {
-            Tool.Paintbrush, Tool.Pencil, Tool.Airbrush, Tool.Eraser, Tool.DodgeBurn, Tool.Clone, Tool.Smudge, Tool.Blur -> {
+            Tool.Paintbrush, Tool.Pencil, Tool.Airbrush, Tool.Eraser, Tool.DodgeBurn, Tool.Clone, Tool.Heal, Tool.Smudge, Tool.Blur -> {
                 stroke?.let { it.moveTo(x, y, pressure); vm.pixelsChanged() }
             }
             Tool.RectSelect, Tool.EllipseSelect -> dragRect = RectF(min(down.x, x), min(down.y, y), max(down.x, x), max(down.y, y))
@@ -238,7 +238,7 @@ class ToolInput(private val vm: EditorViewModel) {
         val d = doc ?: return
         airJob?.cancel()
         when (tool) {
-            Tool.Paintbrush, Tool.Pencil, Tool.Airbrush, Tool.Eraser, Tool.DodgeBurn, Tool.Clone, Tool.Smudge, Tool.Blur -> {
+            Tool.Paintbrush, Tool.Pencil, Tool.Airbrush, Tool.Eraser, Tool.DodgeBurn, Tool.Clone, Tool.Heal, Tool.Smudge, Tool.Blur -> {
                 val s = stroke ?: return
                 stroke = null
                 s.finish(strokeLabel)?.let { vm.record(if (strokeOnMask) it.forMask() else it) }
@@ -307,7 +307,7 @@ class ToolInput(private val vm: EditorViewModel) {
                 beginStroke(d, x, y, 1f)
                 up()
             }
-            Tool.Clone -> {
+            Tool.Clone, Tool.Heal -> {
                 if (settingCloneSource || cloneSource == null) setCloneSource(x, y)
                 else { beginStroke(d, x, y, 1f); up() }
             }
@@ -326,7 +326,7 @@ class ToolInput(private val vm: EditorViewModel) {
     private fun beginStroke(d: DocState, x: Float, y: Float, pressure: Float) {
         val layer = vm.targetOf(d) ?: return
         if (!layer.visible) { vm.say("“${layer.name}” is hidden"); return }
-        if (tool == Tool.Clone) {
+        if (tool.cloning) {
             if (settingCloneSource || cloneSource == null) { setCloneSource(x, y); return }
             val src = cloneSource!!
             if (cloneOffset == null || !options.cloneAligned) cloneOffset = PointF(src.x - x, src.y - y)

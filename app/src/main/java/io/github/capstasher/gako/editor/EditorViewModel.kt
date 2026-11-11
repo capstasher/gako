@@ -256,7 +256,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             android.view.KeyEvent.KEYCODE_R -> Tool.RectSelect
             android.view.KeyEvent.KEYCODE_F -> Tool.FreeSelect
             android.view.KeyEvent.KEYCODE_U -> Tool.FuzzySelect
-            android.view.KeyEvent.KEYCODE_H -> Tool.Navigate
+            android.view.KeyEvent.KEYCODE_H -> if (shift) Tool.Heal else Tool.Navigate
             else -> null
         }
         if (t != null) { selectTool(t); return true }

@@ -87,7 +87,7 @@ fun ToolOptionsBar(vm: EditorViewModel) {
     val threshold = NumOption("threshold", "Threshold", o.threshold.toFloat(), 0f, 255f, 1f, { "${it.roundToInt()}" }) { v -> set { it.copy(threshold = v.roundToInt()) } }
 
     val numbers: List<NumOption> = when (tool) {
-        Tool.Paintbrush, Tool.Eraser, Tool.Clone -> listOf(size, opacity, hardness)
+        Tool.Paintbrush, Tool.Eraser, Tool.Clone, Tool.Heal -> listOf(size, opacity, hardness)
         Tool.Pencil -> listOf(size, opacity)
         Tool.Airbrush -> listOf(size, opacity, rate)
         Tool.DodgeBurn -> listOf(size, exposure, hardness)
@@ -149,7 +149,7 @@ fun ToolOptionsBar(vm: EditorViewModel) {
                     OptChip("Dodge", !o.burn) { set { it.copy(burn = false) } }
                     OptChip("Burn", o.burn) { set { it.copy(burn = true) } }
                 }
-                Tool.Clone -> {
+                Tool.Clone, Tool.Heal -> {
                     OptChip(if (vm.input.cloneSource == null) "Set source…" else "New source", vm.input.settingCloneSource) {
                         vm.input.settingCloneSource = !vm.input.settingCloneSource
                     }

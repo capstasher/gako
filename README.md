@@ -23,7 +23,7 @@ operation) for Android, and puts a touch interface on top designed for one hand 
 - Image: canvas size (with anchor), scale image, crop to selection / content, rotate, flip
 
 **Tools** (one finger uses the tool, two fingers always pan and zoom)
-- Paint: paintbrush, pencil, airbrush, eraser, clone, smudge, blur, dodge/burn, bucket fill, gradient
+- Paint: paintbrush, pencil, airbrush, eraser, clone, heal, smudge, blur, dodge/burn, bucket fill, gradient
   (linear/radial/mirrored, FG→BG or FG→transparent), text (re-editable), colour picker; stylus pressure
 - Select: rectangle, ellipse, free (lasso), fuzzy, by colour; replace/add/subtract/intersect, feather;
   Select menu: all, none, invert, feather, grow, shrink, border, from layer alpha
