@@ -35,6 +35,9 @@ class PaintStroke(
     private val options: ToolOptions,
     /** Clone: where the source is relative to the brush, in pixels. */
     private val cloneOffset: Pair<Float, Float>? = null,
+    /** Symmetry axes in canvas coordinates (x of the vertical axis, y of the horizontal one). */
+    private val mirrorX: Float? = null,
+    private val mirrorY: Float? = null,
 ) {
     private val bmp: Bitmap = layer.bitmap
     private val before: Bitmap = bmp.copy(Bitmap.Config.ARGB_8888, false)
@@ -260,7 +263,21 @@ class PaintStroke(
         render(dirty)
     }
 
+    // Symmetry, in layer coordinates; tools that copy pixels around don't mirror.
+    private val mirrorable = tool != Tool.Smudge && tool != Tool.Clone && tool != Tool.Heal
+    private val axisX = mirrorX?.takeIf { mirrorable }?.minus(layer.x)
+    private val axisY = mirrorY?.takeIf { mirrorable }?.minus(layer.y)
+
     private fun stamp(x: Float, y: Float, pressure: Float, dirty: Rect) {
+        stampOne(x, y, pressure, dirty)
+        val ax = axisX
+        val ay = axisY
+        if (ax != null) stampOne(2 * ax - x, y, pressure, dirty)
+        if (ay != null) stampOne(x, 2 * ay - y, pressure, dirty)
+        if (ax != null && ay != null) stampOne(2 * ax - x, 2 * ay - y, pressure, dirty)
+    }
+
+    private fun stampOne(x: Float, y: Float, pressure: Float, dirty: Rect) {
         if (tool == Tool.Smudge) { smudgeDab(x, y, dirty); return }
         val size = baseSize * pressure.coerceIn(0.1f, 2f)
         val r = size / 2f
