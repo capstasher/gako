@@ -47,7 +47,21 @@ import kotlin.math.sin
 @RunWith(AndroidJUnit4::class)
 class UiTest {
 
-    @get:Rule val rule = createAndroidComposeRule<MainActivity>()
+    val rule = createAndroidComposeRule<MainActivity>()
+
+    /**
+     * Each test starts from a clean app: drop the image the previous test's app autosaved, which
+     * the new one would otherwise restore (and draw) before the test replaces it.
+     */
+    @get:Rule val chain: org.junit.rules.RuleChain = org.junit.rules.RuleChain
+        .outerRule(object : org.junit.rules.ExternalResource() {
+            override fun before() {
+                val files = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext.filesDir
+                java.io.File(files, "recovery.xcf").delete()
+                java.io.File(files, "recovery.name").delete()
+            }
+        })
+        .around(rule)
 
     private val vm: EditorViewModel get() = ViewModelProvider(rule.activity)[EditorViewModel::class.java]
 
