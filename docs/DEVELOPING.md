@@ -76,7 +76,11 @@ native/bridge/          C bridge over GEGL: list/describe/apply operations, boun
 
 `native/build-native.sh android-x86_64` + `native/stage-jnilibs.sh android-x86_64 x86_64` build the
 engine for the emulator; then `gradle :app:assembleDebug -Pgako.abis=x86_64`.
-`gradle :app:testDebugUnitTest` runs the JVM tests (curves, levels, fuzzy select, by colour).
+`gradle :app:testDebugUnitTest` runs the JVM tests (curves, levels, fuzzy select, by colour, layer-tree moves).
+`gradle :app:connectedDebugAndroidTest -Pgako.abis=x86_64` runs the instrumented tests on a device or
+emulator (`app/src/androidTest`): XCF/PSD/ORA round trips (structure, pixels, masks, paths, kept GIMP
+modes), Warp (undo data, erase, cancel) and Straighten. Use a host-GPU emulator (`-gpu host`); the
+SwiftShader one can crash.
 
 Stage 3 was tested on an Android 15 x86_64 emulator (Pixel 7 profile), driving it with
 `adb shell input` and screenshots, plus:
