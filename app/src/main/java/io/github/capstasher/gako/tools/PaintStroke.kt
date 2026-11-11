@@ -38,6 +38,8 @@ class PaintStroke(
     /** Symmetry axes in canvas coordinates (x of the vertical axis, y of the horizontal one). */
     private val mirrorX: Float? = null,
     private val mirrorY: Float? = null,
+    /** Filter brush: the filtered layer the stroke reveals. */
+    private val revealSource: Bitmap? = null,
 ) {
     private val bmp: Bitmap = layer.bitmap
     private val before: Bitmap = bmp.copy(Bitmap.Config.ARGB_8888, false)
@@ -73,6 +75,7 @@ class PaintStroke(
         blendMode = when {
             tool == Tool.Eraser -> if (layer.lockAlpha) BlendMode.SRC_ATOP else BlendMode.DST_OUT
             tool == Tool.DodgeBurn || tool == Tool.Blur || layer.lockAlpha -> BlendMode.SRC_ATOP
+            tool == Tool.FilterBrush -> BlendMode.SRC_OVER
             else -> BlendMode.SRC_OVER
         }
     }
@@ -349,6 +352,11 @@ class PaintStroke(
             }
             Tool.Blur, Tool.Heal -> {
                 drawSource(c, dirty)
+                Bitmaps.maskIn(c, mask)
+            }
+            Tool.FilterBrush -> {
+                // The filtered pixels replace the original ones where painted (alpha too).
+                revealSource?.let { c.drawBitmap(it, 0f, 0f, null) }
                 Bitmaps.maskIn(c, mask)
             }
             else -> c.drawBitmap(mask, 0f, 0f, maskTint)

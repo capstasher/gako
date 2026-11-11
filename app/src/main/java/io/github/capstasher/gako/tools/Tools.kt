@@ -2,6 +2,7 @@ package io.github.capstasher.gako.tools
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AutoFixNormal
+import androidx.compose.material.icons.outlined.AutoFixHigh
 import androidx.compose.material.icons.outlined.BlurOn
 import androidx.compose.material.icons.outlined.Fingerprint
 import androidx.compose.material.icons.outlined.Brush
@@ -47,6 +48,8 @@ enum class Tool(val label: String, val icon: ImageVector, val group: ToolGroup, 
     Clone("Clone", Icons.Outlined.ContentCopy, ToolGroup.Paint, "Set a source, then paint a copy of it"),
     Heal("Heal", Icons.Outlined.Healing, ToolGroup.Paint, "Set a source, then paint over spots: copies texture, keeps the tone"),
     DodgeBurn("Dodge / Burn", Icons.Outlined.Tonality, ToolGroup.Paint, "Lighten or darken where you paint"),
+    FilterBrush("Filter Brush", Icons.Outlined.AutoFixHigh, ToolGroup.Paint,
+        "Paint a filter's effect where you brush: open a filter, then tap its brush button"),
     Smudge("Smudge", Icons.Outlined.Fingerprint, ToolGroup.Paint, "Smear colours along the stroke"),
     Blur("Blur", Icons.Outlined.BlurOn, ToolGroup.Paint, "Soften where you paint"),
     BucketFill("Bucket Fill", Icons.Outlined.FormatColorFill, ToolGroup.Paint, "Tap to fill"),
@@ -64,12 +67,13 @@ enum class Tool(val label: String, val icon: ImageVector, val group: ToolGroup, 
         ColorSelect -> "By Colour"
         Paintbrush -> "Brush"
         DodgeBurn -> "Dodge/Burn"
+        FilterBrush -> "Filter Brush"
         BucketFill -> "Fill"
         ColorPicker -> "Picker"
         else -> label
     }
 
-    val paints get() = this in setOf(Paintbrush, Pencil, Airbrush, Eraser, Clone, Heal, DodgeBurn, Smudge, Blur)
+    val paints get() = this in setOf(Paintbrush, Pencil, Airbrush, Eraser, Clone, Heal, DodgeBurn, Smudge, Blur, FilterBrush)
 
     /** Tools that copy from a source point. */
     val cloning get() = this == Clone || this == Heal

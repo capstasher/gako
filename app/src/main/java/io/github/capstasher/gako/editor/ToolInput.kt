@@ -248,7 +248,7 @@ class ToolInput(private val vm: EditorViewModel) {
         down = PointF(x, y)
         lastPressure = pressure
         when (tool) {
-            Tool.Paintbrush, Tool.Pencil, Tool.Airbrush, Tool.Eraser, Tool.DodgeBurn, Tool.Clone, Tool.Heal, Tool.Smudge, Tool.Blur -> beginStroke(d, x, y, pressure)
+            Tool.Paintbrush, Tool.Pencil, Tool.Airbrush, Tool.Eraser, Tool.DodgeBurn, Tool.Clone, Tool.Heal, Tool.Smudge, Tool.Blur, Tool.FilterBrush -> beginStroke(d, x, y, pressure)
             Tool.RectSelect, Tool.EllipseSelect -> dragRect = RectF(x, y, x, y)
             Tool.FreeSelect -> {
                 lassoPoints = arrayListOf(PointF(x, y))
@@ -276,7 +276,7 @@ class ToolInput(private val vm: EditorViewModel) {
         val d = doc ?: return
         lastPressure = pressure
         when (tool) {
-            Tool.Paintbrush, Tool.Pencil, Tool.Airbrush, Tool.Eraser, Tool.DodgeBurn, Tool.Clone, Tool.Heal, Tool.Smudge, Tool.Blur -> {
+            Tool.Paintbrush, Tool.Pencil, Tool.Airbrush, Tool.Eraser, Tool.DodgeBurn, Tool.Clone, Tool.Heal, Tool.Smudge, Tool.Blur, Tool.FilterBrush -> {
                 val s = stroke ?: return
                 lastRaw = PointF(x, y)
                 // Smoothing trails the finger a little, which irons out wobble.
@@ -306,7 +306,7 @@ class ToolInput(private val vm: EditorViewModel) {
         val d = doc ?: return
         airJob?.cancel()
         when (tool) {
-            Tool.Paintbrush, Tool.Pencil, Tool.Airbrush, Tool.Eraser, Tool.DodgeBurn, Tool.Clone, Tool.Heal, Tool.Smudge, Tool.Blur -> {
+            Tool.Paintbrush, Tool.Pencil, Tool.Airbrush, Tool.Eraser, Tool.DodgeBurn, Tool.Clone, Tool.Heal, Tool.Smudge, Tool.Blur, Tool.FilterBrush -> {
                 val s = stroke ?: return
                 // Catch up with the finger so the stroke ends where it lifted.
                 if (options.smoothing > 0f) lastRaw?.let { s.moveTo(it.x, it.y, lastPressure) }
@@ -380,7 +380,7 @@ class ToolInput(private val vm: EditorViewModel) {
         val d = doc ?: return
         if (vm.busy != null) return
         when (tool) {
-            Tool.Paintbrush, Tool.Pencil, Tool.Airbrush, Tool.Eraser, Tool.DodgeBurn, Tool.Smudge, Tool.Blur -> {
+            Tool.Paintbrush, Tool.Pencil, Tool.Airbrush, Tool.Eraser, Tool.DodgeBurn, Tool.Smudge, Tool.Blur, Tool.FilterBrush -> {
                 beginStroke(d, x, y, 1f)
                 up()
             }
@@ -409,6 +409,17 @@ class ToolInput(private val vm: EditorViewModel) {
             val src = cloneSource!!
             if (cloneOffset == null || !options.cloneAligned) cloneOffset = PointF(src.x - x, src.y - y)
         }
+        val reveal = if (tool == Tool.FilterBrush) {
+            val fb = vm.filterBrush
+            when {
+                fb == null -> { vm.say("Open a filter and tap its brush button to load the Filter Brush"); return }
+                vm.editingMask -> { vm.say("The filter brush paints on layers, not masks"); return }
+                fb.layerId != layer.id || fb.bitmap.width != layer.width || fb.bitmap.height != layer.height -> {
+                    vm.say("The filter brush holds ${fb.title} for another layer; open a filter again for this one"); return
+                }
+                else -> fb.bitmap
+            }
+        } else null
         // Painting turns a text layer into an ordinary one.
         val target = if (layer.text != null) layer.copy(text = null).also { vm.silently(d.replace(it)) } else layer
         val sel = Compositor.selectionFor(target, d.selection)
@@ -419,12 +430,13 @@ class ToolInput(private val vm: EditorViewModel) {
             PaintStroke(tool, target, sel, color, options, cloneOffset?.let { it.x to it.y },
                 mirrorX = if (sym.vertical) d.width / 2f else null,
                 mirrorY = if (sym.horizontal) d.height / 2f else null,
+                revealSource = reveal,
             ).also { it.begin(x, y, pressure) }
         } catch (e: OutOfMemoryError) {
             vm.say("Not enough memory to paint on a layer this big")
             return
         }
-        strokeLabel = tool.label
+        strokeLabel = if (tool == Tool.FilterBrush) vm.filterBrush?.title ?: tool.label else tool.label
         smoothed = PointF(x, y)
         lastRaw = PointF(x, y)
         vm.pixelsChanged()

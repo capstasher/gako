@@ -33,6 +33,7 @@ operation) for Android, and puts a touch interface on top designed for one hand 
 - Transform: move, unified transform (scale/rotate/flip with handles, or perspective by dragging corners),
   crop (with aspect presets)
 - Filters, Curves and Levels respect the selection; Filters > Repeat Last and Recently Used
+- **Filter Brush**: any of the ~200 filters can be painted on where you brush instead of applied everywhere
 - Edit: cut/copy/paste (also via Android's clipboard), clear, fill
 
 **Files**

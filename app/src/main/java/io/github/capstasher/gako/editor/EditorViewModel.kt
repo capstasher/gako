@@ -497,6 +497,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun newDocument(state: DocState, name: String, keepRecovery: Boolean = false) {
         if (!keepRecovery) clearRecovery()
+        filterBrush = null
         input.path.load(state.paths.firstOrNull())
         metadata = null
         projectUri = null
@@ -1622,6 +1623,39 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         session = null
         preview = null
         previewPlacement = null
+    }
+
+    /** The filter brush's source: a filtered copy of one layer, and what made it. */
+    class FilterBrushSource(val layerId: Long, val bitmap: Bitmap, val title: String)
+    var filterBrush by mutableStateOf<FilterBrushSource?>(null); private set
+
+    /** Instead of applying the open filter everywhere, render it and paint it on with the Filter Brush. */
+    fun paintSession() {
+        val s = session ?: return
+        val layer = doc?.let { targetOf(it) }?.takeIf { it.id == s.layerId } ?: return
+        if (s.onMask) { say("The filter brush paints on layers, not masks"); return }
+        if (blockedByBusy()) return
+        previewJob?.cancel()
+        Engine.cancel(tag = s)
+        rememberFilter(s.op.name, s.values)
+        val tag = Any()
+        commitTag = tag
+        viewModelScope.launch {
+            busy = Busy(s.op.title, null, cancellable = true)
+            val result = Engine.apply(s.op.name, s.values, layer.bitmap, tag) { p -> busy = busy?.copy(progress = p) }
+            commitTag = null
+            busy = null
+            when (result) {
+                is Engine.Result.Ok -> {
+                    filterBrush = FilterBrushSource(layer.id, result.bitmap, s.op.title)
+                    if (session === s) { session = null; preview = null; previewPlacement = null }
+                    selectTool(Tool.FilterBrush)
+                    say("Paint where you want ${s.op.title}")
+                }
+                is Engine.Result.Failed -> say("${s.op.title} failed: ${result.message}")
+                Engine.Result.Cancelled -> say("${s.op.title} cancelled")
+            }
+        }
     }
 
     fun applySession() {
