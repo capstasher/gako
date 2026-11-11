@@ -26,6 +26,7 @@ android {
         targetSdk = 35
         versionCode = buildNumber
         versionName = "0.3.0-stage3+$buildNumber"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Phones are arm64. Add x86_64 for the emulator with -Pgako.abis=arm64-v8a,x86_64
         val abis = (project.findProperty("gako.abis") as String?) ?: "arm64-v8a"
         ndk { abiFilters += abis.split(',').map { it.trim() }.filter { it.isNotEmpty() } }
@@ -93,4 +94,6 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
     testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
 }
