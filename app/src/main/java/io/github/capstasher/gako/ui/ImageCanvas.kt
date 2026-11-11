@@ -238,6 +238,8 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
                             Matrix().apply { setTranslate(layer.x + moveDelta.x, layer.y + moveDelta.y) })
                         layer === active && transform != null && transform.changed ->
                             Compositor.drawLayer(nc, layer, paint.apply { isFilterBitmap = true }, transform.matrix())
+                        layer === active && input.liveStroke?.layerId == layer.id ->
+                            drawStroking(nc, layer, paint, input.liveStroke!!, input.liveStrokeOnMask)
                         else -> Compositor.drawLayer(nc, layer, paint)
                     }
                     if (layer === active && gradient != null) {
@@ -351,6 +353,35 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
             )
         }
     }
+}
+
+/**
+ * The layer being painted on: its pre-stroke copy plus the stroke's tiles, so the GPU only re-uploads
+ * the tiles that changed. When the stroke is on the mask, the same goes for the mask.
+ */
+private fun drawStroking(nc: android.graphics.Canvas, layer: Layer, paint: Paint, s: io.github.capstasher.gako.tools.PaintStroke, onMask: Boolean) {
+    val bounds = RectF(layer.bounds)
+    val copy = Paint().apply { blendMode = BlendMode.SRC; isFilterBitmap = paint.isFilterBitmap }
+    fun drawPieces() {
+        nc.drawBitmap(s.viewBase, layer.x.toFloat(), layer.y.toFloat(), copy)
+        for ((i, tile) in s.viewTileMap) {
+            val r = s.viewTileRect(i)
+            nc.drawBitmap(tile, (layer.x + r.left).toFloat(), (layer.y + r.top).toFloat(), copy)
+        }
+    }
+    val outer = nc.saveLayer(bounds, paint)
+    if (onMask) {
+        nc.drawBitmap(layer.bitmap, layer.x.toFloat(), layer.y.toFloat(), copy)
+        if (layer.maskEnabled) {
+            val m = nc.saveLayer(bounds, Compositor.maskPaint)
+            drawPieces()
+            nc.restoreToCount(m)
+        }
+    } else {
+        drawPieces()
+        layer.activeMask?.let { nc.drawBitmap(it, layer.x.toFloat(), layer.y.toFloat(), Compositor.maskPaint) }
+    }
+    nc.restoreToCount(outer)
 }
 
 /** The active layer with its filter preview (of the layer or of its mask), through the selection if there is one. */

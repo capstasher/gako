@@ -268,8 +268,42 @@ class PaintStroke(
         dirty.union(box)
     }
 
+    // ---- What the screen shows during the stroke: the layer as it was (uploaded to the GPU once)
+    // with copies of just the 256 px tiles the stroke has touched on top, so a brush move re-uploads
+    // a tile or two instead of the whole layer.
+    private val viewTile = 256
+    private val viewTilesX = (bmp.width + viewTile - 1) / viewTile
+    private val viewTiles = HashMap<Int, Bitmap>()
+    private val copyPaint = Paint().apply { blendMode = BlendMode.SRC }
+
+    val layerId: Long get() = layer.id
+    val viewBase: Bitmap get() = before
+    val viewTileMap: Map<Int, Bitmap> get() = viewTiles
+
+    fun viewTileRect(i: Int): Rect {
+        val tx = i % viewTilesX
+        val ty = i / viewTilesX
+        return Rect(tx * viewTile, ty * viewTile, min(bmp.width, (tx + 1) * viewTile), min(bmp.height, (ty + 1) * viewTile))
+    }
+
+    private fun refreshView(dirty: Rect) {
+        val d = Rect(dirty)
+        if (!d.intersect(0, 0, bmp.width, bmp.height)) return
+        for (ty in d.top / viewTile..(d.bottom - 1) / viewTile) for (tx in d.left / viewTile..(d.right - 1) / viewTile) {
+            val i = ty * viewTilesX + tx
+            val t = viewTileRect(i)
+            val fresh = !viewTiles.containsKey(i)
+            val tile = viewTiles.getOrPut(i) { Bitmap.createBitmap(t.width(), t.height(), Bitmap.Config.ARGB_8888) }
+            // A new tile copies all of its area; an existing one only what changed.
+            val src = if (fresh) Rect(t) else Rect(t).apply { intersect(d) }
+            val dst = Rect(src).apply { offset(-t.left, -t.top) }
+            Canvas(tile).drawBitmap(bmp, src, dst, copyPaint)
+        }
+    }
+
     private fun render(dirty: Rect) {
-        if (dirty.isEmpty || tool == Tool.Smudge) return
+        if (dirty.isEmpty) return
+        if (tool == Tool.Smudge) { refreshView(dirty); return }
         total.union(dirty)
         if (tool == Tool.Blur || tool == Tool.Heal) ensureSource(dirty)
         val c = layerCanvas
@@ -296,6 +330,7 @@ class PaintStroke(
         selection?.let { Bitmaps.maskIn(c, it) }
         c.restoreToCount(save)
         c.restore()
+        refreshView(dirty)
     }
 
     /** Puts the layer back as it was. */

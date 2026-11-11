@@ -159,6 +159,10 @@ class ToolInput(private val vm: EditorViewModel) {
     /** A brush stroke is under way. */
     val stroking: Boolean get() = stroke != null
 
+    /** The stroke in progress, for the canvas to draw from its tiles (null otherwise). */
+    val liveStroke: PaintStroke? get() = stroke
+    val liveStrokeOnMask: Boolean get() = strokeOnMask
+
     fun hasPendingEdit() = (tool == Tool.Transform && transformState?.changed == true) ||
         (tool == Tool.Crop && cropState != null)
 
@@ -341,8 +345,11 @@ class ToolInput(private val vm: EditorViewModel) {
         val sel = Compositor.selectionFor(target, d.selection)
         val color = vm.paintColor(if (tool == Tool.Eraser && target.lockAlpha) vm.bg else vm.fg)
         strokeOnMask = vm.editingMask
-        stroke = PaintStroke(tool, target, sel, color, options, cloneOffset?.let { it.x to it.y }).also {
-            it.begin(x, y, pressure)
+        stroke = try {
+            PaintStroke(tool, target, sel, color, options, cloneOffset?.let { it.x to it.y }).also { it.begin(x, y, pressure) }
+        } catch (e: OutOfMemoryError) {
+            vm.say("Not enough memory to paint on a layer this big")
+            return
         }
         strokeLabel = tool.label
         vm.pixelsChanged()
