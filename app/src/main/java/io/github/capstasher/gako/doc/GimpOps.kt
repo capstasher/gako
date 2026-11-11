@@ -50,6 +50,66 @@ object GimpOps {
 
     private fun q(v: Float) = (v.coerceIn(0f, 1f) * 255f + 0.5f).toInt()
 
+    // ---- in GAKO's Colours menu: GIMP's dialogs' settings, in GIMP's units
+
+    private fun num(name: String, label: String, default: Double, min: Double, max: Double, digits: Int = 0) =
+        io.github.capstasher.gako.engine.Param.Number(name, label, "", null, default, min, max, min, max, 1.0, digits,
+            isInteger = digits == 0 && min == kotlin.math.floor(min) && max == kotlin.math.floor(max) && default == kotlin.math.floor(default),
+            isSeed = false)
+
+    private fun choice(name: String, label: String, default: String, vararg options: Pair<String, String>) =
+        io.github.capstasher.gako.engine.Param.Choice(name, label, "", null, default, options.toList())
+
+    /** GIMP's colour tools as filter dialogs (GIMP's own ranges: degrees, percent, 0–255). */
+    val dialogs: Map<String, io.github.capstasher.gako.engine.OpDescription> = listOf(
+        io.github.capstasher.gako.engine.OpDescription("gimp:brightness-contrast", "Brightness-Contrast",
+            "GIMP's Brightness-Contrast", listOf(num("brightness", "Brightness", 0.0, -127.0, 127.0), num("contrast", "Contrast", 0.0, -127.0, 127.0)), 0),
+        io.github.capstasher.gako.engine.OpDescription("gimp:hue-saturation", "Hue-Saturation", "GIMP's Hue-Saturation", listOf(
+            choice("range", "Adjust", "all", "all" to "All colours", "red" to "Red", "yellow" to "Yellow", "green" to "Green",
+                "cyan" to "Cyan", "blue" to "Blue", "magenta" to "Magenta"),
+            num("hue", "Hue (°)", 0.0, -180.0, 180.0), num("lightness", "Lightness", 0.0, -100.0, 100.0),
+            num("saturation", "Saturation", 0.0, -100.0, 100.0), num("overlap", "Overlap", 0.0, 0.0, 100.0)), 0),
+        io.github.capstasher.gako.engine.OpDescription("gimp:colorize", "Colorize", "GIMP's Colorize", listOf(
+            num("hue", "Hue (°)", 180.0, 0.0, 360.0), num("saturation", "Saturation", 50.0, 0.0, 100.0),
+            num("lightness", "Lightness", 0.0, -100.0, 100.0)), 0),
+        io.github.capstasher.gako.engine.OpDescription("gimp:color-balance", "Color Balance", "GIMP's Color Balance", listOf(
+            choice("range", "Adjust", "midtones", "shadows" to "Shadows", "midtones" to "Midtones", "highlights" to "Highlights"),
+            num("cyan-red", "Cyan ↔ Red", 0.0, -100.0, 100.0), num("magenta-green", "Magenta ↔ Green", 0.0, -100.0, 100.0),
+            num("yellow-blue", "Yellow ↔ Blue", 0.0, -100.0, 100.0),
+            io.github.capstasher.gako.engine.Param.Toggle("preserve-luminosity", "Preserve luminosity", "", null, true)), 0),
+        io.github.capstasher.gako.engine.OpDescription("gimp:threshold", "Threshold", "GIMP's Threshold", listOf(
+            choice("channel", "Channel", "value", "value" to "Value", "red" to "Red", "green" to "Green", "blue" to "Blue",
+                "luminance" to "Luminance"),
+            num("low", "Low", 127.0, 0.0, 255.0), num("high", "High", 255.0, 0.0, 255.0)), 0),
+        io.github.capstasher.gako.engine.OpDescription("gimp:posterize", "Posterize", "GIMP's Posterize",
+            listOf(num("levels", "Levels", 3.0, 2.0, 256.0)), 0),
+        io.github.capstasher.gako.engine.OpDescription("gimp:desaturate", "Desaturate", "GIMP's Desaturate", listOf(
+            choice("mode", "Shade of grey from", "luminance", "lightness" to "Lightness (HSL)", "luma" to "Luma",
+                "average" to "Average (HSI Intensity)", "luminance" to "Luminance", "value" to "Value (HSV)")), 0),
+    ).associateBy { it.name }
+
+    /** [op] with a dialog's [values] (see [dialogs]) over [src], or null if it isn't one of them. */
+    fun applyDialog(op: String, values: Map<String, Any?>, src: Bitmap): Bitmap? {
+        fun d(k: String, def: Double = 0.0) = (values[k] as? Number)?.toDouble() ?: def
+        fun w(k: String, def: String) = values[k] as? String ?: def
+        val args: Map<String, Any> = when (op) {
+            "gimp:brightness-contrast" -> mapOf("config" to "(brightness ${d("brightness") / 127.0})\n(contrast ${d("contrast") / 127.0})")
+            "gimp:hue-saturation" -> mapOf("config" to "(range ${w("range", "all")})\n(hue ${d("hue") / 180.0})\n" +
+                "(saturation ${d("saturation") / 100.0})\n(lightness ${d("lightness") / 100.0})\n(overlap ${d("overlap") / 100.0})")
+            "gimp:colorize" -> mapOf("hue" to d("hue", 180.0) / 360.0, "saturation" to d("saturation", 50.0) / 100.0,
+                "lightness" to d("lightness") / 100.0)
+            "gimp:color-balance" -> mapOf("config" to "(range ${w("range", "midtones")})\n(cyan-red ${d("cyan-red") / 100.0})\n" +
+                "(magenta-green ${d("magenta-green") / 100.0})\n(yellow-blue ${d("yellow-blue") / 100.0})\n" +
+                "(preserve-luminosity ${if (values["preserve-luminosity"] != false) "yes" else "no"})")
+            "gimp:threshold" -> mapOf("channel" to listOf("value", "red", "green", "blue", "alpha", "luminance").indexOf(w("channel", "value")).coerceAtLeast(0),
+                "low" to d("low", 127.0) / 255.0, "high" to d("high", 255.0) / 255.0)
+            "gimp:posterize" -> mapOf("levels" to d("levels", 3.0).toInt())
+            "gimp:desaturate" -> mapOf("mode" to listOf("lightness", "luma", "average", "luminance", "value").indexOf(w("mode", "luminance")).coerceAtLeast(0))
+            else -> return null
+        }
+        return apply(op, args, src)
+    }
+
     /** A per-pixel function (so a lambda after local values isn't read as their argument). */
     private inline fun px(noinline f: (FloatArray) -> Unit) = f
 

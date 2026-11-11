@@ -48,6 +48,7 @@ case("levels", "gimp:levels", [("channel", HC.VALUE), ("low-input", 0.1), ("gamm
 case("levels_perceptual", "gimp:levels", [("trc", Gimp.TRCType.NON_LINEAR), ("channel", HC.VALUE), ("low-input", 0.15), ("gamma", 0.8)])
 case("huesat", "gimp:hue-saturation", [("range", Gimp.HueRange.ALL), ("hue", 0.25), ("saturation", -0.3), ("lightness", 0.1),
                                        ("range", Gimp.HueRange.RED), ("hue", -0.2), ("overlap", 0.4)])
+# GIMP 3.2 saves (and draws) Colorize with its defaults whatever a script sets: this tests those.
 case("colorize", "gimp:colorize", [("hue", 0.6), ("saturation", 0.7), ("lightness", 0.2)])
 case("balance", "gimp:color-balance", [("range", Gimp.TransferMode.MIDTONES), ("cyan-red", 0.4), ("magenta-green", -0.3),
                                        ("range", Gimp.TransferMode.SHADOWS), ("yellow-blue", 0.5), ("preserve-luminosity", True)])
