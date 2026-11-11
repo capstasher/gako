@@ -26,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.LinkOff
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -77,6 +78,7 @@ fun DialogHost(vm: EditorViewModel, dialog: Dialog) {
         }
         Dialog.NewLayer -> NewLayerDialog(vm, close)
         Dialog.History -> HistoryDialog(vm, close)
+        Dialog.NewGuide -> if (d != null) NewGuideDialog(vm, d.width, d.height, close) else close()
         Dialog.AddMask -> AlertDialog(
             onDismissRequest = close,
             title = { Text("Add Layer Mask") },
@@ -314,6 +316,37 @@ private fun AmountDialog(title: String, close: () -> Unit, onSet: (Float) -> Uni
         title = { Text(title) },
         text = { field(t, "Pixels", { t = it }, Modifier.fillMaxWidth()) },
         confirmButton = { TextButton(enabled = v != null, onClick = { close(); onSet(v!!) }) { Text("OK") } },
+        dismissButton = { TextButton(onClick = close) { Text("Cancel") } },
+    )
+}
+
+/** Image > Guides > New Guide: across or down the image, at a position in pixels or percent. */
+@Composable
+private fun NewGuideDialog(vm: EditorViewModel, w: Int, h: Int, close: () -> Unit) {
+    var horizontal by remember { mutableStateOf(true) }
+    var percent by remember { mutableStateOf(true) }
+    var t by remember { mutableStateOf("50") }
+    val size = if (horizontal) h else w
+    val v = t.trim().replace(',', '.').toFloatOrNull()
+    val px = v?.let { if (percent) Math.round(it * size / 100f) else Math.round(it) }?.takeIf { it in 0..size }
+    AlertDialog(
+        onDismissRequest = close,
+        title = { Text("New Guide") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(horizontal, { horizontal = true }, { Text("Horizontal") })
+                    FilterChip(!horizontal, { horizontal = false }, { Text("Vertical") })
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(percent, { if (!percent && v != null) t = "%.1f".format(java.util.Locale.ROOT, v * 100f / size); percent = true }, { Text("%") })
+                    FilterChip(!percent, { if (percent && v != null) t = Math.round(v * size / 100f).toString(); percent = false }, { Text("px") })
+                }
+                field(t, if (percent) "Position (% of the ${if (horizontal) "height" else "width"})" else "Position (pixels from the ${if (horizontal) "top" else "left"})",
+                    { t = it }, Modifier.fillMaxWidth(), number = false)
+            }
+        },
+        confirmButton = { TextButton(enabled = px != null, onClick = { close(); vm.addGuide(horizontal, px!!) }) { Text("Add") } },
         dismissButton = { TextButton(onClick = close) { Text("Cancel") } },
     )
 }

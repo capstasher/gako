@@ -171,7 +171,8 @@ object DocOps {
     private fun mapAll(doc: DocState, m: Matrix, nw: Int, nh: Int): DocState {
         val layers = doc.layers.map { l -> if (l.group) l else mapLayer(l, m) }
         val sel = doc.selection?.let { Selections.make(transformedMask(it.mask, m, nw, nh)) }
-        return doc.copy(width = nw, height = nh, layers = layers, selection = sel, paths = doc.paths.mapped(m))
+        return doc.copy(width = nw, height = nh, layers = layers, selection = sel, paths = doc.paths.mapped(m),
+            gimp = doc.gimp.mapped(m, nw, nh))
     }
 
     /** Crops the canvas to [r] (canvas coordinates), dropping pixels outside it. */
@@ -195,8 +196,9 @@ object DocOps {
             Canvas(m).drawBitmap(s.mask, -crop.left.toFloat(), -crop.top.toFloat(), null)
             Selections.make(m)
         }
+        val shift = Matrix().apply { setTranslate(-crop.left.toFloat(), -crop.top.toFloat()) }
         return doc.copy(width = crop.width(), height = crop.height(), layers = layers, selection = sel,
-            paths = doc.paths.mapped(Matrix().apply { setTranslate(-crop.left.toFloat(), -crop.top.toFloat()) }))
+            paths = doc.paths.mapped(shift), gimp = doc.gimp.mapped(shift, crop.width(), crop.height()))
     }
 
     /** Image > Canvas Size: a bigger or smaller canvas, layers moved by ([dx], [dy]). */
@@ -217,8 +219,9 @@ object DocOps {
             Canvas(m).drawBitmap(s.mask, dx.toFloat(), dy.toFloat(), null)
             Selections.make(m)
         }
+        val shift = Matrix().apply { setTranslate(dx.toFloat(), dy.toFloat()) }
         return doc.copy(width = w, height = h, layers = layers, selection = sel,
-            paths = doc.paths.mapped(Matrix().apply { setTranslate(dx.toFloat(), dy.toFloat()) }))
+            paths = doc.paths.mapped(shift), gimp = doc.gimp.mapped(shift, w, h))
     }
 
     /** Image > Scale Image: every layer, its position and the selection scale together. */
@@ -234,8 +237,9 @@ object DocOps {
             l.copy(bitmap = scaled(l.bitmap, nw, nh), mask = l.mask?.let { scaled(it, nw, nh) }, x = nx, y = ny)
         }
         val sel = doc.selection?.let { Selections.make(Bitmap.createScaledBitmap(it.mask, w, h, true)) }
+        val m = Matrix().apply { setScale(sx, sy) }
         return doc.copy(width = w, height = h, layers = layers, selection = sel,
-            paths = doc.paths.mapped(Matrix().apply { setScale(sx, sy) }))
+            paths = doc.paths.mapped(m), gimp = doc.gimp.mapped(m, w, h))
     }
 
     /** Good-quality downscale (repeated halving, like a mipmap) or bilinear upscale. */

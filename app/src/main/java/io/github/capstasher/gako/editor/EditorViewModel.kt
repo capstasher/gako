@@ -1254,6 +1254,34 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         cropTo(s.bounds)
     }
 
+    // ---- guides (GIMP's Image > Guides)
+
+    /** A guide across the image: horizontal at y = [position], or vertical at x = [position]. */
+    fun addGuide(horizontal: Boolean, position: Int) {
+        val d = doc ?: return
+        if (blockedByBusy()) return
+        val g = io.github.capstasher.gako.doc.Guide(horizontal, position.coerceIn(0, if (horizontal) d.height else d.width))
+        if (g in d.gimp.guides) return
+        change("Add Guide", d.copy(gimp = d.gimp.copy(guides = d.gimp.guides + g)))
+    }
+
+    /** Guides along the selection's four edges. */
+    fun guidesFromSelection() {
+        val d = doc ?: return
+        if (blockedByBusy()) return
+        val b = d.selection?.bounds ?: run { say("Select something first"); return }
+        val new = listOf(io.github.capstasher.gako.doc.Guide(true, b.top), io.github.capstasher.gako.doc.Guide(true, b.bottom),
+            io.github.capstasher.gako.doc.Guide(false, b.left), io.github.capstasher.gako.doc.Guide(false, b.right))
+            .filter { it !in d.gimp.guides }
+        if (new.isNotEmpty()) change("New Guides from Selection", d.copy(gimp = d.gimp.copy(guides = d.gimp.guides + new)))
+    }
+
+    fun removeGuides() {
+        val d = doc ?: return
+        if (blockedByBusy()) return
+        if (d.gimp.guides.isNotEmpty()) change("Remove all Guides", d.copy(gimp = d.gimp.copy(guides = emptyList())))
+    }
+
     fun cropToContent() {
         docJob("Crop to Content") {
             val flat = Compositor.flatten(it)
@@ -2304,4 +2332,5 @@ sealed interface Dialog {
     data class PickColor(val foreground: Boolean) : Dialog
     data object AddMask : Dialog
     data object History : Dialog
+    data object NewGuide : Dialog
 }

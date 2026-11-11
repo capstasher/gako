@@ -48,6 +48,21 @@ internal object XcfProps {
     const val COMPOSITE_MODE = 35
     const val COMPOSITE_SPACE = 36
     const val BLEND_SPACE = 37
+    const val SELECTION = 4
+    const val GUIDES = 18
+    const val OLD_SAMPLE_POINTS = 27
+    const val TEXT_LAYER_FLAGS = 26
+    const val SAMPLE_POINTS = 39
+
+    /** Image properties GAKO keeps as they are (none holds a file offset). */
+    val keptImageProps = setOf(19, 20, 21, 22, 24, 40)        // resolution, tattoo, parasites, unit, user unit, item set
+    /**
+     * Item (layer, group, channel) properties GAKO keeps as they are: linked, edit/show mask, tattoo,
+     * text layer flags, the locks, colour tag, item set membership, vector/link layer, transform.
+     */
+    val keptItemProps = setOf(9, 12, 13, 20, 26, 28, 32, 34, 41, 42, 47, 48, 49)
+    /** Channel properties GAKO keeps (colour, opacity, visibility, show masked…) on top of those. */
+    val keptChannelProps = keptItemProps + setOf(3, 6, 8, 14, 16, 33, 38)
 
     /** The mode number to write (GIMP's own numbers: see [LayerMode]). */
     fun modeFor(l: Layer): Int = l.gimpMode
@@ -77,6 +92,16 @@ object XcfWriter {
         }
         fun prop(type: Int, vararg ints: Int) {
             u32(type); u32(ints.size * 4); ints.forEach { u32(it) }
+        }
+        /** A property kept from the file, as it was. */
+        fun raw(p: XcfProp) { u32(p.type); u32(p.data.size); bytes(p.data) }
+        /** PROP_PARASITES with [list] (nothing if it's empty). */
+        fun parasites(list: List<XcfParasite>) {
+            if (list.isEmpty()) return
+            u32(XcfProps.PARASITES)
+            val at = size; u32(0)
+            for (p in list) { string(p.name); u32(p.flags); u32(p.data.size); bytes(p.data) }
+            setU32(at, size - at - 4)
         }
     }
 
@@ -173,7 +198,18 @@ object XcfWriter {
         b.u32(doc.width); b.u32(doc.height); b.u32(0)     // RGB
         b.u32(150)                                         // 8-bit non-linear integer
         b.u32(XcfProps.COMPRESSION); b.u32(1); b.u8(2)     // zlib
-        b.u32(XcfProps.RESOLUTION); b.u32(8); b.f32(72f); b.f32(72f)
+        val kept = doc.gimp.props
+        if (kept.none { it.type == XcfProps.RESOLUTION }) { b.u32(XcfProps.RESOLUTION); b.u32(8); b.f32(72f); b.f32(72f) }
+        for (k in kept) b.raw(k)
+        if (doc.gimp.guides.isNotEmpty()) {
+            b.u32(XcfProps.GUIDES); b.u32(doc.gimp.guides.size * 5)
+            for (g in doc.gimp.guides) { b.u32(g.position); b.u8(if (g.horizontal) 1 else 2) }
+        }
+        if (doc.gimp.samplePoints.isNotEmpty()) {
+            // XCF 10 keeps sample points as x, y pairs.
+            b.u32(XcfProps.OLD_SAMPLE_POINTS); b.u32(doc.gimp.samplePoints.size * 8)
+            for (sp in doc.gimp.samplePoints) { b.u32(sp.x); b.u32(sp.y) }
+        }
         if (doc.paths.isNotEmpty()) writePaths(b, doc.paths)
         b.u32(XcfProps.END); b.u32(0)
 
@@ -188,7 +224,16 @@ object XcfWriter {
         }
         val slots = IntArray(layers.size) { b.size.also { b.u32(0) } }
         b.u32(0)                                           // end of layers
-        b.u32(0)                                           // no channels
+        // Saved channels, then the selection as GIMP saves it (a channel marked as the selection).
+        val selection = doc.selection?.let { sel ->
+            val bytes = Selections.bytesOf(sel.mask)
+            val px = IntArray(bytes.size) { val v = bytes[it].toInt() and 255; (0xFF shl 24) or (v shl 16) or (v shl 8) or v }
+            Channel("Selection Mask", Bitmaps.blank(doc.width, doc.height).also { it.setPixels(px, 0, doc.width, 0, 0, doc.width, doc.height) },
+                listOf(XcfProp(XcfProps.SELECTION, ByteArray(0)), XcfProp(XcfProps.VISIBLE, byteArrayOf(0, 0, 0, 0))))
+        }
+        val channels = doc.gimp.channels.filter { it.bitmap.width == doc.width && it.bitmap.height == doc.height } + listOfNotNull(selection)
+        val channelSlots = IntArray(channels.size) { b.size.also { b.u32(0) } }
+        b.u32(0)                                           // end of channels
 
         val deflater = Deflater(level)
         val tileBuf = ByteArray(XcfProps.TILE * XcfProps.TILE * 4)
@@ -213,13 +258,19 @@ object XcfWriter {
             if (l.group) b.prop(XcfProps.GROUP_ITEM_FLAGS, if (l.expanded) 1 else 0)
             if (l.parent != null) paths[l.id]?.let { p -> b.prop(XcfProps.ITEM_PATH, *p.toIntArray()) }
             if (l.mask != null) b.prop(XcfProps.APPLY_MASK, if (l.maskEnabled) 1 else 0)
-            l.text?.let { t ->
-                // One parasite: name, flags (1 = persistent), size, data.
-                val name = TEXT_PARASITE.toByteArray(Charsets.UTF_8)
-                val data = textToString(t).toByteArray(Charsets.UTF_8)
-                b.u32(XcfProps.PARASITES); b.u32(4 + name.size + 1 + 4 + 4 + data.size)
-                b.string(TEXT_PARASITE); b.u32(1); b.u32(data.size); b.bytes(data)
+            val x = l.xcf
+            // A GIMP text layer whose pixels GAKO changed: tell GIMP (it then keeps these pixels).
+            val changed = x != null && !l.group && x.pixelsChanged(l.bitmap)
+            val gimpText = x?.parasites?.any { it.name == "gimp-text-layer" } == true
+            x?.props?.forEach { k ->
+                if (k.type == XcfProps.TEXT_LAYER_FLAGS && changed && k.data.size == 4) {
+                    b.prop(XcfProps.TEXT_LAYER_FLAGS, java.nio.ByteBuffer.wrap(k.data).int or 2)
+                } else b.raw(k)
             }
+            if (changed && gimpText && x!!.props.none { it.type == XcfProps.TEXT_LAYER_FLAGS }) b.prop(XcfProps.TEXT_LAYER_FLAGS, 2)
+            val parasites = x?.parasites.orEmpty().toMutableList()
+            l.text?.let { t -> parasites += XcfParasite(TEXT_PARASITE, 1, textToString(t).toByteArray(Charsets.UTF_8)) }
+            b.parasites(parasites)
             b.u32(XcfProps.END); b.u32(0)
             val hierarchySlot = b.size; b.u32(0)
             val maskSlot = b.size; b.u32(0)
@@ -239,6 +290,17 @@ object XcfWriter {
                 b.setU32(h, b.size)
                 writeHierarchy(b, m, 1, deflater, tileBuf, compressed)
             }
+        }
+        channels.forEachIndexed { i, ch ->
+            b.setU32(channelSlots[i], b.size)
+            b.u32(ch.bitmap.width); b.u32(ch.bitmap.height)
+            b.string(ch.name)
+            for (k in ch.props) b.raw(k)
+            if (ch.props.none { it.type == XcfProps.OPACITY }) b.prop(XcfProps.OPACITY, 255)
+            b.u32(XcfProps.END); b.u32(0)
+            val h = b.size; b.u32(0)
+            b.setU32(h, b.size)
+            writeHierarchy(b, ch.bitmap, 1, deflater, tileBuf, compressed)
         }
         deflater.end()
         out.write(b.data, 0, b.size)
@@ -275,6 +337,8 @@ object XcfReader {
         var text: TextInfo? = null,
         var path: List<Int> = emptyList(),
         var expanded: Boolean = true,
+        val kept: MutableList<XcfProp> = ArrayList(),
+        val parasites: MutableList<XcfParasite> = ArrayList(),
     )
 
     private class Parser(val buf: ByteBuffer) {
@@ -282,6 +346,9 @@ object XcfReader {
         var precision = 150
         var compression = 0
         var colormap: IntArray? = null
+        val guides = ArrayList<Guide>()
+        val samplePoints = ArrayList<SamplePoint>()
+        val keptProps = ArrayList<XcfProp>()
         val wide get() = version >= 11
 
         fun ptr(): Long = if (wide) buf.long else buf.int.toLong() and 0xFFFFFFFFL
@@ -312,6 +379,53 @@ object XcfReader {
 
         var paths: List<VectorPath> = emptyList()
 
+        /** The rest of a property as it is (from the current position, [len] bytes). */
+        fun raw(type: Int, len: Int) = XcfProp(type, ByteArray(len).also { buf.get(it) })
+
+        /** PROP_PARASITES: name, flags, size, data, until the end of the property. */
+        fun parasites(end: Int): List<XcfParasite> {
+            val out = ArrayList<XcfParasite>()
+            while (buf.position() < end) {
+                val name = string()
+                val flags = u32()
+                val size = length(u32())
+                out += XcfParasite(name, flags, ByteArray(size).also { buf.get(it) })
+            }
+            return out
+        }
+
+        /** One Bézier stroke as PROP_VECTORS and GIMP 3's path items store it, or null if it isn't one. */
+        fun stroke(): PathStroke? {
+            val type = u32()
+            val closed = u32() != 0
+            val nf = u32()
+            if (nf !in 2..6) error("The file is damaged (path point size)")
+            val np = count(u32(), 4 + nf * 4)
+            val pts = ArrayList<Float>()
+            repeat(np) {
+                u32()                      // anchor or handle; the order says which
+                val f = FloatArray(nf) { buf.float }
+                pts += f[0]; pts += f[1]
+            }
+            return if (type == 1 && np >= 3 && np % 3 == 0) PathStroke(pts.toFloatArray(), closed) else null
+        }
+
+        /** A GIMP 3 path item (XCF 18+): name, payload size, properties, version, strokes. */
+        fun readPathItem(at: Long): VectorPath? {
+            goTo(at)
+            val name = string()
+            length(u32())
+            while (true) {
+                val t = u32(); val len = length(u32())
+                if (t == XcfProps.END) break
+                goTo(buf.position().toLong() + len)
+            }
+            if (u32() != 1) return null
+            val n = count(u32(), 16)
+            val strokes = (0 until n).mapNotNull { stroke() }
+            return if (strokes.isEmpty()) null else VectorPath(name, strokes)
+        }
+
         /** PROP_VECTORS: every path with all its Bézier strokes. */
         fun readPaths(): List<VectorPath> {
             if (u32() != 1) return emptyList()
@@ -325,20 +439,7 @@ object XcfReader {
                 val strokes = count(u32(), 16)
                 repeat(parasites) { string(); u32(); val size = length(u32()); goTo(buf.position() + size.toLong()) }
                 val list = ArrayList<PathStroke>()
-                repeat(strokes) {
-                    val type = u32()
-                    val closed = u32() != 0
-                    val nf = u32()
-                    if (nf !in 2..6) error("The file is damaged (path point size)")
-                    val np = count(u32(), 4 + nf * 4)
-                    val pts = ArrayList<Float>()
-                    repeat(np) {
-                        u32()                      // anchor or handle; the order says which
-                        val f = FloatArray(nf) { buf.float }
-                        pts += f[0]; pts += f[1]
-                    }
-                    if (type == 1 && np >= 3 && np % 3 == 0) list += PathStroke(pts.toFloatArray(), closed)
-                }
+                repeat(strokes) { stroke()?.let { list += it } }
                 if (list.isNotEmpty()) out += VectorPath(name, list)
             }
             return out
@@ -428,6 +529,16 @@ object XcfReader {
                             (r shl 16) or (g shl 8) or b
                         }
                     }
+                    XcfProps.GUIDES -> repeat(len / 5) {
+                        val pos = u32()
+                        when (buf.get().toInt()) { 1 -> guides += Guide(true, pos); 2 -> guides += Guide(false, pos) }
+                    }
+                    XcfProps.SAMPLE_POINTS -> {
+                        samplePoints.clear()
+                        repeat(len / 20) { samplePoints += SamplePoint(u32(), u32(), u32()); u32(); u32() }
+                    }
+                    XcfProps.OLD_SAMPLE_POINTS -> if (samplePoints.isEmpty()) repeat(len / 8) { samplePoints += SamplePoint(u32(), u32()) }
+                    in XcfProps.keptImageProps -> keptProps += raw(type, len)
                 }
                 goTo(start.toLong() + len)
             }
@@ -437,11 +548,32 @@ object XcfReader {
             val layers = mutableListOf<Pair<Layer, Boolean>>()
             // Groups come before their children in the file (top to bottom): read in file order so
             // each child knows its groups, then stack bottom-up.
+            val channelPtrs = mutableListOf<Long>()
+            while (true) { val p = ptr(); if (p == 0L) break; channelPtrs += p }
+            // GIMP 3 (XCF 18+) lists its paths as items after the channels.
+            val pathPtrs = mutableListOf<Long>()
+            if (version >= 18) while (buf.remaining() >= (if (wide) 8 else 4)) { val p = ptr(); if (p == 0L) break; pathPtrs += p }
+
             val read = layerPtrs.mapNotNull { readLayer(it, baseType) }
             layers += read.asReversed()
             if (layers.none { !it.first.group }) error("This XCF file has no layers GAKO can show")
             val active = layers.lastOrNull { it.second }?.first ?: layers.last { !it.first.group }.first
-            return DocState(w, h, Tree.normalize(layers.map { it.first }), active.id, paths = paths)
+
+            var selection: Selection? = null
+            val channels = ArrayList<Channel>()
+            for (p in channelPtrs) {
+                val (ch, isSelection) = runCatching { readChannel(p, w, h) }.getOrNull() ?: continue
+                if (isSelection) {
+                    val px = IntArray(w * h).also { ch.bitmap.getPixels(it, 0, w, 0, 0, w, h) }
+                    selection = Selections.make(Selections.maskFromBytes(ByteArray(w * h) { (px[it] shr 16).toByte() }, w, h))
+                } else channels += ch
+            }
+            if (paths.isEmpty() && pathPtrs.isNotEmpty())
+                paths = pathPtrs.mapNotNull { runCatching { readPathItem(it) }.getOrNull() }
+            val extras = GimpExtras(guides.filter { it.position in 0..(if (it.horizontal) h else w) },
+                samplePoints.filter { it.x in 0 until w && it.y in 0 until h }, channels, keptProps)
+            return DocState(w, h, Tree.normalize(layers.map { it.first }), active.id, selection = selection,
+                paths = paths, gimp = extras)
         }
 
         /** Groups seen so far, by their item path → their layer id. */
@@ -478,14 +610,12 @@ object XcfReader {
                     XcfProps.GROUP_ITEM -> info.group = true
                     XcfProps.GROUP_ITEM_FLAGS -> info.expanded = (u32() and 1) != 0
                     XcfProps.ITEM_PATH -> info.path = List(len / 4) { u32() }
-                    XcfProps.PARASITES -> while (buf.position() < start + len) {
-                        val name = string()
-                        u32()
-                        val size = length(u32())
-                        val data = ByteArray(size).also { buf.get(it) }
-                        if (name == XcfWriter.TEXT_PARASITE) info.text = XcfWriter.textFromString(String(data, Charsets.UTF_8))
+                    XcfProps.PARASITES -> for (p in parasites(start + len)) {
+                        if (p.name == XcfWriter.TEXT_PARASITE) info.text = XcfWriter.textFromString(String(p.data, Charsets.UTF_8))
+                        else info.parasites += p
                     }
                     XcfProps.APPLY_MASK -> info.applyMask = u32() != 0
+                    in XcfProps.keptItemProps -> info.kept += raw(t, len)
                 }
                 goTo(start.toLong() + len)
             }
@@ -498,7 +628,9 @@ object XcfReader {
             if (info.group) {
                 val id = Layer.newId()
                 groups[info.path] = id
-                return Layer(id, info.name.ifEmpty { "Group" }, Bitmaps.blank(1, 1), visible = info.visible,
+                val g = Bitmaps.blank(1, 1)
+                return Layer(id, info.name.ifEmpty { "Group" }, g, visible = info.visible,
+                    xcf = extras(info, g),
                     opacity = info.opacity, mode = info.mode, legacy = info.legacy, blendSpace = info.blendSpace,
                     compositeSpace = info.compositeSpace, compositeMode = info.compositeMode,
                     group = true, parent = parent, expanded = info.expanded,
@@ -512,7 +644,34 @@ object XcfReader {
                 legacy = info.legacy, blendSpace = info.blendSpace, compositeSpace = info.compositeSpace,
                 compositeMode = info.compositeMode, lockAlpha = info.lockAlpha, text = info.text,
                 mask = maskBitmap?.takeIf { it.width == bmp.width && it.height == bmp.height },
-                maskEnabled = info.applyMask, parent = parent, xcfMode = info.rawMode) to info.active
+                maskEnabled = info.applyMask, parent = parent, xcfMode = info.rawMode, xcf = extras(info, bmp)) to info.active
+        }
+
+        fun extras(info: LayerInfo, bmp: Bitmap) =
+            if (info.kept.isEmpty() && info.parasites.isEmpty()) null
+            else XcfLayerData(info.kept.toList(), info.parasites.toList(), bmp, bmp.generationId)
+
+        /** A saved channel (or the selection, if it says so): its grey pixels and the properties GAKO keeps. */
+        fun readChannel(at: Long, imageW: Int, imageH: Int): Pair<Channel, Boolean>? {
+            goTo(at)
+            val cw = u32(); val ch = u32()
+            val name = string()
+            var selection = false
+            val kept = ArrayList<XcfProp>()
+            while (true) {
+                val t = u32(); val len = length(u32())
+                val start = buf.position()
+                when (t) {
+                    XcfProps.END -> break
+                    XcfProps.SELECTION -> selection = true
+                    in XcfProps.keptChannelProps -> kept += raw(t, len)
+                    XcfProps.PARASITES -> kept += raw(t, len)
+                }
+                goTo(start.toLong() + len)
+            }
+            if (cw != imageW || ch != imageH) return null
+            val bmp = readHierarchy(ptr(), -1, 1) ?: return null
+            return Channel(name, bmp, kept) to selection
         }
 
         /** A layer mask channel, as an opaque grey bitmap. */
