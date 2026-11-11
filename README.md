@@ -22,7 +22,8 @@ operation) for Android, and puts a touch interface on top designed for one hand 
 - Layer masks (white, black, from alpha, selection or a grey copy): paint, fill, filter or curve the mask;
   disable, apply or delete it. Masks survive XCF in both directions
 - Undo/redo for everything, with GIMP's Undo History; painting only stores the pixels a stroke touched
-- Image: canvas size (with anchor), scale image, crop to selection / content, rotate, flip
+- Image: canvas size (with anchor), scale image, crop to selection / content, rotate (90° steps or any angle,
+  optionally cropping the empty corners away), flip
 
 **Tools** (one finger uses the tool, two fingers always pan and zoom)
 - Paint: paintbrush, pencil, airbrush, eraser, clone, heal, smudge, blur, dodge/burn, bucket fill, gradient

@@ -742,9 +742,6 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun baseName() = documentName.substringBeforeLast('.').ifBlank { "untitled" }
 
-    /** The document as it is (the Paths tool keeps it up to date). */
-    private fun withPaths(d: DocState): DocState = d
-
     // ---------------------------------------------------------------- paths
 
     /**
@@ -924,7 +921,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         if (d === savedForRecovery && revision == savedRevision) return
         // Copy pixels (and masks) a stroke might change while the write runs.
         val snapshot = runCatching {
-            withPaths(d).copy(layers = d.layers.map { l ->
+            d.copy(layers = d.layers.map { l ->
                 l.copy(bitmap = l.bitmap.copy(Bitmap.Config.ARGB_8888, false) ?: return,
                     mask = l.mask?.let { it.copy(Bitmap.Config.ARGB_8888, false) ?: return })
             })
@@ -1011,7 +1008,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         if (uri == null || format == null) { startExport(project = true); return }
         cancelSession(); cancelCurves(); if (text != null) commitText(); input.reset()
         busy = Busy("Saving")
-        val file = withPaths(d)
+        val file = d
         viewModelScope.launch {
             try {
                 // Encode fully first, so a failure never leaves the project file half-written.
@@ -1081,7 +1078,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun runExport() {
         val s = exportSession ?: return
-        val d = doc?.let(::withPaths) ?: return
+        val d = doc ?: return
         if (busy != null) return
         val name = s.name.trim()
         if (name.isEmpty()) { say("Give the file a name"); return }
@@ -2218,6 +2215,7 @@ sealed interface Dialog {
     data object NewImage : Dialog
     data object CanvasSize : Dialog
     data object ScaleImage : Dialog
+    data object RotateImage : Dialog
     data object ScaleLayer : Dialog
     data class RenameLayer(val id: Long) : Dialog
     data class ModifySelection(val kind: EditorViewModel.SelectionChange) : Dialog
