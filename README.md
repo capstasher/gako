@@ -19,7 +19,7 @@ operation) for Android, and puts a touch interface on top designed for one hand 
 - Layers can be any size and sit anywhere; scale layer, layer to image size, alpha to selection
 - Layer masks (white, black, from alpha, selection or a grey copy): paint, fill, filter or curve the mask;
   disable, apply or delete it. Masks survive XCF in both directions
-- Undo/redo for everything; painting only stores the pixels a stroke touched
+- Undo/redo for everything, with GIMP's Undo History; painting only stores the pixels a stroke touched
 - Image: canvas size (with anchor), scale image, crop to selection / content, rotate, flip
 
 **Tools** (one finger uses the tool, two fingers always pan and zoom)
@@ -27,11 +27,14 @@ operation) for Android, and puts a touch interface on top designed for one hand 
   (linear/radial/mirrored, FG→BG or FG→transparent), text (re-editable), colour picker; stylus pressure
 - Select: rectangle, ellipse, free (lasso), fuzzy, by colour; replace/add/subtract/intersect, feather;
   Select menu: all, none, invert, feather, grow, shrink, border, from layer alpha
-- Transform: move, unified transform (scale/rotate/flip with handles), crop (with aspect presets)
-- Filters, Curves and Levels respect the selection; Edit: cut/copy/paste (also via Android's clipboard), clear, fill
+- Transform: move, unified transform (scale/rotate/flip with handles, or perspective by dragging corners),
+  crop (with aspect presets)
+- Filters, Curves and Levels respect the selection; Filters > Repeat Last and Recently Used
+- Edit: cut/copy/paste (also via Android's clipboard), clear, fill
 
 **Files**
-- Save projects as **XCF** (GIMP's own format; GIMP 2.10/3.x open them with layers) or OpenRaster
+- Save projects as **XCF** (GIMP's own format; GIMP 2.10/3.x open them with layers and masks) or OpenRaster;
+  File > Save overwrites the project file, and New/Open ask before discarding unsaved work
 - Open XCF from any GIMP version (all precisions, RLE/zlib, masks, groups), ORA, and every image Android decodes
 - Export PNG, JPEG, WebP, HEIF, TIFF, GIF, BMP, TGA, ICO, PPM, ORA; share; "Open with GAKO"
 - Unsaved work is kept in a recovery file and restored if Android closes the app
@@ -40,6 +43,8 @@ operation) for Android, and puts a touch interface on top designed for one hand 
 - GIMP's menus (File, Edit, Select, Image, Layers, Colours, Filters) along the bottom edge, nested for thumbs;
   a side rail on landscape screens, tablets and unfolded foldables
 - A floating dock with the current tool, FG/BG colours and undo/redo; tool options in one strip above the menus
+- Pens: pressure, the eraser end erases, and once a pen is used fingers only navigate (palm rejection)
+- Hardware keyboards get GIMP's shortcuts (Ctrl+Z/S/C/V/A, tool letters, [ ] brush size, Enter/Esc)
 
 ### Roadmap
 1. ✅ **Engine**: GEGL on Android, filters on photos
