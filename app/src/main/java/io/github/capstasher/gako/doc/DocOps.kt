@@ -77,7 +77,7 @@ object DocOps {
                 x = r.left.roundToInt(), y = r.top.roundToInt())
         }
         val sel = doc.selection?.let { Selections.make(transformedMask(it.mask, m, nw, nh)) }
-        return doc.copy(width = nw, height = nh, layers = layers, selection = sel)
+        return doc.copy(width = nw, height = nh, layers = layers, selection = sel, paths = doc.paths.mapped(m))
     }
 
     /** Crops the canvas to [r] (canvas coordinates), dropping pixels outside it. */
@@ -100,7 +100,8 @@ object DocOps {
             Canvas(m).drawBitmap(s.mask, -crop.left.toFloat(), -crop.top.toFloat(), null)
             Selections.make(m)
         }
-        return doc.copy(width = crop.width(), height = crop.height(), layers = layers, selection = sel)
+        return doc.copy(width = crop.width(), height = crop.height(), layers = layers, selection = sel,
+            paths = doc.paths.mapped(Matrix().apply { setTranslate(-crop.left.toFloat(), -crop.top.toFloat()) }))
     }
 
     /** Image > Canvas Size: a bigger or smaller canvas, layers moved by ([dx], [dy]). */
@@ -120,7 +121,8 @@ object DocOps {
             Canvas(m).drawBitmap(s.mask, dx.toFloat(), dy.toFloat(), null)
             Selections.make(m)
         }
-        return doc.copy(width = w, height = h, layers = layers, selection = sel)
+        return doc.copy(width = w, height = h, layers = layers, selection = sel,
+            paths = doc.paths.mapped(Matrix().apply { setTranslate(dx.toFloat(), dy.toFloat()) }))
     }
 
     /** Image > Scale Image: every layer, its position and the selection scale together. */
@@ -135,7 +137,8 @@ object DocOps {
             l.copy(bitmap = scaled(l.bitmap, nw, nh), mask = l.mask?.let { scaled(it, nw, nh) }, x = nx, y = ny)
         }
         val sel = doc.selection?.let { Selections.make(Bitmap.createScaledBitmap(it.mask, w, h, true)) }
-        return doc.copy(width = w, height = h, layers = layers, selection = sel)
+        return doc.copy(width = w, height = h, layers = layers, selection = sel,
+            paths = doc.paths.mapped(Matrix().apply { setScale(sx, sy) }))
     }
 
     /** Good-quality downscale (repeated halving, like a mipmap) or bilinear upscale. */

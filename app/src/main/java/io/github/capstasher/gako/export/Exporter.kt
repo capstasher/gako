@@ -76,7 +76,7 @@ object Exporter {
             ExportFormat.Psd -> {
                 val sized = if (options.scale in 1..99) DocOps.scale(doc,
                     (doc.width * options.scale / 100).coerceAtLeast(1), (doc.height * options.scale / 100).coerceAtLeast(1)) else doc
-                io.github.capstasher.gako.doc.PsdWriter.write(sized, out)
+                io.github.capstasher.gako.doc.PsdWriter.write(sized, out, scratch)
                 return
             }
             else -> {

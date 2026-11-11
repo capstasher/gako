@@ -9,10 +9,16 @@ object Fonts {
 
     private val typefaces = HashMap<String, Typeface?>()
 
-    /** A font file as a Typeface, or null if it can't be read. */
+    /** A font file as a Typeface, or null if it isn't a font. */
     fun load(path: String): Typeface? = synchronized(typefaces) {
-        typefaces.getOrPut(path) { runCatching { Typeface.createFromFile(path) }.getOrNull() }
+        typefaces.getOrPut(path) { if (isFont(path)) runCatching { Typeface.createFromFile(path) }.getOrNull() else null }
     }
+
+    /** Typeface.createFromFile quietly returns the default font for junk; Font.Builder actually checks. */
+    fun isFont(path: String): Boolean = runCatching { android.graphics.fonts.Font.Builder(File(path)).build() }.isSuccess
+
+    /** Forget a cached face (a file was replaced). */
+    fun forget(path: String) = synchronized(typefaces) { typefaces.remove(path) }
 
     /** "DancingScript" → "Dancing Script". */
     fun pretty(s: String) = s.replace(Regex("(?<=[a-z])(?=[A-Z])"), " ").replace('_', ' ')

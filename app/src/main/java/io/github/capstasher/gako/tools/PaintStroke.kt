@@ -53,9 +53,13 @@ class PaintStroke(
 
     private val baseSize = options.size.coerceAtLeast(1f)
     private val hard = tool == Tool.Pencil
-    private val round = options.brushShape == BrushShape.Round
-    private val dab: Bitmap? = if (hard && round) null
-        else dabBitmap(baseSize, if (hard) 1f else if (tool == Tool.Airbrush) 0.2f else options.hardness, options.brushShape, options.brushAngle)
+    // Tools that copy or smear pixels don't offer shapes, so they always use a round brush.
+    private val shape = if (tool in setOf(Tool.Smudge, Tool.Blur, Tool.Heal, Tool.Clone, Tool.FilterBrush)) BrushShape.Round else options.brushShape
+    private val round = shape == BrushShape.Round
+    private val dabHardness = if (hard) 1f else if (tool == Tool.Airbrush) 0.2f else options.hardness
+    private val dab: Bitmap? = if (hard && round) null else dabBitmap(baseSize, dabHardness, shape, options.brushAngle)
+    /** A mirror across one axis turns a flat nib the other way. */
+    private val dabMirrored: Bitmap? = if (round || dab == null) dab else dabBitmap(baseSize, dabHardness, shape, -options.brushAngle)
     private val dabPaint = Paint().apply {
         isFilterBitmap = true
         if (tool == Tool.Airbrush) alpha = (options.airRate * 160).roundToInt().coerceIn(4, 255)
@@ -64,7 +68,7 @@ class PaintStroke(
     // Flat nibs need closer dabs, or their thin edge shows each one.
     private val spacing = when {
         tool == Tool.Airbrush -> max(1f, baseSize * 0.08f)
-        options.brushShape != BrushShape.Round -> max(0.5f, baseSize * 0.03f)
+        shape != BrushShape.Round -> max(0.5f, baseSize * 0.03f)
         else -> max(0.5f, baseSize * if (hard) 0.2f else 0.1f)
     }
 
@@ -237,7 +241,7 @@ class PaintStroke(
         carry = 0f
         val dirty = Rect()
         stamp(lx, ly, pressure, dirty)
-        render(dirty)
+        flush()
     }
 
     fun moveTo(x: Float, y: Float, pressure: Float = 1f) {
@@ -255,7 +259,7 @@ class PaintStroke(
         }
         carry = (carry + dist) % spacing
         last = lx to ly
-        if (!dirty.isEmpty) render(dirty)
+        flush()
     }
 
     /** Airbrush: keep adding paint while the finger rests. */
@@ -263,7 +267,7 @@ class PaintStroke(
         val (px, py) = last ?: return
         val dirty = Rect()
         stamp(px, py, pressure, dirty)
-        render(dirty)
+        flush()
     }
 
     // Symmetry, in layer coordinates; tools that copy pixels around don't mirror.
@@ -271,17 +275,28 @@ class PaintStroke(
     private val axisX = mirrorX?.takeIf { mirrorable }?.minus(layer.x)
     private val axisY = mirrorY?.takeIf { mirrorable }?.minus(layer.y)
 
-    private fun stamp(x: Float, y: Float, pressure: Float, dirty: Rect) {
-        stampOne(x, y, pressure, dirty)
+    /**
+     * Dirty areas are kept per mirror copy (they're far apart) and flushed once they grow big, so a
+     * long fast swipe or a symmetric stroke never re-composites the space between the dabs.
+     */
+    private val dirties = Array(4) { Rect() }
+
+    private fun stamp(x: Float, y: Float, pressure: Float, @Suppress("UNUSED_PARAMETER") dirty: Rect) {
+        stampOne(x, y, pressure, dirties[0], dab)
         val ax = axisX
         val ay = axisY
-        if (ax != null) stampOne(2 * ax - x, y, pressure, dirty)
-        if (ay != null) stampOne(x, 2 * ay - y, pressure, dirty)
-        if (ax != null && ay != null) stampOne(2 * ax - x, 2 * ay - y, pressure, dirty)
+        if (ax != null) stampOne(2 * ax - x, y, pressure, dirties[1], dabMirrored)
+        if (ay != null) stampOne(x, 2 * ay - y, pressure, dirties[2], dabMirrored)
+        if (ax != null && ay != null) stampOne(2 * ax - x, 2 * ay - y, pressure, dirties[3], dab)
+        for (d in dirties) if (d.width().toLong() * d.height() > FLUSH_AREA) { render(d); d.setEmpty() }
     }
 
-    private fun stampOne(x: Float, y: Float, pressure: Float, dirty: Rect) {
-        if (tool == Tool.Smudge) { smudgeDab(x, y, dirty); return }
+    private fun flush() {
+        for (d in dirties) if (!d.isEmpty) { render(d); d.setEmpty() }
+    }
+
+    private fun stampOne(x: Float, y: Float, pressure: Float, dirty: Rect, dab: Bitmap?) {
+        if (tool == Tool.Smudge) { smudgeDab(x, y, dirty); refreshView(dirty); dirty.setEmpty(); return }
         val size = baseSize * pressure.coerceIn(0.1f, 2f)
         val r = size / 2f
         val box = Rect(floor(x - r - 1).toInt(), floor(y - r - 1).toInt(), ceil(x + r + 1).toInt(), ceil(y + r + 1).toInt())
@@ -385,6 +400,9 @@ class PaintStroke(
     }
 
     companion object {
+        /** A dirty area bigger than this (pixels) is composited right away rather than growing further. */
+        private const val FLUSH_AREA = 512L * 512L
+
         private val dabCache = HashMap<String, Bitmap>()
 
         /**
@@ -410,7 +428,8 @@ class PaintStroke(
                     val v = -px * sin + py * cos
                     val dist = when (shape) {
                         BrushShape.Round -> sqrt(px * px + py * py) / r
-                        BrushShape.Square -> max(kotlin.math.abs(u), kotlin.math.abs(v)) / (r * 0.75f)
+                        // Half-side r/√2, so the corners stay inside the dab at any angle.
+                        BrushShape.Square -> max(kotlin.math.abs(u), kotlin.math.abs(v)) / (r * 0.7f)
                         BrushShape.Calligraphy -> sqrt(u * u + (v / 0.22f) * (v / 0.22f)) / r
                     }
                     val a = when {

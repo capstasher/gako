@@ -36,8 +36,10 @@ private object XcfProps {
     const val COMPRESSION = 17
     const val RESOLUTION = 19
     const val PARASITES = 21
+    const val PATHS = 23
     const val VECTORS = 25
     const val GROUP_ITEM = 29
+    const val ITEM_PATH = 30
     const val FLOAT_OPACITY = 33
     const val TILE = 64
 
@@ -114,7 +116,7 @@ object XcfWriter {
             if (o.has("fontFile")) o.getString("fontFile") else null)
     }.getOrNull()
 
-    /** PROP_VECTORS (version 1): each path one Bézier stroke of handle-anchor-handle triplets. */
+    /** PROP_VECTORS (version 1): each path's Bézier strokes as handle-anchor-handle triplets. */
     private fun writePaths(b: Buf, paths: List<VectorPath>) {
         val p = Buf()
         p.u32(1)                       // version
@@ -124,16 +126,18 @@ object XcfWriter {
             p.string(v.name)
             p.u32(0); p.u32(1); p.u32(0)   // tattoo, visible, linked
             p.u32(0)                   // parasites
-            p.u32(1)                   // strokes
-            p.u32(1)                   // Bézier stroke
-            p.u32(if (v.closed) 1 else 0)
-            p.u32(2)                   // floats per point: x, y
-            p.u32(v.anchors * 3)
-            for (i in 0 until v.anchors) {
-                val o = i * 6
-                p.u32(1); p.f32(v.points[o]); p.f32(v.points[o + 1])
-                p.u32(0); p.f32(v.points[o + 2]); p.f32(v.points[o + 3])
-                p.u32(1); p.f32(v.points[o + 4]); p.f32(v.points[o + 5])
+            p.u32(v.strokes.size)
+            for (st in v.strokes) {
+                p.u32(1)               // Bézier stroke
+                p.u32(if (st.closed) 1 else 0)
+                p.u32(2)               // floats per point: x, y
+                p.u32(st.anchors * 3)
+                for (i in 0 until st.anchors) {
+                    val o = i * 6
+                    p.u32(1); p.f32(st.points[o]); p.f32(st.points[o + 1])
+                    p.u32(0); p.f32(st.points[o + 2]); p.f32(st.points[o + 3])
+                    p.u32(1); p.f32(st.points[o + 4]); p.f32(st.points[o + 5])
+                }
             }
         }
         b.u32(XcfProps.VECTORS); b.u32(p.size); b.bytes(p.data, p.size)
@@ -270,6 +274,7 @@ object XcfReader {
         var lockAlpha: Boolean = false, var active: Boolean = false, var group: Boolean = false,
         var applyMask: Boolean = true,
         var text: TextInfo? = null,
+        var path: List<Int> = emptyList(),
     )
 
     private class Parser(val buf: ByteBuffer) {
@@ -281,9 +286,25 @@ object XcfReader {
 
         fun ptr(): Long = if (wide) buf.long else buf.int.toLong() and 0xFFFFFFFFL
         fun u32() = buf.int
+
+        // Checked seeks and counts: a damaged or hostile file must fail, never loop or run backwards.
+        fun goTo(pos: Long) {
+            if (pos < 0 || pos > buf.limit()) error("The file is damaged (an offset points outside it)")
+            buf.position(pos.toInt())
+        }
+        fun count(n: Int, minBytesEach: Int): Int {
+            if (n < 0 || n.toLong() * minBytesEach > buf.remaining()) error("The file is damaged (a count is too large)")
+            return n
+        }
+        fun length(n: Int): Int {
+            if (n < 0 || n > buf.remaining()) error("The file is damaged (a length is wrong)")
+            return n
+        }
+
         fun string(): String {
             val n = u32()
             if (n <= 0) return ""
+            length(n)
             val b = ByteArray(n)
             buf.get(b)
             return String(b, 0, (n - 1).coerceAtLeast(0), Charsets.UTF_8)
@@ -291,33 +312,86 @@ object XcfReader {
 
         var paths: List<VectorPath> = emptyList()
 
-        /** PROP_VECTORS: keeps each path's first Bézier stroke. */
+        /** PROP_VECTORS: every path with all its Bézier strokes. */
         fun readPaths(): List<VectorPath> {
             if (u32() != 1) return emptyList()
             u32()                                  // active
-            val n = u32()
+            val n = count(u32(), 24)
             val out = ArrayList<VectorPath>()
             repeat(n) {
                 val name = string()
                 u32(); u32(); u32()                // tattoo, visible, linked
-                val parasites = u32()
-                val strokes = u32()
-                repeat(parasites) { string(); u32(); val size = u32(); buf.position(buf.position() + size) }
-                var first: VectorPath? = null
+                val parasites = count(u32(), 12)
+                val strokes = count(u32(), 16)
+                repeat(parasites) { string(); u32(); val size = length(u32()); goTo(buf.position() + size.toLong()) }
+                val list = ArrayList<PathStroke>()
                 repeat(strokes) {
                     val type = u32()
                     val closed = u32() != 0
                     val nf = u32()
-                    val np = u32()
+                    if (nf !in 2..6) error("The file is damaged (path point size)")
+                    val np = count(u32(), 4 + nf * 4)
                     val pts = ArrayList<Float>()
                     repeat(np) {
                         u32()                      // anchor or handle; the order says which
                         val f = FloatArray(nf) { buf.float }
                         pts += f[0]; pts += f[1]
                     }
-                    if (first == null && type == 1 && np >= 3 && np % 3 == 0) first = VectorPath(name, pts.toFloatArray(), closed)
+                    if (type == 1 && np >= 3 && np % 3 == 0) list += PathStroke(pts.toFloatArray(), closed)
                 }
-                first?.let { out += it }
+                if (list.isNotEmpty()) out += VectorPath(name, list)
+            }
+            return out
+        }
+
+        /**
+         * PROP_PATHS, the older format GIMP still writes when it can: points typed 1 (anchor),
+         * 2 (control) or 3 (start of a new stroke), as anchor, out, in, anchor…; two controls after a
+         * stroke's last anchor close it.
+         */
+        fun readOldPaths(): List<VectorPath> {
+            u32()                                  // active
+            val n = count(u32(), 21)
+            val out = ArrayList<VectorPath>()
+            repeat(n) {
+                val name = string()
+                u32()                              // linked
+                buf.get()                          // state
+                val closedFlag = u32() != 0
+                val np = count(u32(), 12)
+                val version = u32()
+                if (version >= 2) u32()            // dummy
+                if (version >= 3) u32()            // tattoo
+                val strokes = ArrayList<PathStroke>()
+                val anchors = ArrayList<FloatArray>()  // in-x, in-y, x, y, out-x, out-y
+                var controls = ArrayList<Pair<Float, Float>>()
+                fun endStroke() {
+                    if (anchors.isEmpty()) return
+                    anchors.last().let { a -> controls.getOrNull(0)?.let { (x, y) -> a[4] = x; a[5] = y } }
+                    val closed = controls.size >= 2 || (closedFlag && strokes.isEmpty())
+                    if (controls.size >= 2) anchors.first().let { a -> a[0] = controls[1].first; a[1] = controls[1].second }
+                    if (anchors.size >= 2) strokes += PathStroke(anchors.flatMap { it.asList() }.toFloatArray(), closed)
+                    anchors.clear()
+                    controls = ArrayList()
+                }
+                repeat(np) {
+                    val type = u32()
+                    val x: Float
+                    val y: Float
+                    if (version == 1) { x = u32().toFloat(); y = u32().toFloat() } else { x = buf.float; y = buf.float }
+                    if (type == 3 && anchors.isNotEmpty()) endStroke()
+                    if (type == 1 || type == 3) {
+                        val a = floatArrayOf(x, y, x, y, x, y)
+                        anchors.lastOrNull()?.let { prev ->
+                            controls.getOrNull(0)?.let { (cx, cy) -> prev[4] = cx; prev[5] = cy }
+                            controls.getOrNull(1)?.let { (cx, cy) -> a[0] = cx; a[1] = cy }
+                        }
+                        anchors += a
+                        controls = ArrayList()
+                    } else controls += x to y
+                }
+                endStroke()
+                if (strokes.isNotEmpty()) out += VectorPath(name, strokes)
             }
             return out
         }
@@ -330,6 +404,7 @@ object XcfReader {
             version = if (v == "file") 0 else v.removePrefix("v").toIntOrNull() ?: error("Unknown XCF version $v")
             val w = u32()
             val h = u32()
+            if (w !in 1..262144 || h !in 1..262144 || w.toLong() * h > 24_000_000L) error("That image is ${w}×$h; GAKO opens up to 24 megapixels")
             val baseType = u32()
             if (version >= 4) precision = u32()
             if (version == 4) precision = when (precision) { 0 -> 150; 1 -> 250; 2 -> 300; 3 -> 500; else -> 600 }
@@ -339,43 +414,47 @@ object XcfReader {
             // Image properties.
             while (true) {
                 val type = u32()
-                val len = u32()
+                val len = length(u32())
                 val start = buf.position()
                 when (type) {
                     XcfProps.END -> break
                     XcfProps.COMPRESSION -> compression = buf.get().toInt()
                     XcfProps.VECTORS -> paths = runCatching { readPaths() }.getOrDefault(emptyList())
+                    XcfProps.PATHS -> if (paths.isEmpty()) paths = runCatching { readOldPaths() }.getOrDefault(emptyList())
                     XcfProps.COLORMAP -> {
-                        val n = u32()
+                        val n = count(u32(), 3)
                         colormap = IntArray(n) {
                             val r = buf.get().toInt() and 0xFF; val g = buf.get().toInt() and 0xFF; val b = buf.get().toInt() and 0xFF
                             (r shl 16) or (g shl 8) or b
                         }
                     }
                 }
-                buf.position(start + len)
+                goTo(start.toLong() + len)
             }
             val layerPtrs = mutableListOf<Long>()
             while (true) { val p = ptr(); if (p == 0L) break; layerPtrs += p }
 
             val layers = mutableListOf<Pair<Layer, Boolean>>()
-            for (p in layerPtrs.asReversed()) {
-                val l = readLayer(p, baseType) ?: continue
-                layers += l
-            }
+            // Groups come before their children in the file (top to bottom): read in file order so
+            // each child knows its groups, then stack bottom-up.
+            val read = layerPtrs.mapNotNull { readLayer(it, baseType) }
+            layers += read.asReversed()
             if (layers.isEmpty()) error("This XCF file has no layers GAKO can show")
             val active = layers.lastOrNull { it.second }?.first ?: layers.last().first
             return DocState(w, h, layers.map { it.first }, active.id, paths = paths)
         }
 
+        /** Groups seen so far, by their item path: whether they show, and their opacity. */
+        val groups = HashMap<List<Int>, Pair<Boolean, Float>>()
+
         fun readLayer(at: Long, baseType: Int): Pair<Layer, Boolean>? {
-            buf.position(at.toInt())
+            goTo(at)
             val w = u32(); val h = u32(); val type = u32()
             val info = LayerInfo(string(), w, h, type)
             var opacityFloat: Float? = null
             while (true) {
                 val t = u32()
-                val len = u32()
+                val len = length(u32())
                 val start = buf.position()
                 when (t) {
                     XcfProps.END -> break
@@ -387,21 +466,34 @@ object XcfReader {
                     XcfProps.LOCK_ALPHA -> info.lockAlpha = u32() != 0
                     XcfProps.OFFSETS -> { info.x = u32(); info.y = u32() }
                     XcfProps.GROUP_ITEM -> info.group = true
+                    XcfProps.ITEM_PATH -> info.path = List(len / 4) { u32() }
                     XcfProps.PARASITES -> while (buf.position() < start + len) {
                         val name = string()
                         u32()
-                        val size = u32()
+                        val size = length(u32())
                         val data = ByteArray(size).also { buf.get(it) }
                         if (name == XcfWriter.TEXT_PARASITE) info.text = XcfWriter.textFromString(String(data, Charsets.UTF_8))
                     }
                     XcfProps.APPLY_MASK -> info.applyMask = u32() != 0
                 }
-                buf.position(start + len)
+                goTo(start.toLong() + len)
             }
             opacityFloat?.let { info.opacity = it.coerceIn(0f, 1f) }
             val hierarchy = ptr()
             val mask = ptr()
-            if (info.group || w <= 0 || h <= 0) return null
+            // A layer inside groups shows only if they all do, at their combined opacity.
+            var shown = info.visible
+            var opacity = info.opacity
+            for (n in 1 until info.path.size) {
+                groups[info.path.subList(0, n)]?.let { (v, o) -> shown = shown && v; opacity *= o }
+            }
+            if (info.group) {
+                groups[info.path] = shown to opacity
+                return null
+            }
+            info.visible = shown
+            info.opacity = opacity
+            if (w <= 0 || h <= 0) return null
             val bmp = readHierarchy(hierarchy, type, baseType) ?: return null
             val maskBitmap = if (mask != 0L) readMask(mask) else null
             return Layer(Layer.newId(), info.name.ifEmpty { "Layer" }, bmp, info.x, info.y, info.visible,
@@ -412,13 +504,13 @@ object XcfReader {
 
         /** A layer mask channel, as an opaque grey bitmap. */
         fun readMask(at: Long): Bitmap? {
-            buf.position(at.toInt())
+            goTo(at)
             u32(); u32()
             string()
             while (true) {
-                val t = u32(); val len = u32()
+                val t = u32(); val len = length(u32())
                 if (t == XcfProps.END) break
-                buf.position(buf.position() + len)
+                goTo(buf.position().toLong() + len)
             }
             return readHierarchy(ptr(), -1, 1)
         }
@@ -431,10 +523,11 @@ object XcfReader {
         fun isLinear() = precision % 100 == 0
 
         fun readHierarchy(at: Long, layerType: Int, baseType: Int): Bitmap? {
-            buf.position(at.toInt())
+            goTo(at)
             val w = u32(); val h = u32(); val bpp = u32()
+            if (w <= 0 || h <= 0 || w.toLong() * h > 24_000_000L || bpp !in 1..32) error("The file is damaged (a layer's size)")
             val level = ptr()
-            buf.position(level.toInt())
+            goTo(level)
             val lw = u32(); val lh = u32()
             if (lw != w || lh != h) return null
             val tilesX = (w + XcfProps.TILE - 1) / XcfProps.TILE
