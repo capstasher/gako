@@ -109,6 +109,48 @@ object XcfWriter {
             TextFont.valueOf(o.getString("font")), o.getBoolean("bold"), o.getBoolean("italic"), TextAlign.valueOf(o.getString("align")))
     }.getOrNull()
 
+    /** Hierarchy → one level → zlib tiles. [bpp] 4 writes RGBA, 1 writes grey (the red channel). */
+    private fun writeHierarchy(b: Buf, bmp: Bitmap, bpp: Int, deflater: Deflater, tileBuf: ByteArray, compressed: ByteArray) {
+        val w = bmp.width
+        val h = bmp.height
+        b.u32(w); b.u32(h); b.u32(bpp)
+        val levelSlot = b.size; b.u32(0)
+        b.u32(0)
+        b.setU32(levelSlot, b.size)
+        b.u32(w); b.u32(h)
+        val tilesX = (w + XcfProps.TILE - 1) / XcfProps.TILE
+        val tilesY = (h + XcfProps.TILE - 1) / XcfProps.TILE
+        val tileSlots = IntArray(tilesX * tilesY) { b.size.also { b.u32(0) } }
+        b.u32(0)
+        val row = IntArray(w * XcfProps.TILE)
+        for (ty in 0 until tilesY) {
+            val y0 = ty * XcfProps.TILE
+            val th = minOf(XcfProps.TILE, h - y0)
+            bmp.getPixels(row, 0, w, 0, y0, w, th)
+            for (tx in 0 until tilesX) {
+                val x0 = tx * XcfProps.TILE
+                val tw = minOf(XcfProps.TILE, w - x0)
+                var k = 0
+                for (y in 0 until th) for (x in 0 until tw) {
+                    val p = row[y * w + x0 + x]
+                    if (bpp == 1) {
+                        tileBuf[k++] = (p shr 16).toByte()
+                    } else {
+                        tileBuf[k++] = (p shr 16).toByte(); tileBuf[k++] = (p shr 8).toByte()
+                        tileBuf[k++] = p.toByte(); tileBuf[k++] = (p ushr 24).toByte()
+                    }
+                }
+                deflater.reset()
+                deflater.setInput(tileBuf, 0, k)
+                deflater.finish()
+                var n = 0
+                while (!deflater.finished()) n += deflater.deflate(compressed, n, compressed.size - n)
+                b.setU32(tileSlots[ty * tilesX + tx], b.size)
+                b.bytes(compressed, n)
+            }
+        }
+    }
+
     fun write(doc: DocState, out: OutputStream, level: Int = 6) {
         val b = Buf()
         b.bytes("gimp xcf v010".toByteArray(Charsets.US_ASCII)); b.u8(0)
@@ -137,6 +179,7 @@ object XcfWriter {
             b.prop(XcfProps.LOCK_ALPHA, if (l.lockAlpha) 1 else 0)
             b.prop(XcfProps.OFFSETS, l.x, l.y)
             b.prop(XcfProps.MODE, XcfProps.write[l.mode] ?: 0)
+            if (l.mask != null) b.prop(XcfProps.APPLY_MASK, if (l.maskEnabled) 1 else 0)
             l.text?.let { t ->
                 // One parasite: name, flags (1 = persistent), size, data.
                 val name = TEXT_PARASITE.toByteArray(Charsets.UTF_8)
@@ -146,42 +189,22 @@ object XcfWriter {
             }
             b.u32(XcfProps.END); b.u32(0)
             val hierarchySlot = b.size; b.u32(0)
-            b.u32(0)                                       // no layer mask
+            val maskSlot = b.size; b.u32(0)
 
             b.setU32(hierarchySlot, b.size)
-            b.u32(l.width); b.u32(l.height); b.u32(4)
-            val levelSlot = b.size; b.u32(0)
-            b.u32(0)
+            writeHierarchy(b, l.bitmap, 4, deflater, tileBuf, compressed)
 
-            b.setU32(levelSlot, b.size)
-            b.u32(l.width); b.u32(l.height)
-            val tilesX = (l.width + XcfProps.TILE - 1) / XcfProps.TILE
-            val tilesY = (l.height + XcfProps.TILE - 1) / XcfProps.TILE
-            val tileSlots = IntArray(tilesX * tilesY) { b.size.also { b.u32(0) } }
-            b.u32(0)
-
-            val row = IntArray(l.width * XcfProps.TILE)
-            for (ty in 0 until tilesY) {
-                val y0 = ty * XcfProps.TILE
-                val th = minOf(XcfProps.TILE, l.height - y0)
-                l.bitmap.getPixels(row, 0, l.width, 0, y0, l.width, th)
-                for (tx in 0 until tilesX) {
-                    val x0 = tx * XcfProps.TILE
-                    val tw = minOf(XcfProps.TILE, l.width - x0)
-                    var k = 0
-                    for (y in 0 until th) for (x in 0 until tw) {
-                        val p = row[y * l.width + x0 + x]
-                        tileBuf[k++] = (p shr 16).toByte(); tileBuf[k++] = (p shr 8).toByte()
-                        tileBuf[k++] = p.toByte(); tileBuf[k++] = (p ushr 24).toByte()
-                    }
-                    deflater.reset()
-                    deflater.setInput(tileBuf, 0, k)
-                    deflater.finish()
-                    var n = 0
-                    while (!deflater.finished()) n += deflater.deflate(compressed, n, compressed.size - n)
-                    b.setU32(tileSlots[ty * tilesX + tx], b.size)
-                    b.bytes(compressed, n)
-                }
+            l.mask?.let { m ->
+                // A layer mask is a channel: size, name, properties, then 1-byte grey tiles.
+                b.setU32(maskSlot, b.size)
+                b.u32(m.width); b.u32(m.height)
+                b.string("${l.name} mask")
+                b.prop(XcfProps.OPACITY, 255)
+                b.prop(XcfProps.VISIBLE, 0)
+                b.u32(XcfProps.END); b.u32(0)
+                val h = b.size; b.u32(0)
+                b.setU32(h, b.size)
+                writeHierarchy(b, m, 1, deflater, tileBuf, compressed)
             }
         }
         deflater.end()
@@ -315,12 +338,15 @@ object XcfReader {
             val mask = ptr()
             if (info.group || w <= 0 || h <= 0) return null
             val bmp = readHierarchy(hierarchy, type, baseType) ?: return null
-            if (mask != 0L && info.applyMask) applyMask(bmp, mask)
+            val maskBitmap = if (mask != 0L) readMask(mask) else null
             return Layer(Layer.newId(), info.name.ifEmpty { "Layer" }, bmp, info.x, info.y, info.visible,
-                info.opacity, info.mode, info.lockAlpha, info.text) to info.active
+                info.opacity, info.mode, info.lockAlpha, info.text,
+                mask = maskBitmap?.takeIf { it.width == bmp.width && it.height == bmp.height },
+                maskEnabled = info.applyMask) to info.active
         }
 
-        fun applyMask(bmp: Bitmap, at: Long) {
+        /** A layer mask channel, as an opaque grey bitmap. */
+        fun readMask(at: Long): Bitmap? {
             buf.position(at.toInt())
             u32(); u32()
             string()
@@ -329,16 +355,7 @@ object XcfReader {
                 if (t == XcfProps.END) break
                 buf.position(buf.position() + len)
             }
-            val hierarchy = ptr()
-            val m = readHierarchy(hierarchy, -1, 1) ?: return
-            // The mask is grey: use its brightness as alpha.
-            val alpha = m.extractAlpha().let { a ->
-                val px = IntArray(m.width * m.height)
-                m.getPixels(px, 0, m.width, 0, 0, m.width, m.height)
-                val bytes = ByteArray(px.size) { (px[it] and 0xFF).toByte() }
-                Selections.maskFromBytes(bytes, m.width, m.height).also { a.recycle() }
-            }
-            Bitmaps.maskIn(Canvas(bmp), alpha)
+            return readHierarchy(ptr(), -1, 1)
         }
 
         /** Bytes per channel and whether values are linear light, from the precision. */
@@ -363,7 +380,8 @@ object XcfReader {
             val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
             val tile = ByteArray(XcfProps.TILE * XcfProps.TILE * bpp)
             val px = IntArray(XcfProps.TILE * XcfProps.TILE)
-            val toSrgb = if (isLinear()) IntArray(4096) { linearToSrgb(it / 4095.0) } else null
+            // Colour is converted to sRGB; mask values are opacities and stay as they are.
+            val toSrgb = if (isLinear() && layerType >= 0) IntArray(4096) { linearToSrgb(it / 4095.0) } else null
             val inflater = Inflater()
             for (ty in 0 until tilesY) for (tx in 0 until tilesX) {
                 val i = ty * tilesX + tx

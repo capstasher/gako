@@ -128,6 +128,29 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var curves by mutableStateOf<CurvesSession?>(null); internal set
     var dialog by mutableStateOf<Dialog?>(null)
 
+    /** Tools, filters and curves work on the active layer's mask instead of its pixels. */
+    var editMask by mutableStateOf(false)
+    val editingMask: Boolean get() = editMask && doc?.active?.mask != null
+
+    /** What edits go to: the active layer, or its mask dressed up as a layer (alpha locked, opaque grey). */
+    internal fun targetOf(d: DocState): Layer? {
+        val a = d.active ?: return null
+        val m = a.mask
+        return if (editMask && m != null) a.copy(bitmap = m, lockAlpha = true, text = null, mode = LayerMode.Normal,
+            opacity = 1f, mask = null) else a
+    }
+
+    /** The active layer with [b] put back where [targetOf] took it from. */
+    internal fun withTarget(l: Layer, b: Bitmap): Layer =
+        if (editMask && l.mask != null) l.copy(mask = b) else l.copy(bitmap = b, text = null)
+
+    /** Masks are grey: paint with a colour's brightness. */
+    internal fun paintColor(c: Int): Int {
+        if (!editingMask) return c
+        val l = (0.2126 * Color.red(c) + 0.7152 * Color.green(c) + 0.0722 * Color.blue(c)).roundToInt().coerceIn(0, 255)
+        return Color.rgb(l, l, l)
+    }
+
     private val messageChannel = Channel<String>(Channel.BUFFERED)
     val messages = messageChannel.receiveAsFlow()
 
@@ -279,7 +302,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         val step = undoStack.removeLastOrNull() ?: return
         when (step) {
             is Step.Snapshot -> doc = step.before
-            is Step.Patch -> doc?.layer(step.layerId)?.let { Bitmaps.put(it.bitmap, step.before, step.rect.left, step.rect.top) }
+            is Step.Patch -> doc?.layer(step.layerId)?.let { l -> step.target(l)?.let { Bitmaps.put(it, step.before, step.rect.left, step.rect.top) } }
         }
         redoStack.addLast(step)
         revision++
@@ -295,7 +318,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         val step = redoStack.removeLastOrNull() ?: return
         when (step) {
             is Step.Snapshot -> doc = step.after
-            is Step.Patch -> doc?.layer(step.layerId)?.let { Bitmaps.put(it.bitmap, step.after, step.rect.left, step.rect.top) }
+            is Step.Patch -> doc?.layer(step.layerId)?.let { l -> step.target(l)?.let { Bitmaps.put(it, step.after, step.rect.left, step.rect.top) } }
         }
         undoStack.addLast(step)
         revision++
@@ -336,13 +359,14 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
      */
     internal fun editActiveLayer(label: String, canvasRect: Rect? = null, edit: (Layer, Bitmap?) -> Unit): Boolean {
         val d = doc ?: return false
-        val layer = d.active ?: return false
+        val layer = targetOf(d) ?: return false
         val sel = Compositor.selectionFor(layer, d.selection)
         val r = DocOps.layerRect(layer, canvasRect ?: d.selection?.bounds)
         if (r.isEmpty) { say("Nothing to change there on “${layer.name}”"); return false }
         val before = Bitmaps.crop(layer.bitmap, r)
         edit(layer, sel)
-        record(Step.Patch(label, layer.id, r, before, Bitmaps.crop(layer.bitmap, r)))
+        val patch = Step.Patch(label, layer.id, r, before, Bitmaps.crop(layer.bitmap, r))
+        record(if (editingMask) patch.forMask() else patch)
         revision++
         return true
     }
@@ -755,6 +779,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         if (d.activeId == id || session != null || curves != null) return
         if (text != null) commitText()
         input.reset()
+        editMask = false
         silently(d.copy(activeId = id))
         if (tool == Tool.Transform) input.startTransform()
     }
@@ -800,6 +825,62 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         val d = doc ?: return
         val l = d.active ?: return
         change("Lock Alpha Channel", d.replace(l.copy(lockAlpha = lock)))
+    }
+
+    enum class MaskInit(val label: String) {
+        White("White (full opacity)"), Black("Black (full transparency)"), Alpha("Layer's alpha channel"),
+        Selection("Selection"), Grey("Greyscale copy of layer")
+    }
+
+    /** Layer > Mask > Add Layer Mask. */
+    fun addMask(init: MaskInit) {
+        val d = doc ?: return
+        val a = d.active ?: return
+        if (a.mask != null) { say("“${a.name}” already has a mask"); return }
+        docJob("Add Layer Mask") { state ->
+            val l = state.layer(a.id) ?: return@docJob null
+            val m = when (init) {
+                MaskInit.White -> Compositor.whiteMask(l.width, l.height)
+                MaskInit.Black -> Bitmaps.blank(l.width, l.height, Color.BLACK)
+                MaskInit.Alpha -> Compositor.maskFromAlpha(l.bitmap.extractAlpha(), l.width, l.height)
+                MaskInit.Selection -> state.selection?.let { Compositor.maskFromAlpha(it.mask, l.width, l.height, -l.x.toFloat(), -l.y.toFloat()) }
+                    ?: Compositor.whiteMask(l.width, l.height)
+                MaskInit.Grey -> Bitmaps.blank(l.width, l.height, Color.BLACK).also { g ->
+                    val p = Paint().apply {
+                        colorFilter = android.graphics.ColorMatrixColorFilter(android.graphics.ColorMatrix().apply { setSaturation(0f) })
+                    }
+                    Canvas(g).drawBitmap(l.bitmap, 0f, 0f, p)
+                }
+            }
+            state.replace(l.copy(mask = m, maskEnabled = true))
+        }
+        editMask = true
+    }
+
+    /** Layer > Mask > Apply Layer Mask: bake it into the layer's alpha. */
+    fun applyMask() {
+        val a = doc?.active ?: return
+        if (a.mask == null) return
+        editMask = false
+        docJob("Apply Layer Mask") { state ->
+            val l = state.layer(a.id) ?: return@docJob null
+            state.replace(l.copy(bitmap = Compositor.applyMask(l), mask = null, text = null))
+        }
+    }
+
+    fun deleteMask() {
+        val d = doc ?: return
+        val a = d.active ?: return
+        if (a.mask == null) return
+        editMask = false
+        change("Delete Layer Mask", d.replace(a.copy(mask = null)))
+    }
+
+    fun setMaskEnabled(enabled: Boolean) {
+        val d = doc ?: return
+        val a = d.active ?: return
+        if (a.mask == null) return
+        change(if (enabled) "Enable Layer Mask" else "Disable Layer Mask", d.replace(a.copy(maskEnabled = enabled)))
     }
 
     fun layerToImageSize() = doc?.active?.let { a -> docJob("Layer to Image Size") { DocOps.layerToImageSize(it, a.id) } }
@@ -966,8 +1047,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         if (blockedByBusy()) return
         endInteractions()
         editActiveLayer(label) { l, sel ->
-            val erase = if (l.lockAlpha) bg else 0
-            DocOps.fillLayer(l, sel, if (l.lockAlpha) erase else Color.BLACK,
+            DocOps.fillLayer(l, sel, if (l.lockAlpha) paintColor(bg) else Color.BLACK,
                 if (l.lockAlpha) BlendMode.SRC_ATOP else BlendMode.DST_OUT)
         }
     }
@@ -976,7 +1056,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         if (blockedByBusy()) return
         endInteractions()
         editActiveLayer(label) { l, sel ->
-            DocOps.fillLayer(l, sel, color, if (l.lockAlpha) BlendMode.SRC_ATOP else BlendMode.SRC_OVER)
+            DocOps.fillLayer(l, sel, paintColor(color), if (l.lockAlpha) BlendMode.SRC_ATOP else BlendMode.SRC_OVER)
         }
     }
 
@@ -1019,7 +1099,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun startCurves(levels: Boolean = false) {
         val d = doc ?: run { say("Open an image first"); return }
-        val layer = d.active ?: return
+        val layer = targetOf(d) ?: return
         if (blockedByBusy()) return
         endInteractions()
         viewModelScope.launch {
@@ -1044,14 +1124,15 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     fun applyCurves() {
         val c = curves ?: return
         val d = doc ?: return
-        val layer = d.layer(c.layerId) ?: return
+        val layer = targetOf(d)?.takeIf { it.id == c.layerId } ?: return
         val luts = c.luts()
         curves = null
         preview = null
         docJob(if (c.levels) "Levels" else "Curves") { state ->
             val result = Curves.apply(layer.bitmap, luts)
             val merged = Compositor.selectionFor(layer, state.selection)?.let { Compositor.mergeThroughMask(layer.bitmap, result, it) } ?: result
-            state.replace(layer.copy(bitmap = Bitmaps.mutable(merged), text = null))
+            val current = state.layer(layer.id) ?: return@docJob null
+            state.replace(withTarget(current, Bitmaps.mutable(merged)))
         }
     }
 
@@ -1083,7 +1164,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** Opens the parameter panel for [operation], or applies it straight away if it has no settings. */
     fun startFilter(operation: String) {
         val d = doc ?: run { say("Open an image first"); return }
-        val layer = d.active ?: return
+        val layer = targetOf(d) ?: return
         if (blockedByBusy()) return
         endInteractions()
         viewModelScope.launch {
@@ -1190,7 +1271,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun applySession() {
         val s = session ?: return
-        val layer = doc?.layer(s.layerId) ?: return
+        val layer = doc?.let { targetOf(it) }?.takeIf { it.id == s.layerId } ?: return
         if (blockedByBusy()) return
         previewJob?.cancel()
         Engine.cancel(tag = s)
@@ -1220,7 +1301,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                         Compositor.mergeThroughMask(src, result.bitmap, mask)
                     } else result.bitmap
                     preview = null
-                    change(title, d.replace(current.copy(bitmap = Bitmaps.mutable(merged), text = null)))
+                    change(title, d.replace(withTarget(current, Bitmaps.mutable(merged))))
                 }
                 is Engine.Result.Failed -> say("$title failed: ${result.message}")
                 Engine.Result.Cancelled -> say("$title cancelled")
@@ -1286,4 +1367,5 @@ sealed interface Dialog {
     data class ModifySelection(val kind: EditorViewModel.SelectionChange) : Dialog
     data object NewLayer : Dialog
     data class PickColor(val foreground: Boolean) : Dialog
+    data object AddMask : Dialog
 }

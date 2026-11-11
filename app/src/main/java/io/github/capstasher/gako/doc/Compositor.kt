@@ -24,9 +24,64 @@ object Compositor {
         val save = canvas.saveLayer(RectF(0f, 0f, doc.width.toFloat(), doc.height.toFloat()), null)
         for (l in layers) {
             if (!l.visible || l.opacity <= 0f) continue
-            canvas.drawBitmap(l.bitmap, l.x.toFloat(), l.y.toFloat(), layerPaint(l))
+            drawLayer(canvas, l, layerPaint(l))
         }
         canvas.restoreToCount(save)
+    }
+
+    /** Turns a grey mask into alpha (its red channel) for DST_IN. */
+    val maskPaint: Paint get() = Paint().apply {
+        isFilterBitmap = true
+        blendMode = BlendMode.DST_IN
+        colorFilter = android.graphics.ColorMatrixColorFilter(floatArrayOf(
+            0f, 0f, 0f, 0f, 0f,
+            0f, 0f, 0f, 0f, 0f,
+            0f, 0f, 0f, 0f, 0f,
+            1f, 0f, 0f, 0f, 0f,
+        ))
+    }
+
+    /**
+     * Draws one layer (or [content] in its place) with its mask. [matrix] maps layer pixels to the
+     * canvas (default: the layer's offset); [contentScale] is how much smaller [content]/[mask] are
+     * than the layer (for downscaled previews).
+     */
+    fun drawLayer(
+        c: Canvas, l: Layer, paint: Paint,
+        matrix: android.graphics.Matrix = android.graphics.Matrix().apply { setTranslate(l.x.toFloat(), l.y.toFloat()) },
+        content: Bitmap = l.bitmap,
+        mask: Bitmap? = l.activeMask,
+    ) {
+        fun place(b: Bitmap) = android.graphics.Matrix(matrix).apply {
+            preScale(l.width.toFloat() / b.width, l.height.toFloat() / b.height)
+        }
+        if (mask == null) {
+            c.drawBitmap(content, place(content), paint)
+            return
+        }
+        val bounds = RectF(0f, 0f, l.width.toFloat(), l.height.toFloat()).also { matrix.mapRect(it) }
+        val save = c.saveLayer(bounds, paint)
+        c.drawBitmap(content, place(content), Paint().apply { isFilterBitmap = paint.isFilterBitmap })
+        c.drawBitmap(mask, place(mask), maskPaint)
+        c.restoreToCount(save)
+    }
+
+    /** The layer's pixels with its mask applied (for formats without masks, and Apply Layer Mask). */
+    fun applyMask(l: Layer): Bitmap {
+        val m = l.mask ?: return l.bitmap
+        val out = Bitmaps.copy(l.bitmap)
+        Canvas(out).drawBitmap(m, 0f, 0f, maskPaint)
+        return out
+    }
+
+    /** A white (fully showing) mask for [l]. */
+    fun whiteMask(w: Int, h: Int): Bitmap = Bitmaps.blank(w, h, android.graphics.Color.WHITE)
+
+    /** A grey mask from an alpha (ALPHA_8) bitmap: white where opaque. */
+    fun maskFromAlpha(alpha: Bitmap, w: Int, h: Int, dx: Float = 0f, dy: Float = 0f): Bitmap {
+        val m = Bitmaps.blank(w, h, android.graphics.Color.BLACK)
+        Canvas(m).drawBitmap(alpha, dx, dy, Paint().apply { color = android.graphics.Color.WHITE })
+        return m
     }
 
     /** The image as it looks, as one canvas-sized bitmap. */
