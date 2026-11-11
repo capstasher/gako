@@ -26,7 +26,9 @@ android {
         targetSdk = 35
         versionCode = buildNumber
         versionName = "0.1.2-stage1+$buildNumber"
-        ndk { abiFilters += listOf("arm64-v8a") }
+        // Phones are arm64. Add x86_64 for the emulator with -Pgako.abis=arm64-v8a,x86_64
+        val abis = (project.findProperty("gako.abis") as String?) ?: "arm64-v8a"
+        ndk { abiFilters += abis.split(',').map { it.trim() }.filter { it.isNotEmpty() } }
     }
 
     signingConfigs {
