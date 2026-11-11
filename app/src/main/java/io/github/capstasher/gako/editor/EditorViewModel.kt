@@ -353,6 +353,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun updateHistoryFlags() {
+        historyVersion++
         canUndo = undoStack.isNotEmpty()
         canRedo = redoStack.isNotEmpty()
         undoLabel = undoStack.lastOrNull()?.label
@@ -396,6 +397,17 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         dirty = true
         updateHistoryFlags()
         input.syncAfterHistory()
+    }
+
+    /** Undo History: what each step was, oldest first, and how many of them are currently done. */
+    private var historyVersion by mutableIntStateOf(0)
+    val historyLabels: List<String> get() = historyVersion.let { undoStack.map { it.label } + redoStack.reversed().map { it.label } }
+    val historyPosition: Int get() = historyVersion.let { undoStack.size }
+
+    /** Undo or redo until exactly [position] steps are done. */
+    fun jumpToHistory(position: Int) {
+        while (undoStack.size > position && undoStack.isNotEmpty() && busy == null) undo()
+        while (undoStack.size < position && redoStack.isNotEmpty() && busy == null) redo()
     }
 
     private fun resetHistory() {
@@ -603,7 +615,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val state = withContext(Dispatchers.IO) { recoveryFile.inputStream().use { io.github.capstasher.gako.doc.XcfReader.read(it) } }
                 if (doc == null) {
-                    newDocument(state, runCatching { recoveryName.readText() }.getOrNull() ?: "Recovered", keepRecovery = true)
+                    newDocument(state, runCatching { recoveryName.readText().trim() }.getOrNull()?.ifBlank { null } ?: "Recovered", keepRecovery = true)
                     dirty = true
                     say("Restored your unsaved image")
                 }
@@ -1533,4 +1545,5 @@ sealed interface Dialog {
     data object NewLayer : Dialog
     data class PickColor(val foreground: Boolean) : Dialog
     data object AddMask : Dialog
+    data object History : Dialog
 }
