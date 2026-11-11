@@ -14,6 +14,7 @@ app/src/main/java/io/github/capstasher/gako/
     OraFile.kt     OpenRaster read/write (layers; masks are baked in)
     Xcf.kt         GIMP XCF writer (v10, zlib) and reader (v0–v20+, all precisions, RLE/zlib, masks, paths)
     PsdReader.kt   Photoshop PSD/PSB reader (layers, masks, modes; groups flattened)
+    PsdWriter.kt   layered PSD export (RLE, masks, modes, Unicode names)
   editor/
     EditorViewModel.kt  the hub: document + history, files, export/save, layers, selection,
                         edit, text, curves, filters, masks, keyboard, autosave/recovery

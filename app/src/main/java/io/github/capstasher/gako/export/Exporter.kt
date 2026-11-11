@@ -33,12 +33,13 @@ enum class ExportFormat(val label: String, val extensions: List<String>, val mim
     Ico("ICO", listOf("ico"), "image/x-icon"),
     Ppm("PPM", listOf("ppm", "pnm"), "image/x-portable-pixmap"),
     Ora("ORA", listOf("ora"), "image/openraster"),
+    Psd("PSD", listOf("psd"), "image/vnd.adobe.photoshop"),
     Xcf("XCF", listOf("xcf"), "image/x-xcf");
 
     val ext: String get() = extensions.first()
 
     /** Types the platform doesn't know; saved as plain files so nothing renames them. */
-    val opaqueToSystem: Boolean get() = this == Tga || this == Ora || this == Xcf
+    val opaqueToSystem: Boolean get() = this == Tga || this == Ora || this == Xcf || this == Psd
 
     /** Formats that keep layers (GAKO's project formats). */
     val layered: Boolean get() = this == Ora || this == Xcf
@@ -72,6 +73,12 @@ object Exporter {
         when (format) {
             ExportFormat.Ora -> { OraFile.write(doc, out); return }
             ExportFormat.Xcf -> { XcfWriter.write(doc, out); return }
+            ExportFormat.Psd -> {
+                val sized = if (options.scale in 1..99) DocOps.scale(doc,
+                    (doc.width * options.scale / 100).coerceAtLeast(1), (doc.height * options.scale / 100).coerceAtLeast(1)) else doc
+                io.github.capstasher.gako.doc.PsdWriter.write(sized, out)
+                return
+            }
             else -> {
                 val flat = Compositor.flatten(doc)
                 val sized = if (options.scale in 1..99) DocOps.scaled(flat,
@@ -128,6 +135,7 @@ object Exporter {
             }
             ExportFormat.Ora -> OraFile.write(DocOps.fromBitmap(bitmap), buffered)
             ExportFormat.Xcf -> XcfWriter.write(DocOps.fromBitmap(bitmap), buffered)
+            ExportFormat.Psd -> io.github.capstasher.gako.doc.PsdWriter.write(DocOps.fromBitmap(bitmap), buffered)
         }
         buffered.flush()
     }
