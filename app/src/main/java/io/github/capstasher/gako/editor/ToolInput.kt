@@ -596,7 +596,7 @@ class ToolInput(private val vm: EditorViewModel) {
             }
         } else null
         // Painting turns a text layer into an ordinary one.
-        val target = if (layer.text != null) layer.copy(text = null).also { vm.silently(d.replace(it)) } else layer
+        val target = if (layer.text != null) layer.copy(text = null).also { vm.change("Discard Text Information", d.replace(it)) } else layer
         val sel = Compositor.selectionFor(target, d.selection)
         val color = vm.paintColor(if (tool == Tool.Eraser && target.lockAlpha) vm.bg else vm.fg)
         strokeOnMask = vm.editingMask
@@ -633,7 +633,7 @@ class ToolInput(private val vm: EditorViewModel) {
         val layer = vm.targetOf(d) ?: return
         if (!layer.visible) { vm.say("“${layer.name}” is hidden"); return }
         // Warping turns a text layer into an ordinary one.
-        val target = if (layer.text != null) layer.copy(text = null).also { vm.silently(d.replace(it)) } else layer
+        val target = if (layer.text != null) layer.copy(text = null).also { vm.change("Discard Text Information", d.replace(it)) } else layer
         val onMask = vm.editingMask
         // targetOf already gives the mask as the layer's bitmap when the mask is being edited.
         val bmp = target.bitmap
