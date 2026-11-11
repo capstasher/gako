@@ -217,9 +217,14 @@ object DocOps {
         val g = doc.layer(id)?.takeIf { it.group } ?: return doc
         val range = Tree.range(doc.layers, id)
         val inside = doc.layers.slice(range)
-        val sub = doc.copy(layers = inside.map { if (it.id == id) it.copy(visible = true, parent = null) else it })
+        // The contents composited as an isolated group at full strength; the group's own mode and
+        // opacity move onto the merged layer, so it blends with what's below exactly as before.
+        val sub = doc.copy(layers = inside.map {
+            if (it.id == id) it.copy(visible = true, parent = null, opacity = 1f, mode = LayerMode.Normal) else it
+        })
         val b = Compositor.flatten(sub)
-        val merged = Layer(Layer.newId(), g.name, b, visible = g.visible, parent = g.parent)
+        val merged = Layer(Layer.newId(), g.name, b, visible = g.visible, parent = g.parent,
+            opacity = g.opacity, mode = if (g.mode == LayerMode.PassThrough) LayerMode.Normal else g.mode)
         val layers = doc.layers.toMutableList()
         for (k in range.reversed()) layers.removeAt(k)
         layers.add(range.first, merged)
@@ -241,9 +246,10 @@ object DocOps {
         val firstIndex = doc.layers.indexOf(visible.first())
         // Hidden layers keep their places (at the top level); the merged layer sits where the
         // lowest visible one was.
+        // Layers hidden themselves or by a group stay, hidden, at the top level (their groups are merged away).
         fun kept(l: Layer) = !Tree.shows(l, byId) && !l.group
-        val layers = doc.layers.subList(0, firstIndex).filter(::kept).map { it.copy(parent = null) } + merged +
-            doc.layers.subList(firstIndex, doc.layers.size).filter(::kept).map { it.copy(parent = null) }
+        val layers = doc.layers.subList(0, firstIndex).filter(::kept).map { it.copy(parent = null, visible = false) } + merged +
+            doc.layers.subList(firstIndex, doc.layers.size).filter(::kept).map { it.copy(parent = null, visible = false) }
         return doc.copy(layers = layers, activeId = merged.id)
     }
 

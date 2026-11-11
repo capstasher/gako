@@ -72,7 +72,7 @@ object OraFile {
             xml.append("$indent<layer name=\"${esc(l.name)}\" src=\"data/layer$i.png\" x=\"${l.x}\" y=\"${l.y}\"")
             xml.append(" opacity=\"${String.format(Locale.US, "%.3f", l.opacity)}\"")
             xml.append(" visibility=\"${if (l.visible) "visible" else "hidden"}\"")
-            xml.append(" composite-op=\"${modeNames[l.mode]}\"")
+            xml.append(" composite-op=\"${modeNames[l.mode] ?: "svg:src-over"}\"")
             if (l.id == doc.activeId) xml.append(" selected=\"true\"")
             if (l.lockAlpha) xml.append(" alpha-preserve=\"true\"")
             l.text?.let { t ->
@@ -151,7 +151,9 @@ object OraFile {
                     if (groups.isEmpty()) groups.addLast(null)        // the image's own stack
                     else {
                         val id = Layer.newId()
-                        val passThrough = attr("isolation") == "auto" || attr("isolation") == null && attr("composite-op") == null
+                        // OpenRaster's default isolation is "auto" (pass-through) unless a blend needs a group of its own.
+                        val op = attr("composite-op")
+                        val passThrough = attr("isolation") != "isolate" && (op == null || op == "svg:src-over")
                         entries += Entry(
                             name = attr("name") ?: "Group", src = "", x = 0, y = 0,
                             opacity = attr("opacity")?.toFloatOrNull()?.coerceIn(0f, 1f) ?: 1f,
@@ -220,7 +222,7 @@ object OraFile {
             h = layers.filter { !it.first.group }.maxOf { it.first.y + it.first.height }
         }
         val active = layers.lastOrNull { it.second }?.first ?: layers.last { !it.first.group }.first
-        return DocState(w, h, layers.map { it.first }, active.id)
+        return DocState(w, h, Tree.normalize(layers.map { it.first }), active.id)
     }
 
     private fun esc(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")

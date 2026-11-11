@@ -248,6 +248,52 @@ object Tree {
         return list
     }
 
+    /**
+     * Repairs a layer list so the group invariant holds: parents that don't exist (or aren't
+     * groups) become the top level, and every group is moved to sit right above its contents.
+     * Run after reading files.
+     */
+    fun normalize(layers: List<Layer>): List<Layer> {
+        val ids = layers.filter { it.group }.map { it.id }.toSet()
+        val fixed = layers.map { l -> if (l.parent != null && l.parent !in ids || l.parent == l.id) l.copy(parent = null) else l }
+        // Break cycles: walk up; if we come back to ourselves, cut the link.
+        val byId = fixed.associateBy { it.id }.toMutableMap()
+        for (l in fixed) {
+            val seen = HashSet<Long>()
+            var p = l.parent
+            while (p != null && seen.add(p)) p = byId[p]?.parent
+            if (p != null) byId[l.id] = l.copy(parent = null)
+        }
+        val all = fixed.map { byId[it.id]!! }
+        // Rebuild in order: each level's items bottom-to-top, a group's contents right below it.
+        val out = ArrayList<Layer>(all.size)
+        fun emit(parent: Long?) {
+            for (l in all) if (l.parent == parent) {
+                if (l.group) emit(l.id)
+                out += l
+            }
+        }
+        emit(null)
+        return out
+    }
+
+    /** Groups containing [l], innermost first. */
+    fun ancestors(l: Layer, byId: Map<Long, Layer>): List<Layer> {
+        val out = ArrayList<Layer>()
+        var p = l.parent
+        while (p != null) { val g = byId[p] ?: break; out += g; p = g.parent }
+        return out
+    }
+
+    /** The list with every group containing [id] opened (so the layer shows in the panel). */
+    fun reveal(layers: List<Layer>, id: Long): List<Layer> {
+        val byId = byId(layers)
+        val l = byId[id] ?: return layers
+        val closed = ancestors(l, byId).filter { !it.expanded }.map { it.id }.toSet()
+        if (closed.isEmpty()) return layers
+        return layers.map { if (it.id in closed) it.copy(expanded = true) else it }
+    }
+
     /** The image's real (pixel) layers, in order. */
     fun leaves(layers: List<Layer>) = layers.filter { !it.group }
 }
