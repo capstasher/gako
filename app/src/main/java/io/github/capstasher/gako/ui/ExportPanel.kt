@@ -58,7 +58,7 @@ fun ExportPanel(
             IconButton(onClick = vm::cancelExport) {
                 Icon(Icons.Outlined.Close, contentDescription = "Cancel", tint = Gako.Muted)
             }
-            Text("Export Image", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            Text(session.title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
             FilledIconButton(
                 onClick = vm::runExport,
                 enabled = vm.busy == null && session.name.isNotBlank(),
@@ -86,7 +86,9 @@ fun ExportPanel(
 
             Label("Folder")
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Chip("Pictures/GAKO", selected = !vm.exportToFolder) { vm.exportToFolder = false }
+                Chip(if (session.format.opaqueToSystem) "Download/GAKO" else "Pictures/GAKO", selected = !vm.exportToFolder) {
+                    vm.exportToFolder = false
+                }
                 val folder = vm.exportFolder
                 Chip(folder?.name ?: "Choose…", selected = vm.exportToFolder) {
                     // Tapping the chosen folder again picks a different one.
@@ -96,7 +98,9 @@ fun ExportPanel(
 
             Label("File type")
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                ExportFormat.entries.forEach { f ->
+                // Save Project offers GIMP's XCF and OpenRaster (both keep layers); Export everything flat.
+                val project = session.title != "Export Image"
+                ExportFormat.entries.filter { if (project) it.layered else it != ExportFormat.Xcf }.forEach { f ->
                     Chip(f.label, selected = session.format == f) { session.choose(f) }
                 }
             }

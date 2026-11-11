@@ -17,7 +17,7 @@ import androidx.compose.material.icons.outlined.OpenWith
 import androidx.compose.material.icons.outlined.PanTool
 import androidx.compose.material.icons.outlined.PanoramaFishEye
 import androidx.compose.material.icons.outlined.Rectangle
-import androidx.compose.material.icons.outlined.Transform
+import androidx.compose.material.icons.outlined.OpenInFull
 import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material.icons.outlined.Tonality
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -26,7 +26,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 enum class Tool(val label: String, val icon: ImageVector, val group: ToolGroup, val hint: String) {
     Navigate("Navigate", Icons.Outlined.PanTool, ToolGroup.View, "Drag to pan, pinch to zoom"),
     Move("Move", Icons.Outlined.OpenWith, ToolGroup.Transform, "Drag to move the active layer"),
-    Transform("Unified Transform", Icons.Outlined.Transform, ToolGroup.Transform,
+    Transform("Unified Transform", Icons.Outlined.OpenInFull, ToolGroup.Transform,
         "Drag to move, corners to scale, the top knob to rotate"),
     Crop("Crop", Icons.Outlined.Crop, ToolGroup.Transform, "Drag the edges, then apply"),
     RectSelect("Rectangle Select", Icons.Outlined.Rectangle, ToolGroup.Select, "Drag a rectangle"),

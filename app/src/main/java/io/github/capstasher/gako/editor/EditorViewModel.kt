@@ -224,7 +224,15 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------------------------------------------------------------- history
 
+    private var autosaveJob: Job? = null
+
     internal fun record(step: Step) {
+        // Also keep a recovery copy a little while after the last edit, in case the app crashes.
+        autosaveJob?.cancel()
+        autosaveJob = viewModelScope.launch {
+            delay(AUTOSAVE_IDLE_MS)
+            if (busy == null) autosave()
+        }
         undoStack.addLast(step)
         redoStack.clear()
         var total = undoStack.sumOf { it.cost() }
@@ -1225,6 +1233,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         const val FINE_BUDGET_MS = 1200.0
         /** A preview gets a small spinner only if it runs longer than this. */
         const val PREVIEW_INDICATOR_MS = 600L
+        /** Quiet time after an edit before the recovery copy is refreshed. */
+        const val AUTOSAVE_IDLE_MS = 20_000L
     }
 }
 
