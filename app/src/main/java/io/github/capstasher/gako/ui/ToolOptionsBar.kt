@@ -85,9 +85,13 @@ fun ToolOptionsBar(vm: EditorViewModel) {
     val feather = NumOption("feather", "Feather", o.feather, 0f, 200f, 2f, { "${it.roundToInt()} px" }) { v -> set { it.copy(feather = v) } }
     val strength = NumOption("strength", if (tool == Tool.Smudge) "Rate" else "Strength", o.strength, 0f, 1f, 1f, ::pct) { v -> set { it.copy(strength = v) } }
     val corners = NumOption("corners", "Corners", o.cornerRadius, 0f, 500f, 2f, { "${it.roundToInt()} px" }) { v -> set { it.copy(cornerRadius = v) } }
+    val angle = NumOption("angle", "Angle", o.brushAngle, -90f, 90f, 1f, { "${it.roundToInt()}°" }) { v -> set { it.copy(brushAngle = v) } }
+    val smooth = NumOption("smooth", "Smooth", o.smoothing, 0f, 1f, 1f, ::pct) { v -> set { it.copy(smoothing = v) } }
     val threshold = NumOption("threshold", "Threshold", o.threshold.toFloat(), 0f, 255f, 1f, { "${it.roundToInt()}" }) { v -> set { it.copy(threshold = v.roundToInt()) } }
 
-    val numbers: List<NumOption> = when (tool) {
+    val shaped = tool.paints && tool != Tool.Smudge && tool != Tool.Blur && tool != Tool.Heal && tool != Tool.Clone &&
+        o.brushShape != io.github.capstasher.gako.tools.BrushShape.Round
+    val base: List<NumOption> = when (tool) {
         Tool.Paintbrush, Tool.Eraser, Tool.Clone, Tool.Heal -> listOf(size, opacity, hardness)
         Tool.Pencil -> listOf(size, opacity)
         Tool.Airbrush -> listOf(size, opacity, rate)
@@ -100,6 +104,7 @@ fun ToolOptionsBar(vm: EditorViewModel) {
         Tool.Gradient -> listOf(opacity)
         else -> emptyList()
     }
+    val numbers = base + (if (shaped) listOf(angle) else emptyList()) + (if (tool.paints) listOf(smooth) else emptyList())
 
     Column(Modifier.fillMaxWidth().background(Gako.InkRaised)) {
         numbers.firstOrNull { it.key == expanded }?.let { n ->
@@ -123,6 +128,11 @@ fun ToolOptionsBar(vm: EditorViewModel) {
             numbers.forEach { n ->
                 OptChip("${n.label} ${n.format(n.value)}", expanded == n.key) {
                     expanded = if (expanded == n.key) null else n.key
+                }
+            }
+            if (tool.paints && tool != Tool.Smudge && tool != Tool.Blur && tool != Tool.Heal && tool != Tool.Clone) {
+                io.github.capstasher.gako.tools.BrushShape.entries.forEach { b ->
+                    OptChip(b.label, o.brushShape == b) { set { it.copy(brushShape = b) } }
                 }
             }
             when (tool) {

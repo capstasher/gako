@@ -78,6 +78,8 @@ enum class Tool(val label: String, val icon: ImageVector, val group: ToolGroup, 
 
 enum class ToolGroup(val label: String) { View("View"), Select("Select"), Paint("Paint"), Transform("Transform") }
 
+enum class BrushShape(val label: String) { Round("Round"), Square("Square"), Calligraphy("Calligraphy") }
+
 enum class GradientShape(val label: String) { Linear("Linear"), Radial("Radial"), Mirrored("Mirrored") }
 enum class GradientColors(val label: String) { FgBg("FG → BG"), FgTransparent("FG → Transparent") }
 enum class FillArea(val label: String) { Similar("Similar colours"), Selection("Whole selection") }
@@ -106,6 +108,11 @@ data class ToolOptions(
     val cloneAligned: Boolean = true,
     /** Smudge: how far colour is carried; Blur: how strongly it softens. */
     val strength: Float = 0.5f,
+    val brushShape: BrushShape = BrushShape.Round,
+    /** Angle of square and calligraphy brushes, degrees. */
+    val brushAngle: Float = 30f,
+    /** Stroke smoothing for paint tools, 0 (off) … 1 (heavy). */
+    val smoothing: Float = 0f,
     /** Rectangle Select: rounded corners (GIMP's "Rounded corners" radius). */
     val cornerRadius: Float = 0f,
 )
