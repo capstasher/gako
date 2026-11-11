@@ -12,6 +12,7 @@ import android.graphics.ColorSpace
 import android.graphics.ImageDecoder
 import android.graphics.Paint
 import android.graphics.Rect
+import android.graphics.RectF
 import android.net.Uri
 import android.os.Environment
 import android.os.SystemClock
@@ -1354,6 +1355,51 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     enum class SelectionChange(val label: String) { Feather("Feather Selection"), Grow("Grow Selection"), Shrink("Shrink Selection"), Border("Border Selection") }
+
+    /**
+     * Edit > Stroke Selection: a line of the brush's width (and opacity) in the FG colour along the
+     * selection's edge, centred on it, painted on the active layer.
+     */
+    fun strokeSelection() {
+        val d = doc ?: return
+        val sel = d.selection ?: run { say("Select something first"); return }
+        if (refuseGroup(d)) return
+        if (blockedByBusy()) return
+        endInteractions()
+        val half = (options.size / 2f).roundToInt().coerceAtLeast(1)
+        val color = paintColor(fg) or (0xFF shl 24)
+        val opacity = options.opacity
+        viewModelScope.launch {
+            busy = Busy("Stroke Selection")
+            try {
+                val edge = withContext(Dispatchers.Default) {
+                    // The marching-ants outline stroked with a round pen, into a mask (so overlaps don't add up).
+                    val m = Bitmap.createBitmap(d.width, d.height, Bitmap.Config.ALPHA_8)
+                    Canvas(m).drawPath(sel.outline, Paint().apply {
+                        style = Paint.Style.STROKE
+                        strokeWidth = half * 2f
+                        strokeCap = Paint.Cap.ROUND
+                        strokeJoin = Paint.Join.ROUND
+                        isAntiAlias = true
+                    })
+                    m
+                }
+                val area = Rect(sel.bounds).apply { inset(-half - 2, -half - 2); intersect(0, 0, d.width, d.height) }
+                if (doc !== d) return@launch
+                editActiveLayer("Stroke Selection", area) { l, _ ->
+                    val c = Canvas(l.bitmap)
+                    val save = c.saveLayer(RectF(0f, 0f, l.width.toFloat(), l.height.toFloat()), Paint().apply {
+                        alpha = (opacity * 255).roundToInt()
+                        blendMode = if (l.lockAlpha) BlendMode.SRC_ATOP else BlendMode.SRC_OVER
+                    })
+                    c.drawBitmap(edge, -l.x.toFloat(), -l.y.toFloat(), Paint().apply { this.color = color })
+                    c.restoreToCount(save)
+                }
+            } finally {
+                busy = null
+            }
+        }
+    }
 
     private suspend fun run(src: Bitmap, op: String, params: Map<String, Any?>): Bitmap? =
         when (val r = Engine.apply(op, params, src)) {

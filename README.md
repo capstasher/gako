@@ -37,7 +37,8 @@ operation) for Android, and puts a touch interface on top designed for one hand 
   crop (with aspect presets)
 - Filters, Curves and Levels respect the selection; Filters > Repeat Last and Recently Used
 - **Filter Brush**: any of the ~200 filters can be painted on where you brush instead of applied everywhere
-- Edit: cut/copy/paste (also via Android's clipboard), Layer via Copy/Cut (then drag it away), clear, fill
+- Edit: cut/copy/paste (also via Android's clipboard), Layer via Copy/Cut (then drag it away), clear, fill,
+  stroke selection (outline in the FG colour at the brush size)
 
 **Files**
 - Save projects as **XCF** (GIMP's own format; GIMP 2.10/3.x open them with layers and masks) or OpenRaster;

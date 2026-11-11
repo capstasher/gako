@@ -235,6 +235,7 @@ fun buildMenus(vm: EditorViewModel, callbacks: MenuCallbacks): List<MenuGroup> {
         act("paste-new", "Paste as New Image", Icons.Outlined.AddPhotoAlternate, vm.hasClipboard) { vm.paste(asNewImage = true) },
         act("clear", "Clear", Icons.Outlined.Backspace) { vm.clear() },
         act("fill-fg", "Fill with FG Colour", Icons.Outlined.FormatColorFill) { vm.fillWith(vm.fg, "Fill with FG Colour") },
+        act("stroke-sel", "Stroke Selection", Icons.Outlined.BorderStyle, hasSelection) { vm.strokeSelection() },
         act("fill-bg", "Fill with BG Colour", Icons.Outlined.FormatColorReset) { vm.fillWith(vm.bg, "Fill with BG Colour") },
     ))
 
