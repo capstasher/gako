@@ -71,7 +71,7 @@ class Projection(private val changes: PixelChanges) {
                     is PixelChanges.Change.Within -> {
                         val r = Rect(change.area).apply { if (!intersect(0, 0, doc.width, doc.height)) setEmpty() }
                         if (!r.isEmpty) {
-                            frame = null
+                            // The stale frame stays (it isn't shown), so a cancelled refresh loses nothing.
                             val part = withContext(Dispatchers.Default) { Compositor.composite(doc.layers, r.left, r.top, r.width(), r.height()) }
                                 ?: return                                  // (out of memory: try again next time)
                             Canvas(f!!.bitmap).drawBitmap(part, r.left.toFloat(), r.top.toFloat(), Paint().apply { blendMode = BlendMode.SRC })

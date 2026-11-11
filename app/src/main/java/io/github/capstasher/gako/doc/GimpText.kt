@@ -12,15 +12,16 @@ object GimpText {
 
     const val PARASITE = "gimp-text-layer"
 
-    fun parse(data: ByteArray): TextInfo? = runCatching {
+    /** [data]: the parasite; [dpi]: the image's resolution (a size in points becomes pixels by it). */
+    fun parse(data: ByteArray, dpi: Float = 72f): TextInfo? = runCatching {
         // Bytes as chars one to one, so binary escapes survive; text values are UTF-8 inside.
         val cfg = GimpOps.Config.parse(String(data, Charsets.ISO_8859_1))
         fun utf8(s: String) = String(ByteArray(s.length) { s[it].code.toByte() }, Charsets.UTF_8)
         val text = (cfg.forms.firstOrNull { it.firstOrNull() == "text" }?.getOrNull(1) as? String)?.let(::utf8)
-            ?: (cfg.forms.firstOrNull { it.firstOrNull() == "markup" }?.getOrNull(1) as? String)?.let { utf8(it).replace(Regex("<[^>]*>"), "") }
+            ?: (cfg.forms.firstOrNull { it.firstOrNull() == "markup" }?.getOrNull(1) as? String)?.let { unmarkup(utf8(it)) }
             ?: return@runCatching null
-        // GAKO has no print resolution: a size in points is taken as pixels.
-        val size = (cfg.num("font-size") ?: 24.0).toFloat()
+        val size = (cfg.num("font-size") ?: 24.0).toFloat() *
+            (if (cfg.word("font-size-unit") == "points") dpi / 72f else 1f)
         // Font: GIMP 3 nests (family …) (style …); GIMP 2.10 has one string, "Sans-serif Bold".
         val fontForm = cfg.forms.firstOrNull { it.firstOrNull() == "font" }
         val nested = fontForm?.drop(1)?.filterIsInstance<List<Any>>()?.let { GimpOps.Config(it) }
@@ -37,6 +38,16 @@ object GimpText {
             bold = "bold" in style || "heavy" in style || "black" in style,
             italic = "italic" in style || "oblique" in style, align = align)
     }.getOrNull()
+
+    /** Pango markup as plain text: tags dropped, entities (&amp;amp; &amp;#38; …) decoded. */
+    fun unmarkup(m: String): String = m.replace(Regex("<[^>]*>"), "").replace(Regex("&(#x[0-9a-fA-F]+|#[0-9]+|amp|lt|gt|quot|apos);")) { r ->
+        val e = r.groupValues[1]
+        when {
+            e == "amp" -> "&"; e == "lt" -> "<"; e == "gt" -> ">"; e == "quot" -> "\""; e == "apos" -> "'"
+            e.startsWith("#x") -> String(Character.toChars(e.substring(2).toInt(16)))
+            else -> String(Character.toChars(e.substring(1).toInt()))
+        }
+    }
 
     /** A colour setting: GIMP 3's (color "R'G'B'A float" 16 "<bytes>" 0), or 2.10's (color-rgba r g b a). */
     private fun color(cfg: GimpOps.Config, name: String): Int? {

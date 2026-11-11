@@ -513,6 +513,15 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         revision++
     }
 
+    /**
+     * A stroke on [layerId] was cancelled and its pixels put back. Logged as a change to the whole
+     * layer, as a composite made during the stroke may have caught some of it.
+     */
+    internal fun pixelsRestored(layerId: Long) {
+        doc?.layer(layerId)?.let { pixelChanges.add(it.id, it.bounds) }
+        revision++
+    }
+
     private fun updateHistoryFlags() {
         historyVersion++
         canUndo = undoStack.isNotEmpty()
@@ -2017,6 +2026,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         val existing = t.layerId?.let { d.layer(it) }
+        // Nothing changed: leave the layer as it is (a GIMP text layer keeps GIMP's own rendering).
+        if (existing != null && existing.text == t.info && existing.x == t.x && existing.y == t.y) return
         if (existing != null) {
             // The text's box changes size: keep the mask where it was on the canvas.
             val mask = existing.mask?.let { old ->

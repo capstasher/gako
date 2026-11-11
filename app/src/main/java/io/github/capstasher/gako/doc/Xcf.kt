@@ -286,7 +286,8 @@ object XcfWriter {
             }
             if (changed && gimpText && x!!.props.none { it.type == XcfProps.TEXT_LAYER_FLAGS }) b.prop(XcfProps.TEXT_LAYER_FLAGS, 2)
             val parasites = x?.parasites.orEmpty().filter { !(retexted && it.name == GimpText.PARASITE) }.toMutableList()
-            l.text?.let { t -> parasites += XcfParasite(TEXT_PARASITE, 1, textToString(t).toByteArray(Charsets.UTF_8)) }
+            // GAKO's own text info, except on a GIMP text layer GAKO hasn't rewritten (GIMP's is the one).
+            if (!gimpText) l.text?.let { t -> parasites += XcfParasite(TEXT_PARASITE, 1, textToString(t).toByteArray(Charsets.UTF_8)) }
             b.parasites(parasites)
             b.u32(XcfProps.END); b.u32(0)
             val hierarchySlot = b.size; b.u32(0)
@@ -366,6 +367,9 @@ object XcfReader {
         var colormap: IntArray? = null
         val guides = ArrayList<Guide>()
         val samplePoints = ArrayList<SamplePoint>()
+        /** The image's vertical resolution (GIMP's text sizes in points depend on it). */
+        val dpi: Float get() = keptProps.firstOrNull { it.type == XcfProps.RESOLUTION && it.data.size >= 8 }
+            ?.let { ByteBuffer.wrap(it.data).getFloat(4).takeIf { r -> r in 1f..100000f } } ?: 72f
         val keptProps = ArrayList<XcfProp>()
         val wide get() = version >= 11
 
@@ -677,8 +681,9 @@ object XcfReader {
             if (info.kept.isEmpty() && info.parasites.isEmpty()) return null
             // A GIMP text layer: its text for GAKO's text tool (GIMP's pixels stay until it's edited).
             val isGimpText = info.parasites.any { it.name == GimpText.PARASITE }
-            val gimpText = info.parasites.firstOrNull { it.name == GimpText.PARASITE }?.let { GimpText.parse(it.data) }
-            if (info.text == null && gimpText != null) info.text = gimpText
+            val gimpText = info.parasites.firstOrNull { it.name == GimpText.PARASITE }?.let { GimpText.parse(it.data, dpi) }
+            // GIMP's own text settings win over GAKO's copy: GIMP may have edited the text since.
+            if (gimpText != null) info.text = gimpText
             return XcfLayerData(info.kept.toList(), info.parasites.toList(),
                 if (isGimpText && !info.group) XcfLayerData.checksum(bmp) else null, gimpText)
         }
