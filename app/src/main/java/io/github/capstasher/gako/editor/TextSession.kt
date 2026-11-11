@@ -64,12 +64,21 @@ class TextSession(val layerId: Long?, x: Int, y: Int, info: TextInfo) {
                 .build()
         }
 
-        /** The text as a tightly sized transparent bitmap (with a little room for italics). */
-        fun render(info: TextInfo): Bitmap {
+        /** Text bigger than this (pixels) isn't rendered: Android won't draw bitmaps over ~100 MB. */
+        const val MAX_PIXELS = 24_000_000L
+
+        /**
+         * The text as a tightly sized transparent bitmap (with a little room for italics), or null
+         * if it would be too big for one layer.
+         */
+        fun render(info: TextInfo): Bitmap? {
             val l = layout(info)
             val edge = ceil(info.outline.coerceAtLeast(0f)).toInt()
             val pad = ceil(info.size * 0.15f).toInt() + edge
-            val b = Bitmaps.blank(l.width + pad * 2, l.height + edge * 2)
+            val w = l.width + pad * 2
+            val h = l.height + edge * 2
+            if (w <= 0 || h <= 0 || w.toLong() * h > MAX_PIXELS) return null
+            val b = try { Bitmaps.blank(w, h) } catch (e: OutOfMemoryError) { return null }
             val c = Canvas(b)
             c.translate(pad.toFloat(), edge.toFloat())
             if (info.outline > 0f) layout(info, outline = true).draw(c)
