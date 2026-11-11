@@ -37,6 +37,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import android.os.SystemClock
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.foundation.background
@@ -121,8 +122,31 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
                     rawAngle = angle
                     first.consume()
 
+                    // Long-press with a colour-painting tool picks the colour there (as in most phone painting apps).
+                    val canPick = !modal && !fingerOnly && vm.busy == null &&
+                        tool in setOf(Tool.Paintbrush, Tool.Pencil, Tool.Airbrush, Tool.BucketFill, Tool.Gradient, Tool.Text)
+                    var picked = false
+                    fun pickHere() {
+                        // Held still: undo any dot just started and pick instead.
+                        if (started) { vm.input.cancel(); started = false }
+                        val p = toDoc(downPos)
+                        vm.pickAt(p.x, p.y)
+                        picked = true
+                    }
                     while (true) {
-                        val ev = awaitPointerEvent()
+                        val waiting = canPick && !moved && !multi && !picked
+                        val ev = if (waiting) {
+                            // A resting finger still sends tiny moves: wait out what's left of the hold either way.
+                            val left = LONG_PRESS_MS - (SystemClock.uptimeMillis() - downTime)
+                            if (left <= 0) { pickHere(); null } else withTimeoutOrNull(left) { awaitPointerEvent() } ?: run { pickHere(); null }
+                        } else awaitPointerEvent()
+                        if (ev == null) continue
+                        if (picked) {
+                            // Swallow the rest of this gesture.
+                            ev.changes.forEach { it.consume() }
+                            if (ev.changes.none { it.pressed }) break
+                            continue
+                        }
                         val pressed = ev.changes.filter { it.pressed }
                         if (pressed.isEmpty()) {
                             if (started) vm.input.up()
@@ -558,6 +582,8 @@ private fun drawCrop(nc: android.graphics.Canvas, r: RectF, d: DocState, px: Flo
     @Suppress("unused") val unused = max(0f, 0f)
     @Suppress("unused") val m = Matrix()
 }
+
+private const val LONG_PRESS_MS = 550L
 
 /** 1, 2, 5, 10, 20, 50… pixels: the round number nearest [raw]. */
 private fun niceGridStep(raw: Float): Float {
