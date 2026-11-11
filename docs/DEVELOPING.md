@@ -86,5 +86,5 @@ Stage 3 was tested on an Android 15 x86_64 emulator (Pixel 7 profile), driving i
 - Filters that grow a layer (drop shadow…) grow it only within the canvas.
 - During a stroke the canvas draws the pre-stroke copy plus 256 px tiles; other edits on huge layers
   still re-upload the whole texture once per change.
-- Paths live in memory only (not saved in XCF yet), one path per image; no guides, no brush shapes beyond round.
+- One path per image (the first path of an XCF is loaded; GIMP 3 files that store paths the new way load none); no guides.
 - ORA bakes masks (the format has none); XCF keeps them.

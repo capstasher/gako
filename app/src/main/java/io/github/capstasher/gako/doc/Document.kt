@@ -89,6 +89,14 @@ data class Layer(
  */
 class Selection(val mask: Bitmap, val bounds: Rect, val outline: Path)
 
+/**
+ * A Bézier path in canvas coordinates: per anchor six floats (in-handle x/y, anchor x/y,
+ * out-handle x/y), as GIMP stores them.
+ */
+class VectorPath(val name: String, val points: FloatArray, val closed: Boolean) {
+    val anchors get() = points.size / 6
+}
+
 /** A whole image at one moment. Cheap to copy: bitmaps are shared until changed. */
 data class DocState(
     val width: Int,
@@ -96,6 +104,8 @@ data class DocState(
     val layers: List<Layer>,          // bottom to top
     val activeId: Long,
     val selection: Selection? = null,
+    /** Paths that came with the file (and go back into it on save). */
+    val paths: List<VectorPath> = emptyList(),
 ) {
     val active: Layer? get() = layers.firstOrNull { it.id == activeId } ?: layers.lastOrNull()
     val activeIndex: Int get() = layers.indexOfFirst { it.id == activeId }.takeIf { it >= 0 } ?: layers.lastIndex
