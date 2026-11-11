@@ -1302,6 +1302,41 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ---- channels (GIMP's Channels dialog: saved selections)
+
+    /** Select > Save to Channel: the selection kept as a named channel (saved in XCF as GIMP's). */
+    fun saveSelectionToChannel() {
+        val d = doc ?: return
+        if (blockedByBusy()) return
+        val sel = d.selection ?: run { say("Select something first"); return }
+        val bytes = Selections.bytesOf(sel.mask)
+        val grey = Bitmaps.blank(d.width, d.height)
+        grey.setPixels(IntArray(bytes.size) { val v = bytes[it].toInt() and 255; (0xFF shl 24) or (v * 0x010101) },
+            0, d.width, 0, 0, d.width, d.height)
+        val names = d.gimp.channels.map { it.name }.toSet()
+        val name = generateSequence(1) { it + 1 }.map { if (it == 1) "Selection Mask copy" else "Selection Mask copy #$it" }.first { it !in names }
+        change("Save to Channel", d.copy(gimp = d.gimp.copy(channels = d.gimp.channels + io.github.capstasher.gako.doc.Channel(name, grey, emptyList()))))
+        say("Saved the selection as “$name” (Select > Channels)")
+    }
+
+    /** A channel as (or into) the selection, GIMP's Channel to Selection with its modes. */
+    fun channelToSelection(index: Int, mode: io.github.capstasher.gako.doc.SelectMode) {
+        val d = doc ?: return
+        if (blockedByBusy()) return
+        val ch = d.gimp.channels.getOrNull(index) ?: return
+        val px = IntArray(d.width * d.height).also { ch.bitmap.getPixels(it, 0, d.width, 0, 0, d.width, d.height) }
+        val shape = Selections.maskFromBytes(ByteArray(px.size) { (px[it] shr 16).toByte() }, d.width, d.height)
+        val sel = Selections.make(Selections.combine(d.selection?.mask, shape, mode))
+        change("Channel to Selection", d.copy(selection = sel))
+    }
+
+    fun deleteChannel(index: Int) {
+        val d = doc ?: return
+        if (blockedByBusy()) return
+        if (index !in d.gimp.channels.indices) return
+        change("Delete Channel", d.copy(gimp = d.gimp.copy(channels = d.gimp.channels.filterIndexed { i, _ -> i != index })))
+    }
+
     // ---- guides (GIMP's Image > Guides)
 
     /** A guide across the image: horizontal at y = [position], or vertical at x = [position]. */
@@ -2381,4 +2416,5 @@ sealed interface Dialog {
     data object AddMask : Dialog
     data object History : Dialog
     data object NewGuide : Dialog
+    data object Channels : Dialog
 }
