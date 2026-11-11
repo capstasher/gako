@@ -98,6 +98,43 @@ class GimpModesTest {
         assertTrue("${failures.size} of ${files.size} differ from GIMP:\n" + failures.joinToString("\n"), failures.isEmpty())
     }
 
+    /**
+     * GIMP 3 layer effects (`assets/gimp/effects.xcf`, XCF 22): a Gaussian blur then a half-strength
+     * Invert on one layer (at 80%), an unclipped drop shadow on a small one. GAKO reads them, applies
+     * them with its own GEGL, and draws what GIMP 3.2 drew (`effects.rgba`).
+     */
+    @Test fun appliesGimp3LayerEffects() = kotlinx.coroutines.runBlocking {
+        val ctx = InstrumentationRegistry.getInstrumentation()
+        assertEquals(null, io.github.capstasher.gako.engine.Engine.start(ctx.targetContext))
+        val doc = ctx.context.assets.open("gimp/effects.xcf").use { XcfReader.read(it) }
+        val blurred = doc.layers.single { it.name == "Blurred" }
+        assertEquals(listOf("gegl:gaussian-blur", "gegl:invert-gamma"), blurred.effects.map { it.operation })
+        assertEquals(2.5, blurred.effects[0].args["std-dev-x"] as Double, 0.001)
+        assertEquals(0.5f, blurred.effects[1].opacity, 0.001f)
+        val shadow = doc.layers.single { it.name == "Shadowed" }.effects.single()
+        assertEquals(false, shadow.clip)
+        assertTrue("the shadow's colour", (shadow.args["color"] as String).startsWith("rgba(0.1"))
+        val ops = io.github.capstasher.gako.engine.Engine.operations().map { it.name }.toSet()
+        val out = io.github.capstasher.gako.engine.Effects.apply(doc, ops)
+        assertEquals(3, out.applied)
+        assertTrue(out.skipped.isEmpty())
+        assertTrue("no effects left", out.doc.layers.all { it.effects.isEmpty() })
+        val got = Compositor.flatten(out.doc)
+        val want = ctx.context.assets.open("gimp/effects.rgba").readBytes()
+        var worst = 0
+        var where = ""
+        for (y in 0 until doc.height) for (x in 0 until doc.width) {
+            val i = (y * doc.width + x) * 4
+            val p = got.getPixel(x, y)
+            for (c in 0..2) {
+                val off = abs((want[i + c].toInt() and 255) - ((p shr (16 - 8 * c)) and 255))
+                if (off > worst) { worst = off; where = "($x,$y)" }
+            }
+        }
+        // Rounding (GAKO's GEGL may also be a different release from GIMP's).
+        assertTrue("off by $worst at $where", worst <= 2)
+    }
+
     @Test fun xcfKeepsModesAndBlendSettings() {
         for ((name, xcf) in cases()) {
             if (!name.startsWith("m") && !name.startsWith("cs_") && !name.startsWith("bs_") && !name.startsWith("cm_")) continue

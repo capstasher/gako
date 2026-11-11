@@ -130,6 +130,8 @@ data class Layer(
     val blendSpace: Int = 0,
     val compositeSpace: Int = 0,
     val compositeMode: Int = 0,
+    /** GIMP 3 layer effects from an XCF, first applied first; GAKO applies them when it opens the file. */
+    val effects: List<LayerEffect> = emptyList(),
 ) {
     /** GIMP's number for how this layer blends. */
     val gimpMode: Int get() = when {
@@ -535,3 +537,24 @@ data class GimpExtras(
         return copy(guides = g, samplePoints = s, channels = c)
     }
 }
+
+/**
+ * A GIMP 3 layer effect (a non-destructive filter): a GEGL [operation] with its [args], blended back
+ * over the layer with GIMP's [mode] and [opacity] through [mask] (grey, canvas-sized like a selection;
+ * empty means everywhere), and kept within the layer's bounds if [clip]. [unsupported] names arguments
+ * GAKO can't pass on (GIMP gradients and configs).
+ */
+class LayerEffect(
+    val name: String,
+    val operation: String,
+    val args: Map<String, Any>,
+    val unsupported: List<String>,
+    val active: Boolean,
+    val opacity: Float,
+    val mode: Int,
+    val blendSpace: Int,
+    val compositeSpace: Int,
+    val compositeMode: Int,
+    val clip: Boolean,
+    val mask: Bitmap?,
+)

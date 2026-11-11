@@ -53,6 +53,9 @@ internal object XcfProps {
     const val OLD_SAMPLE_POINTS = 27
     const val TEXT_LAYER_FLAGS = 26
     const val SAMPLE_POINTS = 39
+    const val FILTER_REGION = 44
+    const val FILTER_ARGUMENT = 45
+    const val FILTER_CLIP = 46
 
     /** Image properties GAKO keeps as they are (none holds a file offset). */
     val keptImageProps = setOf(19, 20, 21, 22, 24, 40)        // resolution, tattoo, parasites, unit, user unit, item set
@@ -339,6 +342,7 @@ object XcfReader {
         var expanded: Boolean = true,
         val kept: MutableList<XcfProp> = ArrayList(),
         val parasites: MutableList<XcfParasite> = ArrayList(),
+        var effects: List<LayerEffect> = emptyList(),
     )
 
     private class Parser(val buf: ByteBuffer) {
@@ -622,6 +626,12 @@ object XcfReader {
             opacityFloat?.let { info.opacity = it.coerceIn(0f, 1f) }
             val hierarchy = ptr()
             val mask = ptr()
+            if (version >= 20) {
+                // GIMP 3's layer effects: offsets until a 0, the top (last applied) first.
+                val at = ArrayList<Long>()
+                while (true) { val p = ptr(); if (p == 0L) break; at += p }
+                info.effects = at.asReversed().mapNotNull { runCatching { readEffect(it) }.getOrNull() }
+            }
             if (info.path.isEmpty()) info.path = listOf(topLevel++)
             // The group this item is in: the one whose path is ours minus the last step.
             val parent = if (info.path.size > 1) groups[info.path.dropLast(1)] else null
@@ -644,7 +654,8 @@ object XcfReader {
                 legacy = info.legacy, blendSpace = info.blendSpace, compositeSpace = info.compositeSpace,
                 compositeMode = info.compositeMode, lockAlpha = info.lockAlpha, text = info.text,
                 mask = maskBitmap?.takeIf { it.width == bmp.width && it.height == bmp.height },
-                maskEnabled = info.applyMask, parent = parent, xcfMode = info.rawMode, xcf = extras(info, bmp)) to info.active
+                maskEnabled = info.applyMask, parent = parent, xcfMode = info.rawMode, xcf = extras(info, bmp),
+                effects = info.effects) to info.active
         }
 
         fun extras(info: LayerInfo, bmp: Bitmap) =
@@ -672,6 +683,84 @@ object XcfReader {
             if (cw != imageW || ch != imageH) return null
             val bmp = readHierarchy(ptr(), -1, 1) ?: return null
             return Channel(name, bmp, kept) to selection
+        }
+
+        /** One GIMP 3 layer effect: name, icon, GEGL operation (and its version), settings, mask. */
+        fun readEffect(at: Long): LayerEffect {
+            goTo(at)
+            val name = string()
+            string()                                       // icon
+            val operation = string()
+            if (version >= 22) string()                    // the operation's version
+            var active = true; var opacity = 1f; var mode = 62; var clip = true
+            var blendSpace = 0; var compositeSpace = 0; var compositeMode = 0
+            val args = LinkedHashMap<String, Any>()
+            val unsupported = ArrayList<String>()
+            while (true) {
+                val t = u32(); val len = length(u32())
+                val start = buf.position()
+                when (t) {
+                    XcfProps.END -> break
+                    XcfProps.VISIBLE -> active = u32() != 0
+                    XcfProps.OPACITY -> opacity = (u32() / 255f).coerceIn(0f, 1f)
+                    XcfProps.FLOAT_OPACITY -> opacity = buf.float.coerceIn(0f, 1f)
+                    XcfProps.MODE -> mode = u32()
+                    XcfProps.BLEND_SPACE -> blendSpace = u32().coerceAtLeast(0)
+                    XcfProps.COMPOSITE_SPACE -> compositeSpace = u32().coerceAtLeast(0)
+                    XcfProps.COMPOSITE_MODE -> compositeMode = u32().coerceAtLeast(0)
+                    XcfProps.FILTER_CLIP -> clip = u32() != 0
+                    XcfProps.FILTER_ARGUMENT -> {
+                        val arg = string()
+                        when (u32()) {
+                            1, 5, 7 -> args[arg] = u32()                       // int, enum, uint
+                            2 -> args[arg] = u32() != 0                        // boolean
+                            3 -> args[arg] = buf.float.toDouble()              // float
+                            4 -> args[arg] = string()                          // string
+                            8 -> color()?.let { args[arg] = it } ?: run { unsupported += arg }
+                            else -> unsupported += arg                         // GIMP config, gradient
+                        }
+                    }
+                }
+                goTo(start.toLong() + len)
+            }
+            val maskAt = ptr()
+            val mask = if (maskAt != 0L) runCatching { readMask(maskAt) }.getOrNull() else null
+            return LayerEffect(name, operation, args, unsupported, active, opacity, mode,
+                blendSpace, compositeSpace, compositeMode, clip, mask)
+        }
+
+        /**
+         * A GEGL colour as XCF stores it (babl encoding, bytes in the machine's order, ICC profile)
+         * as the "rgba(…)" string GEGL reads (linear light), or null if it isn't RGB(A) or grey.
+         */
+        fun color(): String? {
+            val encoding = string()
+            val n = length(u32())
+            val bytes = ByteArray(n).also { buf.get(it) }
+            val profile = length(u32()); goTo(buf.position().toLong() + profile)
+            val model = encoding.substringBefore(' ')
+            val kind = encoding.substringAfter(' ', "")
+            val channels = model.count { it.isUpperCase() }
+            if (channels == 0 || n == 0) return null
+            val size = n / channels
+            val le = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+            val v = DoubleArray(channels) { i ->
+                when {
+                    kind == "double" && size == 8 -> le.getDouble(i * 8)
+                    kind == "float" && size == 4 -> le.getFloat(i * 4).toDouble()
+                    kind == "u8" && size == 1 -> (bytes[i].toInt() and 255) / 255.0
+                    kind == "u16" && size == 2 -> (le.getShort(i * 2).toInt() and 0xFFFF) / 65535.0
+                    else -> return null
+                }
+            }
+            val perceptual = model.contains('\'')
+            fun lin(x: Double) = if (!perceptual) x else if (x <= 0.04045) x / 12.92 else Math.pow((x + 0.055) / 1.055, 2.4)
+            val (r, g, b, a) = when {
+                model.startsWith("R") && channels >= 3 -> listOf(lin(v[0]), lin(v[1]), lin(v[2]), if (channels >= 4) v[3] else 1.0)
+                model.startsWith("Y") -> listOf(lin(v[0]), lin(v[0]), lin(v[0]), if (channels >= 2) v[1] else 1.0)
+                else -> return null
+            }
+            return String.format(java.util.Locale.ROOT, "rgba(%.6f, %.6f, %.6f, %.6f)", r, g, b, a)
         }
 
         /** A layer mask channel, as an opaque grey bitmap. */
