@@ -36,7 +36,11 @@ native/bridge/          C bridge over GEGL: list/describe/apply operations, boun
 
 ## The ideas
 
-- **DocState is a value.** Canvas size, layers (bottom → top), active layer id, selection.
+- **DocState is a value.** Canvas size, layers (bottom → top), active layer id, selection, paths.
+  Groups are entries in the same flat list (`group = true`, a 1×1 placeholder bitmap); a layer's
+  `parent` is its group's id, and each group sits directly above its contents, as in a PSD
+  (`Tree.range` gives a group's block; `Tree.move` moves items in and out of groups and is unit-tested).
+  `Compositor.drawTree` composites recursively (pass-through groups at full opacity aren't isolated).
   `Layer` is an immutable data class holding a *mutable* ARGB_8888 bitmap (premultiplied),
   an offset, opacity, mode, lock-alpha, optional text info and optional mask.
 - **Two kinds of undo step.** `Step.Snapshot(before, after)` for anything structural or for
@@ -84,8 +88,9 @@ Stage 3 was tested on an Android 15 x86_64 emulator (Pixel 7 profile), driving i
 
 ## Known limits / next steps
 
-- Layer groups are flattened into their children on XCF/PSD import (a hidden or faded group hides or fades
-  its children; a group's blend mode is lost); no group UI.
+- GIMP 2.10+'s default ("non-legacy") modes blend in linear light; GAKO blends in sRGB like GIMP's
+  legacy modes (which it writes), so a semi-transparent layer from such a file can look a little different.
+- Group masks aren't supported (groups have no mask); filters and painting work on layers, not groups.
 - Filters that grow a layer (drop shadow…) grow it only within the canvas.
 - During a stroke the canvas draws the pre-stroke copy plus 256 px tiles; other edits on huge layers
   still re-upload the whole texture once per change.

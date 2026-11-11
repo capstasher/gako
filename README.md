@@ -17,6 +17,8 @@ operation) for Android, and puts a touch interface on top designed for one hand 
 - Layered documents: new, duplicate, delete, reorder, merge down, merge visible, flatten, new from visible
 - 17 layer modes (multiply, screen, overlay, soft/hard light, dodge, burn, HSL…), opacity, visibility, lock alpha
 - Layers can be any size and sit anywhere; scale layer, layer to image size, crop to content, alpha to selection
+- Layer groups: nest, collapse, pass-through or isolated with a blend mode and opacity; the arrows move a layer
+  into and out of groups; merge a group; groups survive XCF, PSD and ORA in both directions
 - Layer masks (white, black, from alpha, selection or a grey copy): paint, fill, filter or curve the mask;
   disable, apply or delete it. Masks survive XCF in both directions
 - Undo/redo for everything, with GIMP's Undo History; painting only stores the pixels a stroke touched
@@ -61,7 +63,7 @@ operation) for Android, and puts a touch interface on top designed for one hand 
 1. ✅ **Engine**: GEGL on Android, filters on photos
 2. ✅ **Layers**: layered documents, undo, XCF/ORA
 3. ✅ **Tools**: paint, select, transform, crop, curves, levels, text
-4. **More**: layer groups, several paths per image, tiled GEGL buffers for huge images, plug-ins (Script-Fu / Python), tablet layout
+4. **More**: several editable paths per image, linear-light blending for GIMP's newer modes, tiled GEGL buffers for huge images, plug-ins (Script-Fu / Python), tablet layout
 
 ## Install
 

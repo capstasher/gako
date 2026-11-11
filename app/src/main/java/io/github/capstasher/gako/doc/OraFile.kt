@@ -44,8 +44,32 @@ object OraFile {
         val xml = StringBuilder()
         xml.append("<?xml version='1.0' encoding='UTF-8'?>\n")
         xml.append("<image version=\"0.0.5\" w=\"${doc.width}\" h=\"${doc.height}\" xres=\"72\" yres=\"72\">\n  <stack>\n")
-        doc.layers.asReversed().forEachIndexed { i, l ->
-            xml.append("    <layer name=\"${esc(l.name)}\" src=\"data/layer$i.png\" x=\"${l.x}\" y=\"${l.y}\"")
+        // Pixel layers are numbered top to bottom; groups become nested stacks.
+        val pixelLayers = doc.layers.asReversed().filter { !it.group }
+        val index = pixelLayers.withIndex().associate { (i, l) -> l.id to i }
+        var writeLayer: (Layer, Int, String) -> Unit = { _, _, _ -> }
+        fun emit(parent: Long?, indent: String) {
+            for (l in doc.layers.asReversed()) {
+                if (l.parent != parent) continue
+                if (l.group) {
+                    xml.append("$indent<stack name=\"${esc(l.name)}\"")
+                    xml.append(" opacity=\"${String.format(Locale.US, "%.3f", l.opacity)}\"")
+                    xml.append(" visibility=\"${if (l.visible) "visible" else "hidden"}\"")
+                    // Pass-through groups aren't isolated (OpenRaster 0.0.5's isolation="auto").
+                    xml.append(" isolation=\"${if (l.mode == LayerMode.PassThrough) "auto" else "isolate"}\"")
+                    xml.append(" composite-op=\"${modeNames[l.mode] ?: "svg:src-over"}\"")
+                    if (l.id == doc.activeId) xml.append(" selected=\"true\"")
+                    if (!l.expanded) xml.append(" gako-collapsed=\"true\"")
+                    xml.append(">\n")
+                    emit(l.id, "$indent  ")
+                    xml.append("$indent</stack>\n")
+                    continue
+                }
+                writeLayer(l, index[l.id]!!, indent)
+            }
+        }
+        fun writeLayerXml(l: Layer, i: Int, indent: String) {
+            xml.append("$indent<layer name=\"${esc(l.name)}\" src=\"data/layer$i.png\" x=\"${l.x}\" y=\"${l.y}\"")
             xml.append(" opacity=\"${String.format(Locale.US, "%.3f", l.opacity)}\"")
             xml.append(" visibility=\"${if (l.visible) "visible" else "hidden"}\"")
             xml.append(" composite-op=\"${modeNames[l.mode]}\"")
@@ -59,13 +83,15 @@ object OraFile {
             }
             xml.append("/>\n")
         }
+        writeLayer = ::writeLayerXml
+        emit(null, "    ")
         xml.append("  </stack>\n</image>\n")
         zip.putNextEntry(ZipEntry("stack.xml"))
         zip.write(xml.toString().toByteArray(StandardCharsets.UTF_8))
         zip.closeEntry()
 
         zip.setLevel(1)   // PNGs are already compressed
-        doc.layers.asReversed().forEachIndexed { i, l ->
+        pixelLayers.forEachIndexed { i, l ->
             zip.putNextEntry(ZipEntry("data/layer$i.png"))
             // OpenRaster has no layer masks: bake them in.
             (if (l.activeMask != null) Compositor.applyMask(l) else l.bitmap).compress(Bitmap.CompressFormat.PNG, 100, zip)
@@ -85,6 +111,7 @@ object OraFile {
     private class Entry(
         val name: String, val src: String, val x: Int, val y: Int, val opacity: Float, val visible: Boolean,
         val mode: LayerMode, val selected: Boolean, val lockAlpha: Boolean, val text: TextInfo?,
+        val parent: Long? = null, val groupId: Long? = null, val expanded: Boolean = true,
     )
 
     fun read(input: InputStream): DocState {
@@ -106,9 +133,12 @@ object OraFile {
         val entries = mutableListOf<Entry>()     // top to bottom
         val offsets = ArrayDeque<Pair<Int, Int>>()
         offsets.addLast(0 to 0)
+        // Nested stacks are groups (the outermost one is the image itself).
+        val groups = ArrayDeque<Long?>()
         while (parser.next() != XmlPullParser.END_DOCUMENT) {
             if (parser.eventType == XmlPullParser.END_TAG && parser.name == "stack") {
                 if (offsets.size > 1) offsets.removeLast()
+                groups.removeLastOrNull()
                 continue
             }
             if (parser.eventType != XmlPullParser.START_TAG) continue
@@ -118,6 +148,21 @@ object OraFile {
                 "stack" -> {
                     val (ox, oy) = offsets.last()
                     offsets.addLast((ox + (attr("x")?.toIntOrNull() ?: 0)) to (oy + (attr("y")?.toIntOrNull() ?: 0)))
+                    if (groups.isEmpty()) groups.addLast(null)        // the image's own stack
+                    else {
+                        val id = Layer.newId()
+                        val passThrough = attr("isolation") == "auto" || attr("isolation") == null && attr("composite-op") == null
+                        entries += Entry(
+                            name = attr("name") ?: "Group", src = "", x = 0, y = 0,
+                            opacity = attr("opacity")?.toFloatOrNull()?.coerceIn(0f, 1f) ?: 1f,
+                            visible = attr("visibility") != "hidden",
+                            mode = if (passThrough) LayerMode.PassThrough
+                                   else modeNames.entries.firstOrNull { it.value == attr("composite-op") }?.key ?: LayerMode.Normal,
+                            selected = attr("selected") == "true", lockAlpha = false, text = null,
+                            parent = groups.last(), groupId = id, expanded = attr("gako-collapsed") != "true",
+                        )
+                        groups.addLast(id)
+                    }
                 }
                 "layer" -> {
                     val (ox, oy) = offsets.last()
@@ -146,6 +191,7 @@ object OraFile {
                         selected = attr("selected") == "true",
                         lockAlpha = attr("alpha-preserve") == "true",
                         text = text,
+                        parent = groups.lastOrNull(),
                     )
                 }
             }
@@ -156,19 +202,24 @@ object OraFile {
         }
         if (w.toLong() * h > 24_000_000L) error("That image is ${w}×$h; GAKO opens up to 24 megapixels")
         val layers = entries.asReversed().mapNotNull { e ->
+            if (e.groupId != null) {
+                return@mapNotNull Layer(e.groupId, e.name, Bitmaps.blank(1, 1), visible = e.visible, opacity = e.opacity,
+                    mode = e.mode, group = true, parent = e.parent, expanded = e.expanded) to e.selected
+            }
             val png = files[e.src] ?: return@mapNotNull null
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeByteArray(png, 0, png.size, bounds)
             if (bounds.outWidth.toLong() * bounds.outHeight > 24_000_000L) error("A layer in that file is too big for GAKO (24 megapixels)")
             val bmp = BitmapFactory.decodeByteArray(png, 0, png.size, opts) ?: return@mapNotNull null
-            Layer(Layer.newId(), e.name, Bitmaps.mutable(bmp), e.x, e.y, e.visible, e.opacity, e.mode, e.lockAlpha, e.text) to e.selected
+            Layer(Layer.newId(), e.name, Bitmaps.mutable(bmp), e.x, e.y, e.visible, e.opacity, e.mode, e.lockAlpha, e.text,
+                parent = e.parent) to e.selected
         }
-        if (layers.isEmpty()) error("The OpenRaster file has no layers GAKO can read")
+        if (layers.none { !it.first.group }) error("The OpenRaster file has no layers GAKO can read")
         if (w <= 0 || h <= 0) {
-            w = layers.maxOf { it.first.x + it.first.width }
-            h = layers.maxOf { it.first.y + it.first.height }
+            w = layers.filter { !it.first.group }.maxOf { it.first.x + it.first.width }
+            h = layers.filter { !it.first.group }.maxOf { it.first.y + it.first.height }
         }
-        val active = layers.lastOrNull { it.second }?.first ?: layers.last().first
+        val active = layers.lastOrNull { it.second }?.first ?: layers.last { !it.first.group }.first
         return DocState(w, h, layers.map { it.first }, active.id)
     }
 

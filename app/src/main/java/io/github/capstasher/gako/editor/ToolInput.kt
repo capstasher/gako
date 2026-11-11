@@ -201,7 +201,7 @@ class ToolInput(private val vm: EditorViewModel) {
 
     /** The transform in progress on the active layer (identity until dragged). */
     fun transformFor(d: DocState): LayerTransform? {
-        val a = d.active ?: return null
+        val a = d.active?.takeIf { !it.group } ?: return null
         val t = transformState
         return if (t != null && t.layerId == a.id && t.bitmap === a.bitmap && t.x == a.x && t.y == a.y) t
                else LayerTransform(a.id, a.bitmap, a.x, a.y)
@@ -365,7 +365,14 @@ class ToolInput(private val vm: EditorViewModel) {
                 val l = d.active ?: return
                 val dx = delta.x.roundToInt()
                 val dy = delta.y.roundToInt()
-                if (dx != 0 || dy != 0) vm.change("Move Layer", d.replace(l.copy(x = l.x + dx, y = l.y + dy)))
+                if (dx == 0 && dy == 0) return
+                if (l.group) {
+                    // Everything in the group moves together.
+                    val byId = io.github.capstasher.gako.doc.Tree.byId(d.layers)
+                    vm.change("Move Group", d.copy(layers = d.layers.map {
+                        if (!it.group && io.github.capstasher.gako.doc.Tree.isInside(it, l.id, byId)) it.copy(x = it.x + dx, y = it.y + dy) else it
+                    }))
+                } else vm.change("Move Layer", d.replace(l.copy(x = l.x + dx, y = l.y + dy)))
             }
             else -> Unit
         }
@@ -413,6 +420,7 @@ class ToolInput(private val vm: EditorViewModel) {
     // ------------------------------------------------------------ painting
 
     private fun beginStroke(d: DocState, x: Float, y: Float, pressure: Float) {
+        if (vm.refuseGroup(d)) return
         val layer = vm.targetOf(d) ?: return
         if (!layer.visible) { vm.say("“${layer.name}” is hidden"); return }
         if (tool.cloning) {
@@ -481,7 +489,8 @@ class ToolInput(private val vm: EditorViewModel) {
     private fun pick(d: DocState, x: Float, y: Float) {
         val xi = x.toInt().coerceIn(0, d.width - 1)
         val yi = y.toInt().coerceIn(0, d.height - 1)
-        val c = if (options.sampleMerged) Compositor.sample(d, xi, yi) else d.active?.let { Compositor.sampleLayer(it, xi, yi) } ?: return
+        val c = if (options.sampleMerged || d.active?.group == true) Compositor.sample(d, xi, yi)
+                else d.active?.let { Compositor.sampleLayer(it, xi, yi) } ?: return
         if (Color.alpha(c) == 0) return
         vm.setForeground(c or (0xFF shl 24))
     }
@@ -521,7 +530,7 @@ class ToolInput(private val vm: EditorViewModel) {
 
     /** Pixels to sample for fuzzy select / fill: the active layer, or everything visible. */
     private fun sampleCanvas(d: DocState): IntArray {
-        val src = if (options.sampleMerged) Compositor.flatten(d)
+        val src = if (options.sampleMerged || d.active?.group == true) Compositor.flatten(d)
         else Bitmaps.blank(d.width, d.height).also { b ->
             d.active?.let { Canvas(b).drawBitmap(it.bitmap, it.x.toFloat(), it.y.toFloat(), null) }
         }
@@ -750,6 +759,7 @@ class ToolInput(private val vm: EditorViewModel) {
 
     fun applyTransform() {
         val d = doc ?: return
+        if (vm.refuseGroup(d)) return
         val t = transformFor(d) ?: return
         if (!t.changed) { vm.say("Drag the layer, its corners or the knob first"); return }
         transformState = null

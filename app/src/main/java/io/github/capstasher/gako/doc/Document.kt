@@ -26,7 +26,9 @@ enum class LayerMode(val label: String, val blend: BlendMode) {
     Hue("HSL Hue", BlendMode.HUE),
     Saturation("HSL Saturation", BlendMode.SATURATION),
     Color("HSL Color", BlendMode.COLOR),
-    Luminosity("Luminosity", BlendMode.LUMINOSITY);
+    Luminosity("Luminosity", BlendMode.LUMINOSITY),
+    /** Groups only: the children blend straight onto what's below, as if there were no group. */
+    PassThrough("Pass through", BlendMode.SRC_OVER);
 
     companion object {
         fun fromName(name: String?) = entries.firstOrNull { it.name.equals(name, true) } ?: Normal
@@ -71,6 +73,12 @@ data class Layer(
     /** GIMP's layer mask: an opaque grey ARGB bitmap the size of [bitmap]; white shows, black hides. */
     val mask: Bitmap? = null,
     val maskEnabled: Boolean = true,
+    /** A layer group: no pixels of its own; its children are the layers whose [parent] is its id. */
+    val group: Boolean = false,
+    /** The group this layer is in, or null at the top level. */
+    val parent: Long? = null,
+    /** Groups: children shown in the Layers panel. */
+    val expanded: Boolean = true,
 ) {
     /** The mask that affects how the layer looks right now. */
     val activeMask: Bitmap? get() = mask.takeIf { maskEnabled }
@@ -110,6 +118,139 @@ class VectorPath(val name: String, val strokes: List<PathStroke>) {
 
 /** Paths moved by [m] (crop, scale, rotate…), or the same list when there are none. */
 fun List<VectorPath>.mapped(m: android.graphics.Matrix) = if (isEmpty()) this else map { it.mapped(m) }
+
+/**
+ * Layer groups in the flat, bottom-to-top layer list: a group sits directly above its children
+ * (like in a PSD), so each group and everything in it is one contiguous run ending at the group.
+ */
+object Tree {
+    fun byId(layers: List<Layer>) = layers.associateBy { it.id }
+
+    fun isInside(l: Layer, groupId: Long, byId: Map<Long, Layer>): Boolean {
+        var p = l.parent
+        while (p != null) {
+            if (p == groupId) return true
+            p = byId[p]?.parent
+        }
+        return false
+    }
+
+    /** Indices of [id] and everything inside it: start..(index of id). */
+    fun range(layers: List<Layer>, id: Long): IntRange {
+        val end = layers.indexOfFirst { it.id == id }
+        if (end < 0) return IntRange.EMPTY
+        val byId = byId(layers)
+        var start = end
+        while (start > 0 && isInside(layers[start - 1], id, byId)) start--
+        return start..end
+    }
+
+    fun depth(l: Layer, byId: Map<Long, Layer>): Int {
+        var d = 0
+        var p = l.parent
+        while (p != null) { d++; p = byId[p]?.parent }
+        return d
+    }
+
+    /** Shown on the canvas: visible itself and inside visible groups. */
+    fun shows(l: Layer, byId: Map<Long, Layer>): Boolean {
+        if (!l.visible) return false
+        var p = l.parent
+        while (p != null) {
+            val g = byId[p] ?: return true
+            if (!g.visible) return false
+            p = g.parent
+        }
+        return true
+    }
+
+    /** Hidden in the Layers panel because a group above it is collapsed. */
+    fun collapsedAway(l: Layer, byId: Map<Long, Layer>): Boolean {
+        var p = l.parent
+        while (p != null) {
+            val g = byId[p] ?: return false
+            if (!g.expanded) return true
+            p = g.parent
+        }
+        return false
+    }
+
+    /**
+     * Raises (+1) or lowers (−1) item [id] (with everything inside it) among its siblings in a
+     * bottom-to-top list where each group sits right above its contents. Next to a sibling group it
+     * goes into that group; at the edge of its own group it steps out of it. Returns the new list, or
+     * null if it can't move. Generic so it can be tested without Android.
+     */
+    fun <T> move(items: List<T>, id: Long, delta: Int, idOf: (T) -> Long, parentOf: (T) -> Long?,
+                 isGroup: (T) -> Boolean, withParent: (T, Long?) -> T): List<T>? {
+        val list = items.toMutableList()
+        val byId = list.associateBy(idOf)
+        fun inside(t: T, g: Long): Boolean {
+            var p = parentOf(t)
+            while (p != null) { if (p == g) return true; p = byId[p]?.let(parentOf) }
+            return false
+        }
+        fun rangeOf(l: List<T>, x: Long): IntRange {
+            val end = l.indexOfFirst { idOf(it) == x }
+            if (end < 0) return IntRange.EMPTY
+            var start = end
+            while (start > 0 && inside(l[start - 1], x)) start--
+            return start..end
+        }
+        val me = byId[id] ?: return null
+        val parent = parentOf(me)
+        val range = rangeOf(list, id)
+        val block = list.slice(range)
+        fun reparented(p: Long?) = block.map { if (idOf(it) == id) withParent(it, p) else it }
+        fun removeBlock() { for (k in range.reversed()) list.removeAt(k) }
+        if (delta > 0) {
+            val next = list.getOrNull(range.last + 1) ?: return null
+            val sibling = list.drop(range.last + 1).firstOrNull { parentOf(it) == parent }
+            when {
+                parent != null && idOf(next) == parent -> {
+                    removeBlock()
+                    val gi = list.indexOfFirst { idOf(it) == parent }
+                    list.addAll(gi + 1, reparented(byId[parent]?.let(parentOf)))
+                }
+                sibling == null -> return null
+                isGroup(sibling) -> {
+                    removeBlock()
+                    list.addAll(rangeOf(list, idOf(sibling)).first, reparented(idOf(sibling)))
+                }
+                else -> {
+                    val sib = rangeOf(list, idOf(sibling))
+                    val sibBlock = list.slice(sib)
+                    for (k in sib.reversed()) list.removeAt(k)
+                    list.addAll(range.first, sibBlock)
+                }
+            }
+        } else {
+            val prev = list.getOrNull(range.first - 1)
+            when {
+                prev == null || (parent != null && !inside(prev, parent)) -> {
+                    if (parent == null) return null
+                    // Step out, just below our group.
+                    removeBlock()
+                    list.addAll(rangeOf(list, parent).first, reparented(byId[parent]?.let(parentOf)))
+                }
+                parentOf(prev) == parent && isGroup(prev) -> {
+                    removeBlock()
+                    list.addAll(list.indexOfFirst { idOf(it) == idOf(prev) }, reparented(idOf(prev)))
+                }
+                else -> {
+                    val sibTop = list.subList(0, range.first).lastOrNull { parentOf(it) == parent } ?: return null
+                    val sib = rangeOf(list, idOf(sibTop))
+                    removeBlock()
+                    list.addAll(sib.first, block)
+                }
+            }
+        }
+        return list
+    }
+
+    /** The image's real (pixel) layers, in order. */
+    fun leaves(layers: List<Layer>) = layers.filter { !it.group }
+}
 
 /** A whole image at one moment. Cheap to copy: bitmaps are shared until changed. */
 data class DocState(

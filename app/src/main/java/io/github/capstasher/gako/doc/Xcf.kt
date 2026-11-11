@@ -40,6 +40,8 @@ private object XcfProps {
     const val VECTORS = 25
     const val GROUP_ITEM = 29
     const val ITEM_PATH = 30
+    const val GROUP_ITEM_FLAGS = 31
+    const val PASS_THROUGH = 61
     const val FLOAT_OPACITY = 33
     const val TILE = 64
 
@@ -53,6 +55,7 @@ private object XcfProps {
     )
 
     fun read(mode: Int): LayerMode = when (mode) {
+        PASS_THROUGH -> LayerMode.PassThrough
         3, 30 -> LayerMode.Multiply
         4, 31 -> LayerMode.Screen
         5, 23 -> LayerMode.Overlay
@@ -196,6 +199,14 @@ object XcfWriter {
         b.u32(XcfProps.END); b.u32(0)
 
         val layers = doc.layers.asReversed()               // XCF lists the top layer first
+        // Item paths: each item's index among its siblings, top first, from the top level down.
+        val paths = HashMap<Long, List<Int>>()
+        val siblingCount = HashMap<Long?, Int>()
+        for (l in layers) {
+            val k = siblingCount[l.parent] ?: 0
+            siblingCount[l.parent] = k + 1
+            paths[l.id] = (l.parent?.let { paths[it] } ?: emptyList()) + k
+        }
         val slots = IntArray(layers.size) { b.size.also { b.u32(0) } }
         b.u32(0)                                           // end of layers
         b.u32(0)                                           // no channels
@@ -207,13 +218,17 @@ object XcfWriter {
             b.setU32(slots[i], b.size)
             b.u32(l.width); b.u32(l.height); b.u32(1)      // RGBA
             b.string(l.name)
+            // GIMP turns the layer into a group when it reads this, dropping what it read before: first.
+            if (l.group) b.prop(XcfProps.GROUP_ITEM)
             if (l.id == doc.activeId) b.prop(XcfProps.ACTIVE_LAYER)
             b.prop(XcfProps.OPACITY, (l.opacity * 255).roundToInt().coerceIn(0, 255))
             b.u32(XcfProps.FLOAT_OPACITY); b.u32(4); b.f32(l.opacity)
             b.prop(XcfProps.VISIBLE, if (l.visible) 1 else 0)
             b.prop(XcfProps.LOCK_ALPHA, if (l.lockAlpha) 1 else 0)
             b.prop(XcfProps.OFFSETS, l.x, l.y)
-            b.prop(XcfProps.MODE, XcfProps.write[l.mode] ?: 0)
+            b.prop(XcfProps.MODE, if (l.mode == LayerMode.PassThrough) XcfProps.PASS_THROUGH else XcfProps.write[l.mode] ?: 0)
+            if (l.group) b.prop(XcfProps.GROUP_ITEM_FLAGS, if (l.expanded) 1 else 0)
+            if (l.parent != null) paths[l.id]?.let { p -> b.prop(XcfProps.ITEM_PATH, *p.toIntArray()) }
             if (l.mask != null) b.prop(XcfProps.APPLY_MASK, if (l.maskEnabled) 1 else 0)
             l.text?.let { t ->
                 // One parasite: name, flags (1 = persistent), size, data.
@@ -275,6 +290,7 @@ object XcfReader {
         var applyMask: Boolean = true,
         var text: TextInfo? = null,
         var path: List<Int> = emptyList(),
+        var expanded: Boolean = true,
     )
 
     private class Parser(val buf: ByteBuffer) {
@@ -439,13 +455,13 @@ object XcfReader {
             // each child knows its groups, then stack bottom-up.
             val read = layerPtrs.mapNotNull { readLayer(it, baseType) }
             layers += read.asReversed()
-            if (layers.isEmpty()) error("This XCF file has no layers GAKO can show")
-            val active = layers.lastOrNull { it.second }?.first ?: layers.last().first
+            if (layers.none { !it.first.group }) error("This XCF file has no layers GAKO can show")
+            val active = layers.lastOrNull { it.second }?.first ?: layers.last { !it.first.group }.first
             return DocState(w, h, layers.map { it.first }, active.id, paths = paths)
         }
 
-        /** Groups seen so far, by their item path: whether they show, and their opacity. */
-        val groups = HashMap<List<Int>, Pair<Boolean, Float>>()
+        /** Groups seen so far, by their item path → their layer id. */
+        val groups = HashMap<List<Int>, Long>()
         /** Top-level items carry no item path; they're numbered in file order. */
         var topLevel = 0
 
@@ -468,6 +484,7 @@ object XcfReader {
                     XcfProps.LOCK_ALPHA -> info.lockAlpha = u32() != 0
                     XcfProps.OFFSETS -> { info.x = u32(); info.y = u32() }
                     XcfProps.GROUP_ITEM -> info.group = true
+                    XcfProps.GROUP_ITEM_FLAGS -> info.expanded = (u32() and 1) != 0
                     XcfProps.ITEM_PATH -> info.path = List(len / 4) { u32() }
                     XcfProps.PARASITES -> while (buf.position() < start + len) {
                         val name = string()
@@ -484,25 +501,21 @@ object XcfReader {
             val hierarchy = ptr()
             val mask = ptr()
             if (info.path.isEmpty()) info.path = listOf(topLevel++)
-            // A layer inside groups shows only if they all do, at their combined opacity.
-            var shown = info.visible
-            var opacity = info.opacity
-            for (n in 1 until info.path.size) {
-                groups[info.path.subList(0, n)]?.let { (v, o) -> shown = shown && v; opacity *= o }
-            }
+            // The group this item is in: the one whose path is ours minus the last step.
+            val parent = if (info.path.size > 1) groups[info.path.dropLast(1)] else null
             if (info.group) {
-                groups[info.path] = shown to opacity
-                return null
+                val id = Layer.newId()
+                groups[info.path] = id
+                return Layer(id, info.name.ifEmpty { "Group" }, Bitmaps.blank(1, 1), visible = info.visible,
+                    opacity = info.opacity, mode = info.mode, group = true, parent = parent, expanded = info.expanded) to info.active
             }
-            info.visible = shown
-            info.opacity = opacity
             if (w <= 0 || h <= 0) return null
             val bmp = readHierarchy(hierarchy, type, baseType) ?: return null
             val maskBitmap = if (mask != 0L) readMask(mask) else null
             return Layer(Layer.newId(), info.name.ifEmpty { "Layer" }, bmp, info.x, info.y, info.visible,
-                info.opacity, info.mode, info.lockAlpha, info.text,
+                info.opacity, if (info.mode == LayerMode.PassThrough) LayerMode.Normal else info.mode, info.lockAlpha, info.text,
                 mask = maskBitmap?.takeIf { it.width == bmp.width && it.height == bmp.height },
-                maskEnabled = info.applyMask) to info.active
+                maskEnabled = info.applyMask, parent = parent) to info.active
         }
 
         /** A layer mask channel, as an opaque grey bitmap. */

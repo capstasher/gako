@@ -69,6 +69,7 @@ object DocOps {
 
     private fun mapAll(doc: DocState, m: Matrix, nw: Int, nh: Int): DocState {
         val layers = doc.layers.map { l ->
+            if (l.group) return@map l
             val r = RectF(l.bounds)
             m.mapRect(r)
             // Per-layer matrix: layer space -> canvas space -> new canvas.
@@ -85,6 +86,7 @@ object DocOps {
         val crop = Rect(r).apply { intersect(0, 0, doc.width, doc.height) }
         if (crop.isEmpty) return doc
         val layers = doc.layers.map { l ->
+            if (l.group) return@map l
             val keep = Rect(l.bounds)
             if (!keep.intersect(crop)) {
                 l.copy(bitmap = Bitmaps.blank(1, 1), mask = l.mask?.let { Bitmaps.blank(1, 1, android.graphics.Color.WHITE) }, x = 0, y = 0)
@@ -107,6 +109,7 @@ object DocOps {
     /** Image > Canvas Size: a bigger or smaller canvas, layers moved by ([dx], [dy]). */
     fun canvasSize(doc: DocState, w: Int, h: Int, dx: Int, dy: Int, resizeLayers: Boolean): DocState {
         val layers = doc.layers.map { l ->
+            if (l.group) return@map l
             if (resizeLayers && l.x == 0 && l.y == 0 && l.width == doc.width && l.height == doc.height) {
                 val b = Bitmaps.blank(w, h)
                 Canvas(b).drawBitmap(l.bitmap, dx.toFloat(), dy.toFloat(), null)
@@ -130,6 +133,7 @@ object DocOps {
         val sx = w.toFloat() / doc.width
         val sy = h.toFloat() / doc.height
         val layers = doc.layers.map { l ->
+            if (l.group) return@map l
             val nx = floor(l.x * sx).toInt()
             val ny = floor(l.y * sy).toInt()
             val nw = (ceil((l.x + l.width) * sx).toInt() - nx).coerceAtLeast(1)
@@ -151,7 +155,7 @@ object DocOps {
     }
 
     fun scaleLayer(doc: DocState, id: Long, w: Int, h: Int): DocState {
-        val l = doc.layer(id) ?: return doc
+        val l = doc.layer(id)?.takeIf { !it.group } ?: return doc
         val cx = l.x + l.width / 2f
         val cy = l.y + l.height / 2f
         return doc.replace(l.copy(bitmap = scaled(l.bitmap, w, h), mask = l.mask?.let { scaled(it, w, h) },
@@ -160,7 +164,7 @@ object DocOps {
 
     /** Layer > Crop to Content: shrink the layer to the box around its non-transparent pixels. */
     fun cropLayerToContent(doc: DocState, id: Long): DocState? {
-        val l = doc.layer(id) ?: return null
+        val l = doc.layer(id)?.takeIf { !it.group } ?: return null
         val box = Selections.make(l.bitmap.extractAlpha())?.bounds ?: return null
         if (box == Rect(0, 0, l.width, l.height)) return null
         return doc.replace(l.copy(
@@ -172,7 +176,7 @@ object DocOps {
 
     /** Layer > Layer to Image Size. */
     fun layerToImageSize(doc: DocState, id: Long): DocState {
-        val l = doc.layer(id) ?: return doc
+        val l = doc.layer(id)?.takeIf { !it.group } ?: return doc
         val b = Bitmaps.blank(doc.width, doc.height)
         Canvas(b).drawBitmap(l.bitmap, l.x.toFloat(), l.y.toFloat(), null)
         val m = l.mask?.let { old ->
@@ -182,9 +186,19 @@ object DocOps {
     }
 
     /** Merges the active layer into the one below, GIMP's Merge Down. */
+    /** The layer Merge Down would merge into: the next one down in the same group, if it's a plain layer. */
+    fun mergeTarget(doc: DocState): Layer? {
+        val i = doc.activeIndex
+        if (i <= 0) return null
+        val top = doc.layers[i]
+        if (top.group) return null
+        val below = doc.layers[i - 1]
+        return below.takeIf { !it.group && it.parent == top.parent }
+    }
+
     fun mergeDown(doc: DocState): DocState {
         val i = doc.activeIndex
-        if (i <= 0) return doc
+        if (mergeTarget(doc) == null) return doc
         val top = doc.layers[i]
         val below = doc.layers[i - 1]
         val r = Rect(below.bounds).apply { if (top.visible) union(top.bounds) }
@@ -198,6 +212,20 @@ object DocOps {
         return doc.copy(layers = layers, activeId = merged.id)
     }
 
+    /** Layer > Merge Layer Group: the group and everything in it become one layer in its place. */
+    fun mergeGroup(doc: DocState, id: Long): DocState {
+        val g = doc.layer(id)?.takeIf { it.group } ?: return doc
+        val range = Tree.range(doc.layers, id)
+        val inside = doc.layers.slice(range)
+        val sub = doc.copy(layers = inside.map { if (it.id == id) it.copy(visible = true, parent = null) else it })
+        val b = Compositor.flatten(sub)
+        val merged = Layer(Layer.newId(), g.name, b, visible = g.visible, parent = g.parent)
+        val layers = doc.layers.toMutableList()
+        for (k in range.reversed()) layers.removeAt(k)
+        layers.add(range.first, merged)
+        return doc.copy(layers = layers, activeId = merged.id)
+    }
+
     fun flatten(doc: DocState, background: Int): DocState {
         val b = Compositor.flatten(doc, background)
         val l = Layer(Layer.newId(), "Background", b)
@@ -205,14 +233,17 @@ object DocOps {
     }
 
     fun mergeVisible(doc: DocState): DocState {
-        val visible = doc.layers.filter { it.visible }
-        if (visible.size < 2) return doc
-        val b = Compositor.flatten(doc, null, visible)
-        val merged = Layer(Layer.newId(), visible.last().name, b)
+        val byId = Tree.byId(doc.layers)
+        val visible = doc.layers.filter { Tree.shows(it, byId) }
+        if (visible.count { !it.group } < 2) return doc
+        val b = Compositor.flatten(doc)
+        val merged = Layer(Layer.newId(), visible.last { !it.group }.name, b)
         val firstIndex = doc.layers.indexOf(visible.first())
-        // Hidden layers keep their places; the merged layer sits where the lowest visible one was.
-        val layers = doc.layers.subList(0, firstIndex).filter { !it.visible } + merged +
-            doc.layers.subList(firstIndex, doc.layers.size).filter { !it.visible }
+        // Hidden layers keep their places (at the top level); the merged layer sits where the
+        // lowest visible one was.
+        fun kept(l: Layer) = !Tree.shows(l, byId) && !l.group
+        val layers = doc.layers.subList(0, firstIndex).filter(::kept).map { it.copy(parent = null) } + merged +
+            doc.layers.subList(firstIndex, doc.layers.size).filter(::kept).map { it.copy(parent = null) }
         return doc.copy(layers = layers, activeId = merged.id)
     }
 
