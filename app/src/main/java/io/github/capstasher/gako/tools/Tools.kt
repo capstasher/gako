@@ -13,6 +13,7 @@ import androidx.compose.material.icons.outlined.Draw
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.FormatColorFill
 import androidx.compose.material.icons.outlined.Gesture
+import androidx.compose.material.icons.outlined.Healing
 import androidx.compose.material.icons.outlined.Gradient
 import androidx.compose.material.icons.outlined.InvertColors
 import androidx.compose.material.icons.outlined.OpenWith
@@ -41,6 +42,7 @@ enum class Tool(val label: String, val icon: ImageVector, val group: ToolGroup, 
     Airbrush("Airbrush", Icons.Outlined.Draw, ToolGroup.Paint, "Paint builds up where you linger"),
     Eraser("Eraser", Icons.Outlined.CropFree, ToolGroup.Paint, "Erase to transparency"),
     Clone("Clone", Icons.Outlined.ContentCopy, ToolGroup.Paint, "Set a source, then paint a copy of it"),
+    Heal("Heal", Icons.Outlined.Healing, ToolGroup.Paint, "Set a source, then paint over spots: copies texture, keeps the tone"),
     DodgeBurn("Dodge / Burn", Icons.Outlined.Tonality, ToolGroup.Paint, "Lighten or darken where you paint"),
     Smudge("Smudge", Icons.Outlined.Fingerprint, ToolGroup.Paint, "Smear colours along the stroke"),
     Blur("Blur", Icons.Outlined.BlurOn, ToolGroup.Paint, "Soften where you paint"),
@@ -64,7 +66,10 @@ enum class Tool(val label: String, val icon: ImageVector, val group: ToolGroup, 
         else -> label
     }
 
-    val paints get() = this in setOf(Paintbrush, Pencil, Airbrush, Eraser, Clone, DodgeBurn, Smudge, Blur)
+    val paints get() = this in setOf(Paintbrush, Pencil, Airbrush, Eraser, Clone, Heal, DodgeBurn, Smudge, Blur)
+
+    /** Tools that copy from a source point. */
+    val cloning get() = this == Clone || this == Heal
     val selects get() = group == ToolGroup.Select
 }
 

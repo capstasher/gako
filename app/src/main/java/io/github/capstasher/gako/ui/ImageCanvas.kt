@@ -291,7 +291,7 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
                     handle(nc, knob.x, knob.y, 10 * px, px, round = true)
                 }
             }
-            if (tool == Tool.Clone) input.cloneSource?.let { src ->
+            if (tool.cloning) input.cloneSource?.let { src ->
                 val r = 12 * px
                 nc.drawCircle(src.x, src.y, r, ink)
                 nc.drawCircle(src.x, src.y, r, gold)
