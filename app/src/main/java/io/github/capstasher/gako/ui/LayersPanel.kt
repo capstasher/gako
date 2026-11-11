@@ -4,6 +4,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -119,6 +120,8 @@ fun LayersPanel(vm: EditorViewModel) {
 private fun LayerRow(vm: EditorViewModel, layer: Layer, active: Boolean) {
     val rev = if (active) vm.revision else 0
     val thumb = remember(layer.bitmap, rev) { Compositor.thumbnail(layer.bitmap, 96).asImageBitmap() }
+    val maskThumb = layer.mask?.let { m -> remember(m, rev) { Compositor.thumbnail(m, 96).asImageBitmap() } }
+    val onMask = active && vm.editingMask
     Row(
         Modifier
             .fillMaxWidth()
@@ -137,10 +140,23 @@ private fun LayerRow(vm: EditorViewModel, layer: Layer, active: Boolean) {
         }
         Box(
             Modifier.size(44.dp).background(Color(0xFF777777), RoundedCornerShape(3.dp))
-                .border(1.dp, if (active) Gako.Gold else Gako.InkHigh, RoundedCornerShape(3.dp)),
+                .border(if (active && !onMask) 2.dp else 1.dp, if (active && !onMask) Gako.Gold else Gako.InkHigh, RoundedCornerShape(3.dp))
+                .clickable { vm.setActiveLayer(layer.id); vm.editMask = false },
             contentAlignment = Alignment.Center,
         ) {
-            Image(thumb, contentDescription = null, modifier = Modifier.size(42.dp))
+            Image(thumb, contentDescription = "Edit layer", modifier = Modifier.size(42.dp))
+        }
+        if (maskThumb != null) {
+            Spacer(Modifier.width(4.dp))
+            Box(
+                Modifier.size(44.dp).background(Color.Black, RoundedCornerShape(3.dp))
+                    .border(if (onMask) 2.dp else 1.dp, if (onMask) Gako.Gold else if (layer.maskEnabled) Gako.InkHigh else Color(0xFFE05555),
+                        RoundedCornerShape(3.dp))
+                    .clickable { vm.setActiveLayer(layer.id); vm.editMask = true },
+                contentAlignment = Alignment.Center,
+            ) {
+                Image(maskThumb, contentDescription = "Edit layer mask", modifier = Modifier.size(42.dp))
+            }
         }
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
@@ -156,6 +172,8 @@ private fun LayerRow(vm: EditorViewModel, layer: Layer, active: Boolean) {
                 if (layer.mode != LayerMode.Normal) add(layer.mode.label)
                 if (layer.opacity < 1f) add("${(layer.opacity * 100).roundToInt()}%")
                 if (layer.lockAlpha) add("alpha locked")
+                if (layer.mask != null && !layer.maskEnabled) add("mask off")
+                if (active && vm.editingMask) add("editing mask")
             }
             if (info.isNotEmpty()) Text(info.joinToString(" · "), style = MaterialTheme.typography.labelSmall, color = Gako.Muted)
         }
@@ -190,6 +208,14 @@ private fun MoreLayerActions(vm: EditorViewModel) {
                 DropdownMenuItem(text = { Text(label) }, onClick = { open = false; action() })
             }
             item("Rename…") { vm.doc?.activeId?.let { vm.dialog = Dialog.RenameLayer(it) } }()
+            val a = vm.doc?.active
+            if (a?.mask == null) item("Add Layer Mask…") { vm.dialog = Dialog.AddMask }()
+            else {
+                item(if (vm.editingMask) "Edit Layer Pixels" else "Edit Layer Mask") { vm.editMask = !vm.editMask }()
+                item(if (a.maskEnabled) "Disable Layer Mask" else "Enable Layer Mask") { vm.setMaskEnabled(!a.maskEnabled) }()
+                item("Apply Layer Mask") { vm.applyMask() }()
+                item("Delete Layer Mask") { vm.deleteMask() }()
+            }
             item("Scale Layer…") { vm.dialog = Dialog.ScaleLayer }()
             item("Layer to Image Size") { vm.layerToImageSize() }()
             item("Alpha to Selection") { vm.alphaToSelection() }()

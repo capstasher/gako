@@ -73,6 +73,21 @@ fun DialogHost(vm: EditorViewModel, dialog: Dialog) {
             vm.modifySelection(dialog.kind, it)
         }
         Dialog.NewLayer -> NewLayerDialog(vm, close)
+        Dialog.AddMask -> AlertDialog(
+            onDismissRequest = close,
+            title = { Text("Add Layer Mask") },
+            text = {
+                Column {
+                    Text("Initialize the mask to", style = MaterialTheme.typography.labelMedium, color = Gako.Muted)
+                    EditorViewModel.MaskInit.entries.forEach { m ->
+                        Text(m.label, style = MaterialTheme.typography.bodyLarge,
+                            modifier = Modifier.fillMaxWidth().clickable { close(); vm.addMask(m) }.padding(vertical = 12.dp))
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = close) { Text("Cancel") } },
+        )
         is Dialog.PickColor -> ColorPickerDialog(
             if (dialog.foreground) "Foreground Colour" else "Background Colour",
             if (dialog.foreground) vm.fg else vm.bg,

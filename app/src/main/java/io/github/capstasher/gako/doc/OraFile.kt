@@ -65,7 +65,8 @@ object OraFile {
         zip.setLevel(1)   // PNGs are already compressed
         doc.layers.asReversed().forEachIndexed { i, l ->
             zip.putNextEntry(ZipEntry("data/layer$i.png"))
-            l.bitmap.compress(Bitmap.CompressFormat.PNG, 100, zip)
+            // OpenRaster has no layer masks: bake them in.
+            (if (l.activeMask != null) Compositor.applyMask(l) else l.bitmap).compress(Bitmap.CompressFormat.PNG, 100, zip)
             zip.closeEntry()
         }
         val merged = Compositor.flatten(doc)

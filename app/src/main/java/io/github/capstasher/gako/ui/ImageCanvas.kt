@@ -217,12 +217,12 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
                     layer.bitmap.setHasMipMap(smooth)
                     val paint = Compositor.layerPaint(layer, smooth)
                     when {
-                        layer === active && preview != null && !comparing -> drawPreview(nc, layer, preview, d, paint)
-                        layer === active && moveDelta != null ->
-                            nc.drawBitmap(layer.bitmap, layer.x + moveDelta.x, layer.y + moveDelta.y, paint)
+                        layer === active && preview != null && !comparing -> drawPreview(nc, layer, preview, d, paint, vm.editingMask)
+                        layer === active && moveDelta != null -> Compositor.drawLayer(nc, layer, paint,
+                            Matrix().apply { setTranslate(layer.x + moveDelta.x, layer.y + moveDelta.y) })
                         layer === active && transform != null && transform.changed ->
-                            nc.drawBitmap(layer.bitmap, transform.matrix(), paint.apply { isFilterBitmap = true })
-                        else -> nc.drawBitmap(layer.bitmap, layer.x.toFloat(), layer.y.toFloat(), paint)
+                            Compositor.drawLayer(nc, layer, paint.apply { isFilterBitmap = true }, transform.matrix())
+                        else -> Compositor.drawLayer(nc, layer, paint)
                     }
                     if (layer === active && gradient != null) {
                         val g = Paint().apply {
@@ -335,20 +335,25 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
     }
 }
 
-/** The active layer with its filter preview, through the selection if there is one. */
-private fun drawPreview(nc: android.graphics.Canvas, layer: Layer, preview: Bitmap, d: DocState, paint: Paint) {
-    val dst = RectF(layer.bounds)
-    val sel = d.selection
-    if (sel == null) {
-        nc.drawBitmap(preview, null, dst, paint)
+/** The active layer with its filter preview (of the layer or of its mask), through the selection if there is one. */
+private fun drawPreview(nc: android.graphics.Canvas, layer: Layer, preview: Bitmap, d: DocState, paint: Paint, onMask: Boolean) {
+    if (onMask) {
+        Compositor.drawLayer(nc, layer, paint, mask = preview)
         return
     }
+    val sel = d.selection
+    if (sel == null) {
+        Compositor.drawLayer(nc, layer, paint, content = preview)
+        return
+    }
+    val dst = RectF(layer.bounds)
     val outer = nc.saveLayer(dst, paint)
     nc.drawBitmap(layer.bitmap, layer.x.toFloat(), layer.y.toFloat(), null)
     val inner = nc.saveLayer(dst, null)
     nc.drawBitmap(preview, null, dst, Paint().apply { isFilterBitmap = true; blendMode = BlendMode.SRC })
     nc.drawBitmap(sel.mask, 0f, 0f, Paint().apply { blendMode = BlendMode.DST_IN })
     nc.restoreToCount(inner)
+    layer.activeMask?.let { nc.drawBitmap(it, layer.x.toFloat(), layer.y.toFloat(), Compositor.maskPaint) }
     nc.restoreToCount(outer)
 }
 

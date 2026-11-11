@@ -63,7 +63,13 @@ data class Layer(
     val mode: LayerMode = LayerMode.Normal,
     val lockAlpha: Boolean = false,
     val text: TextInfo? = null,
+    /** GIMP's layer mask: an opaque grey ARGB bitmap the size of [bitmap]; white shows, black hides. */
+    val mask: Bitmap? = null,
+    val maskEnabled: Boolean = true,
 ) {
+    /** The mask that affects how the layer looks right now. */
+    val activeMask: Bitmap? get() = mask.takeIf { maskEnabled }
+
     val width get() = bitmap.width
     val height get() = bitmap.height
     val bounds get() = Rect(x, y, x + width, y + height)
@@ -105,14 +111,20 @@ sealed class Step(val label: String) {
     class Snapshot(label: String, val before: DocState, val after: DocState) : Step(label)
 
     /** Pixels changed in place inside [rect] (layer coordinates) of layer [layerId]. */
-    class Patch(label: String, val layerId: Long, val rect: Rect, val before: Bitmap, val after: Bitmap) : Step(label)
+    class Patch(label: String, val layerId: Long, val rect: Rect, val before: Bitmap, val after: Bitmap,
+                /** The pixels belong to the layer's mask, not the layer. */
+                val onMask: Boolean = false) : Step(label) {
+        fun target(l: Layer): Bitmap? = if (onMask) l.mask else l.bitmap
+        fun forMask() = Patch(label, layerId, rect, before, after, onMask = true)
+    }
 
     /** Memory this step keeps alive that the live document doesn't. */
     fun cost(): Long = when (this) {
         is Patch -> before.allocationByteCount.toLong() + after.allocationByteCount
         is Snapshot -> {
-            val live = after.layers.map { it.bitmap }.toSet()
-            before.layers.filter { it.bitmap !in live }.sumOf { it.bitmap.allocationByteCount.toLong() } +
+            val live = after.layers.flatMap { listOfNotNull(it.bitmap, it.mask) }.toSet()
+            before.layers.flatMap { listOfNotNull(it.bitmap, it.mask) }.filter { it !in live }
+                .sumOf { it.allocationByteCount.toLong() } +
                 (if (before.selection !== after.selection) before.selection?.mask?.allocationByteCount?.toLong() ?: 0L else 0L)
         }
     }

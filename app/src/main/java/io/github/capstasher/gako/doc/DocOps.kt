@@ -73,7 +73,8 @@ object DocOps {
             m.mapRect(r)
             // Per-layer matrix: layer space -> canvas space -> new canvas.
             val lm = Matrix().apply { postTranslate(l.x.toFloat(), l.y.toFloat()); postConcat(m) }
-            l.copy(bitmap = transformed(l.bitmap, lm), x = r.left.roundToInt(), y = r.top.roundToInt())
+            l.copy(bitmap = transformed(l.bitmap, lm), mask = l.mask?.let { transformed(it, lm) },
+                x = r.left.roundToInt(), y = r.top.roundToInt())
         }
         val sel = doc.selection?.let { Selections.make(transformedMask(it.mask, m, nw, nh)) }
         return doc.copy(width = nw, height = nh, layers = layers, selection = sel)
@@ -86,10 +87,12 @@ object DocOps {
         val layers = doc.layers.map { l ->
             val keep = Rect(l.bounds)
             if (!keep.intersect(crop)) {
-                l.copy(bitmap = Bitmaps.blank(1, 1), x = 0, y = 0)
+                l.copy(bitmap = Bitmaps.blank(1, 1), mask = l.mask?.let { Bitmaps.blank(1, 1, android.graphics.Color.WHITE) }, x = 0, y = 0)
             } else {
                 val local = Rect(keep).apply { offset(-l.x, -l.y) }
-                l.copy(bitmap = Bitmaps.mutable(Bitmaps.crop(l.bitmap, local)), x = keep.left - crop.left, y = keep.top - crop.top)
+                l.copy(bitmap = Bitmaps.mutable(Bitmaps.crop(l.bitmap, local)),
+                    mask = l.mask?.let { Bitmaps.mutable(Bitmaps.crop(it, local)) },
+                    x = keep.left - crop.left, y = keep.top - crop.top)
             }
         }
         val sel = doc.selection?.let { s ->
@@ -106,7 +109,10 @@ object DocOps {
             if (resizeLayers && l.x == 0 && l.y == 0 && l.width == doc.width && l.height == doc.height) {
                 val b = Bitmaps.blank(w, h)
                 Canvas(b).drawBitmap(l.bitmap, dx.toFloat(), dy.toFloat(), null)
-                l.copy(bitmap = b, x = 0, y = 0)
+                val m = l.mask?.let { old ->
+                    Bitmaps.blank(w, h, android.graphics.Color.WHITE).also { Canvas(it).drawBitmap(old, dx.toFloat(), dy.toFloat(), null) }
+                }
+                l.copy(bitmap = b, mask = m, x = 0, y = 0)
             } else l.copy(x = l.x + dx, y = l.y + dy)
         }
         val sel = doc.selection?.let { s ->
@@ -126,7 +132,7 @@ object DocOps {
             val ny = floor(l.y * sy).toInt()
             val nw = (ceil((l.x + l.width) * sx).toInt() - nx).coerceAtLeast(1)
             val nh = (ceil((l.y + l.height) * sy).toInt() - ny).coerceAtLeast(1)
-            l.copy(bitmap = scaled(l.bitmap, nw, nh), x = nx, y = ny)
+            l.copy(bitmap = scaled(l.bitmap, nw, nh), mask = l.mask?.let { scaled(it, nw, nh) }, x = nx, y = ny)
         }
         val sel = doc.selection?.let { Selections.make(Bitmap.createScaledBitmap(it.mask, w, h, true)) }
         return doc.copy(width = w, height = h, layers = layers, selection = sel)
@@ -145,7 +151,8 @@ object DocOps {
         val l = doc.layer(id) ?: return doc
         val cx = l.x + l.width / 2f
         val cy = l.y + l.height / 2f
-        return doc.replace(l.copy(bitmap = scaled(l.bitmap, w, h), x = (cx - w / 2f).roundToInt(), y = (cy - h / 2f).roundToInt()))
+        return doc.replace(l.copy(bitmap = scaled(l.bitmap, w, h), mask = l.mask?.let { scaled(it, w, h) },
+            x = (cx - w / 2f).roundToInt(), y = (cy - h / 2f).roundToInt()))
     }
 
     /** Layer > Layer to Image Size. */
@@ -153,7 +160,10 @@ object DocOps {
         val l = doc.layer(id) ?: return doc
         val b = Bitmaps.blank(doc.width, doc.height)
         Canvas(b).drawBitmap(l.bitmap, l.x.toFloat(), l.y.toFloat(), null)
-        return doc.replace(l.copy(bitmap = b, x = 0, y = 0))
+        val m = l.mask?.let { old ->
+            Bitmaps.blank(doc.width, doc.height, android.graphics.Color.WHITE).also { Canvas(it).drawBitmap(old, l.x.toFloat(), l.y.toFloat(), null) }
+        }
+        return doc.replace(l.copy(bitmap = b, mask = m, x = 0, y = 0))
     }
 
     /** Merges the active layer into the one below, GIMP's Merge Down. */
@@ -165,10 +175,10 @@ object DocOps {
         val r = Rect(below.bounds).apply { if (top.visible) union(top.bounds) }
         val b = Bitmaps.blank(r.width(), r.height())
         val c = Canvas(b)
-        c.drawBitmap(below.bitmap, (below.x - r.left).toFloat(), (below.y - r.top).toFloat(),
-            Paint().apply { alpha = 255 })
-        if (top.visible) c.drawBitmap(top.bitmap, (top.x - r.left).toFloat(), (top.y - r.top).toFloat(), Compositor.layerPaint(top))
-        val merged = below.copy(bitmap = b, x = r.left, y = r.top, text = null)
+        c.translate(-r.left.toFloat(), -r.top.toFloat())
+        Compositor.drawLayer(c, below, Paint())
+        if (top.visible) Compositor.drawLayer(c, top, Compositor.layerPaint(top))
+        val merged = below.copy(bitmap = b, x = r.left, y = r.top, text = null, mask = null)
         val layers = doc.layers.toMutableList().apply { removeAt(i); set(i - 1, merged) }
         return doc.copy(layers = layers, activeId = merged.id)
     }

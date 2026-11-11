@@ -103,6 +103,7 @@ class ToolInput(private val vm: EditorViewModel) {
 
     private var stroke: PaintStroke? = null
     private var strokeLabel = ""
+    private var strokeOnMask = false
     private var airJob: Job? = null
     private var lastPressure = 1f
     private var down = PointF()
@@ -224,7 +225,7 @@ class ToolInput(private val vm: EditorViewModel) {
             Tool.Paintbrush, Tool.Pencil, Tool.Airbrush, Tool.Eraser, Tool.DodgeBurn, Tool.Clone, Tool.Smudge, Tool.Blur -> {
                 val s = stroke ?: return
                 stroke = null
-                s.finish(strokeLabel)?.let { vm.record(it) }
+                s.finish(strokeLabel)?.let { vm.record(if (strokeOnMask) it.forMask() else it) }
                 vm.pixelsChanged()
             }
             Tool.RectSelect, Tool.EllipseSelect -> {
@@ -307,7 +308,7 @@ class ToolInput(private val vm: EditorViewModel) {
     // ------------------------------------------------------------ painting
 
     private fun beginStroke(d: DocState, x: Float, y: Float, pressure: Float) {
-        val layer = d.active ?: return
+        val layer = vm.targetOf(d) ?: return
         if (!layer.visible) { vm.say("“${layer.name}” is hidden"); return }
         if (tool == Tool.Clone) {
             if (settingCloneSource || cloneSource == null) { setCloneSource(x, y); return }
@@ -317,7 +318,8 @@ class ToolInput(private val vm: EditorViewModel) {
         // Painting turns a text layer into an ordinary one.
         val target = if (layer.text != null) layer.copy(text = null).also { vm.silently(d.replace(it)) } else layer
         val sel = Compositor.selectionFor(target, d.selection)
-        val color = if (tool == Tool.Eraser && target.lockAlpha) vm.bg else vm.fg
+        val color = vm.paintColor(if (tool == Tool.Eraser && target.lockAlpha) vm.bg else vm.fg)
+        strokeOnMask = vm.editingMask
         stroke = PaintStroke(tool, target, sel, color, options, cloneOffset?.let { it.x to it.y }).also {
             it.begin(x, y, pressure)
         }
@@ -417,7 +419,7 @@ class ToolInput(private val vm: EditorViewModel) {
         if (xi !in 0 until d.width || yi !in 0 until d.height) return
         val threshold = options.threshold
         val diagonal = options.diagonal
-        val color = vm.fg
+        val color = vm.paintColor(vm.fg)
         val opacity = options.opacity
         vm.viewModelScope.launch {
             vm.busy = EditorViewModel.Busy("Bucket Fill")
@@ -451,8 +453,9 @@ class ToolInput(private val vm: EditorViewModel) {
 
     /** The gradient's shader, in canvas coordinates. */
     fun gradientShader(a: PointF, b: PointF): Shader {
-        val c1 = vm.fg or (0xFF shl 24)
-        val c2 = if (options.gradientColors == GradientColors.FgTransparent) vm.fg and 0x00FFFFFF else vm.bg or (0xFF shl 24)
+        val c1 = vm.paintColor(vm.fg) or (0xFF shl 24)
+        val c2 = if (options.gradientColors == GradientColors.FgTransparent) vm.paintColor(vm.fg) and 0x00FFFFFF
+                 else vm.paintColor(vm.bg) or (0xFF shl 24)
         val len = max(1f, hypot(b.x - a.x, b.y - a.y))
         return when (options.gradientShape) {
             GradientShape.Linear -> LinearGradient(a.x, a.y, b.x, b.y, c1, c2, Shader.TileMode.CLAMP)
@@ -601,8 +604,10 @@ class ToolInput(private val vm: EditorViewModel) {
             val h = (kotlin.math.ceil(r.bottom).toInt() - top).coerceIn(1, 16384)
             val out = Bitmaps.blank(w, h)
             m.postTranslate(-left.toFloat(), -top.toFloat())
-            Canvas(out).drawBitmap(l.bitmap, m, Paint().apply { isFilterBitmap = true; isAntiAlias = true })
-            state.replace(l.copy(bitmap = out, x = left, y = top, text = null))
+            val smooth = Paint().apply { isFilterBitmap = true; isAntiAlias = true }
+            Canvas(out).drawBitmap(l.bitmap, m, smooth)
+            val mask = l.mask?.let { old -> Bitmaps.blank(w, h).also { Canvas(it).drawBitmap(old, m, smooth) } }
+            state.replace(l.copy(bitmap = out, mask = mask, x = left, y = top, text = null))
         }
     }
 
