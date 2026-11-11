@@ -437,7 +437,7 @@ class ToolInput(private val vm: EditorViewModel) {
                         blendMode = if (l.lockAlpha) BlendMode.SRC_ATOP else BlendMode.SRC_OVER
                     })
                     c.drawBitmap(mask, -l.x.toFloat(), -l.y.toFloat(), Paint().apply { this.color = color or (0xFF shl 24) })
-                    sel?.let { c.drawBitmap(it, 0f, 0f, Paint().apply { blendMode = BlendMode.DST_IN }) }
+                    sel?.let { Bitmaps.maskIn(c, it) }
                     c.restoreToCount(save)
                 }
             } finally {
@@ -474,7 +474,7 @@ class ToolInput(private val vm: EditorViewModel) {
             c.translate(-l.x.toFloat(), -l.y.toFloat())
             c.drawPaint(Paint().apply { this.shader = shader })
             c.translate(l.x.toFloat(), l.y.toFloat())
-            sel?.let { c.drawBitmap(it, 0f, 0f, Paint().apply { blendMode = BlendMode.DST_IN }) }
+            sel?.let { Bitmaps.maskIn(c, it) }
             c.restoreToCount(save)
         }
     }

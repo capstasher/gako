@@ -136,4 +136,15 @@ object Bitmaps {
     }
 
     fun crop(b: Bitmap, r: Rect): Bitmap = Bitmap.createBitmap(b, r.left, r.top, r.width(), r.height())
+
+    /**
+     * Multiplies what's on [c] by [mask]'s alpha (DST_IN) — the mask placed at ([x], [y]), nothing
+     * kept outside it. A software canvas treats a drawn ALPHA_8 bitmap as coverage, which turns
+     * DST_IN into a no-op wherever the mask is clear; a shader gives true alpha instead.
+     */
+    fun maskIn(c: Canvas, mask: Bitmap, x: Float = 0f, y: Float = 0f) {
+        val shader = android.graphics.BitmapShader(mask, android.graphics.Shader.TileMode.DECAL, android.graphics.Shader.TileMode.DECAL)
+        if (x != 0f || y != 0f) shader.setLocalMatrix(android.graphics.Matrix().apply { setTranslate(x, y) })
+        c.drawPaint(Paint().apply { this.shader = shader; blendMode = BlendMode.DST_IN })
+    }
 }

@@ -37,6 +37,10 @@ object Selections {
             } else shape
         }
         val out = existing.copy(Bitmap.Config.ALPHA_8, true)
+        if (mode == SelectMode.Intersect) {
+            Bitmaps.maskIn(Canvas(out), shape)
+            return out
+        }
         val p = Paint().apply {
             blendMode = when (mode) {
                 SelectMode.Add -> BlendMode.SRC_OVER

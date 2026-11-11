@@ -58,7 +58,6 @@ class PaintStroke(
 
     private val restorePaint = Paint().apply { blendMode = BlendMode.SRC }
     private val maskTint = Paint().apply { this.color = this@PaintStroke.color or (0xFF shl 24) }
-    private val dstIn = Paint().apply { blendMode = BlendMode.DST_IN }
     private val layerPaint = Paint().apply {
         alpha = (options.opacity * 255).roundToInt().coerceIn(0, 255)
         blendMode = when {
@@ -145,15 +144,15 @@ class PaintStroke(
             Tool.Clone -> {
                 val (dx, dy) = cloneOffset ?: (0f to 0f)
                 c.drawBitmap(before, -dx, -dy, sourcePaint)
-                c.drawBitmap(mask, 0f, 0f, dstIn)
+                Bitmaps.maskIn(c, mask)
             }
             Tool.DodgeBurn -> {
                 c.drawBitmap(before, 0f, 0f, sourcePaint)
-                c.drawBitmap(mask, 0f, 0f, dstIn)
+                Bitmaps.maskIn(c, mask)
             }
             else -> c.drawBitmap(mask, 0f, 0f, maskTint)
         }
-        selection?.let { c.drawBitmap(it, 0f, 0f, dstIn) }
+        selection?.let { Bitmaps.maskIn(c, it) }
         c.restoreToCount(save)
         c.restore()
     }

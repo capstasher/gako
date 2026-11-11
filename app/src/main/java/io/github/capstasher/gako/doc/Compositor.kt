@@ -75,7 +75,7 @@ object Compositor {
         c.drawBitmap(mask, 0f, 0f, Paint().apply { blendMode = BlendMode.DST_OUT })
         val save = c.saveLayer(bounds, Paint().apply { blendMode = BlendMode.PLUS })
         c.drawBitmap(result, 0f, 0f, Paint().apply { blendMode = BlendMode.SRC })
-        c.drawBitmap(mask, 0f, 0f, Paint().apply { blendMode = BlendMode.DST_IN })
+        Bitmaps.maskIn(c, mask)
         c.restoreToCount(save)
         return out
     }
