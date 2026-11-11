@@ -104,7 +104,7 @@ object PsdReader {
             val layers = if (layerSectionLength > 0) runCatching { readLayers(layerSectionEnd) }.getOrNull() else null
             goTo(layerSectionEnd)
             if (!layers.isNullOrEmpty()) {
-                val list = layers.map { it.first }
+                val list = Tree.normalize(layers.map { it.first })
                 return DocState(width, height, list, list.last { !it.group }.id)
             }
             val merged = readMerged()
@@ -170,7 +170,7 @@ object PsdReader {
                 }
                 val (bmp, mask) = pixels[i] ?: continue
                 out += Layer(Layer.newId(), r.name.ifBlank { "Layer ${out.size + 1}" }, bmp, r.left, r.top,
-                    visible = r.visible, opacity = r.opacity / 255f, mode = r.mode,
+                    visible = r.visible, opacity = r.opacity / 255f, mode = if (r.mode == LayerMode.PassThrough) LayerMode.Normal else r.mode,
                     mask = mask, maskEnabled = !r.maskDisabled, parent = stack.lastOrNull()) to false
             }
             // Empty groups would leave nothing to paint on; keep them only if there's a real layer.

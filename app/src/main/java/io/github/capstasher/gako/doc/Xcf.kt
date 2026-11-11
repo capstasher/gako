@@ -457,7 +457,7 @@ object XcfReader {
             layers += read.asReversed()
             if (layers.none { !it.first.group }) error("This XCF file has no layers GAKO can show")
             val active = layers.lastOrNull { it.second }?.first ?: layers.last { !it.first.group }.first
-            return DocState(w, h, layers.map { it.first }, active.id, paths = paths)
+            return DocState(w, h, Tree.normalize(layers.map { it.first }), active.id, paths = paths)
         }
 
         /** Groups seen so far, by their item path → their layer id. */

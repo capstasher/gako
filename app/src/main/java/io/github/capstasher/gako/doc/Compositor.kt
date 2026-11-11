@@ -32,18 +32,31 @@ object Compositor {
      * its children into its own layer, then blends that with its mode and opacity; a pass-through
      * group at full opacity lets them blend straight onto what's below.
      */
-    fun drawTree(canvas: Canvas, layers: List<Layer>, bounds: RectF, parent: Long? = null, leaf: (Canvas, Layer) -> Unit) {
+    fun drawTree(canvas: Canvas, layers: List<Layer>, bounds: RectF, parent: Long? = null,
+                 /** Size isolated groups to their contents (saves memory); off on screen, where previews can overhang. */
+                 tight: Boolean = true, leaf: (Canvas, Layer) -> Unit) {
         for (l in layers) {
             if (l.parent != parent || !l.visible || l.opacity <= 0f) continue
             if (!l.group) { leaf(canvas, l); continue }
             if (l.mode == LayerMode.PassThrough && l.opacity >= 1f) {
-                drawTree(canvas, layers, bounds, l.id, leaf)
+                drawTree(canvas, layers, bounds, l.id, tight, leaf)
             } else {
-                val save = canvas.saveLayer(bounds, layerPaint(l))
-                drawTree(canvas, layers, bounds, l.id, leaf)
+                // Only as big as the group's contents: nested full-canvas layers add up fast.
+                val area = if (tight) groupBounds(layers, l.id) else RectF(bounds)
+                if (area.isEmpty || !area.intersect(bounds)) continue
+                val save = canvas.saveLayer(area, layerPaint(l))
+                drawTree(canvas, layers, bounds, l.id, tight, leaf)
                 canvas.restoreToCount(save)
             }
         }
+    }
+
+    /** The canvas area a group's pixel layers cover. */
+    fun groupBounds(layers: List<Layer>, id: Long): RectF {
+        val byId = Tree.byId(layers)
+        val r = RectF()
+        for (l in layers) if (!l.group && Tree.isInside(l, id, byId)) r.union(RectF(l.bounds))
+        return r
     }
 
     /** Turns a grey mask into alpha (its red channel) for DST_IN. */

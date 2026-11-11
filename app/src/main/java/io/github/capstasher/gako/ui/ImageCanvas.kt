@@ -320,9 +320,13 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
                     nc.drawBitmap(textBitmap, text.x.toFloat(), text.y.toFloat(), null)
                 }
             }
-            Compositor.drawTree(nc, d.layers, bounds) { c, l -> drawLeaf(c, l) }
-            // New text with a group active (no pixel layer to sit on) still shows.
-            if (text != null && textBitmap != null && text.layerId == null && active?.group == true) {
+            var textShown = false
+            Compositor.drawTree(nc, d.layers, bounds, tight = false) { c, l ->
+                drawLeaf(c, l)
+                if (text != null && (text.layerId == l.id || (text.layerId == null && l === active))) textShown = true
+            }
+            // Text being typed always shows, even if its layer is hidden (or a group is active).
+            if (text != null && textBitmap != null && !textShown) {
                 nc.drawBitmap(textBitmap, text.x.toFloat(), text.y.toFloat(), null)
             }
             nc.restoreToCount(iso)

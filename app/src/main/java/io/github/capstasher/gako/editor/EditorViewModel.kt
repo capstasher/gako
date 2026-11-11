@@ -563,7 +563,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         projectFormat = null
         endInteractions()
         resetHistory()
-        doc = state
+        doc = state.copy(layers = Tree.reveal(state.layers, state.activeId))
         preview = null
         previewPlacement = null
         documentName = name
@@ -1077,9 +1077,10 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     enum class NewFill(val label: String) { Transparent("Transparency"), Foreground("Foreground"), Background("Background"), White("White") }
 
     fun newLayer(fill: NewFill = NewFill.Transparent) {
-        val d = doc ?: return
+        if (doc == null) return
         if (blockedByBusy()) return
         endInteractions()
+        val d = doc ?: return  // committing typed text may have changed it
         val color = when (fill) {
             NewFill.Transparent -> 0
             NewFill.Foreground -> fg
@@ -1091,10 +1092,11 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun duplicateLayer() {
-        val d = doc ?: return
-        val a = d.active ?: return
+        if (doc?.active == null) return
         if (blockedByBusy()) return
         endInteractions()
+        val d = doc ?: return  // committing typed text may have changed it
+        val a = d.active ?: return
         // A group is duplicated with everything in it.
         val block = d.layers.slice(Tree.range(d.layers, a.id))
         val ids = block.associate { it.id to Layer.newId() }
@@ -1109,13 +1111,13 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun deleteLayer() {
+        if (doc == null || blockedByBusy()) return
+        endInteractions()
         val d = doc ?: return
         val a = d.active ?: return
-        if (blockedByBusy()) return
         val range = Tree.range(d.layers, a.id)
         val layers = d.layers.filterIndexed { k, _ -> k !in range }
         if (layers.none { !it.group }) { say("An image needs at least one layer"); return }
-        endInteractions()
         // The next one down takes over, or the one now at the bottom.
         val next = layers.getOrNull((range.first - 1).coerceAtLeast(0)) ?: layers.first()
         change(if (a.group) "Delete Group" else "Delete Layer", d.copy(layers = layers, activeId = next.id))
@@ -1130,7 +1132,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         val a = d.active ?: return
         if (blockedByBusy()) return
         val label = if (delta > 0) "Raise Layer" else "Lower Layer"
-        val layers = Tree.move(d.layers, a.id, delta, { it.id }, { it.parent }, { it.group }) { l, p -> l.copy(parent = p) } ?: return
+        val moved = Tree.move(d.layers, a.id, delta, { it.id }, { it.parent }, { it.group }) { l, p -> l.copy(parent = p) } ?: return
+        val layers = Tree.reveal(moved, a.id)
         change(label, d.copy(layers = layers))
     }
 
@@ -1143,19 +1146,21 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Layer > New Layer Group: an empty group above the active layer. */
     fun newGroup() {
-        val d = doc ?: return
+        if (doc == null) return
         if (blockedByBusy()) return
         endInteractions()
+        val d = doc ?: return  // committing typed text may have changed it
         val g = Layer(Layer.newId(), layerName(d, "Group"), Bitmaps.blank(1, 1), group = true, mode = LayerMode.PassThrough)
         change("New Layer Group", insertAboveActive(d, g))
     }
 
     /** Puts the active layer (or group) into a new group of its own. */
     fun groupActive() {
-        val d = doc ?: return
-        val a = d.active ?: return
+        if (doc?.active == null) return
         if (blockedByBusy()) return
         endInteractions()
+        val d = doc ?: return  // committing typed text may have changed it
+        val a = d.active ?: return
         val g = Layer(Layer.newId(), layerName(d, "Group"), Bitmaps.blank(1, 1), group = true, mode = LayerMode.PassThrough, parent = a.parent)
         val range = Tree.range(d.layers, a.id)
         val layers = d.layers.toMutableList()
@@ -1170,6 +1175,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun setExpanded(id: Long, expanded: Boolean) {
+        if (busy != null) return
         val d = doc ?: return
         val l = d.layer(id)?.takeIf { it.group } ?: return
         silently(d.replace(l.copy(expanded = expanded)))
@@ -1497,8 +1503,9 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             guardDiscard("Pasting as a new image") { newDocument(DocOps.fromBitmap(Bitmaps.copy(b), "Pasted"), "Pasted") }
             return
         }
-        val d = doc ?: run { newDocument(DocOps.fromBitmap(Bitmaps.copy(b), "Pasted"), "Pasted"); return }
+        if (doc == null) { newDocument(DocOps.fromBitmap(Bitmaps.copy(b), "Pasted"), "Pasted"); return }
         endInteractions()
+        val d = doc ?: return
         val x = if (r.right <= d.width && r.bottom <= d.height) r.left else (d.width - b.width) / 2
         val y = if (r.right <= d.width && r.bottom <= d.height) r.top else (d.height - b.height) / 2
         val l = Layer(Layer.newId(), layerName(d, "Pasted Layer"), Bitmaps.copy(b), x, y)
