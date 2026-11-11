@@ -564,8 +564,13 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             busy = Busy(label)
             try {
                 val out = withContext(Dispatchers.Default) { block(d) }
-                if (out != null) {
-                    if (doc === d) change(label, out) else say("$label wasn't applied: the image changed meanwhile")
+                when {
+                    out == null -> Unit
+                    // Bigger than GAKO handles (and than Android will draw: ~100 MB per bitmap).
+                    out.width.toLong() * out.height > MAX_PIXELS || out.layers.any { !it.group && it.width.toLong() * it.height > MAX_PIXELS } ->
+                        say("$label would make the image or a layer bigger than ${MAX_PIXELS / 1_000_000} megapixels")
+                    doc === d -> change(label, out)
+                    else -> say("$label wasn't applied: the image changed meanwhile")
                 }
             } catch (t: OutOfMemoryError) {
                 say("$label: not enough memory")
@@ -1795,12 +1800,22 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun commitText() {
+    /**
+     * Turns the text being edited into a layer. [fromDone]: the user tapped Done, so text too big
+     * for a layer stays open to fix; otherwise (something else needs the text finished) it's dropped.
+     */
+    fun commitText(fromDone: Boolean = false) {
         val t = text ?: return
         text = null
         val d = doc ?: return
         if (t.info.text.isBlank()) return
-        val bmp = TextSession.render(t.info)
+        val bmp = TextSession.render(t.info) ?: run {
+            if (fromDone) {
+                text = t
+                say("That text is too big for one layer; make it smaller or break the lines")
+            } else say("The text was too big for one layer and wasn't added")
+            return
+        }
         val existing = t.layerId?.let { d.layer(it) }
         if (existing != null) {
             // The text's box changes size: keep the mask where it was on the canvas.

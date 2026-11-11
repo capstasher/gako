@@ -65,7 +65,7 @@ fun TextPanel(t: TextSession, vm: EditorViewModel, onAddFont: () -> Unit, modifi
             IconButton(onClick = vm::cancelText) { Icon(Icons.Outlined.Close, "Cancel", tint = Gako.Muted) }
             Text(if (t.layerId == null) "Text" else "Edit Text", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
             FilledIconButton(
-                onClick = vm::commitText,
+                onClick = { vm.commitText(fromDone = true) },
                 colors = IconButtonDefaults.filledIconButtonColors(containerColor = Gako.Gold, contentColor = Gako.Ink),
             ) { Icon(Icons.Outlined.Check, "Done") }
         }
