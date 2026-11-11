@@ -267,10 +267,14 @@ fun buildMenus(vm: EditorViewModel, callbacks: MenuCallbacks): List<MenuGroup> {
     val curatedNames = colourShelves.flatMap { s -> s.ops.map { it.first } }.toSet()
     val colourGroups = colourShelves.mapNotNull { shelf ->
         val items = shelf.ops.mapNotNull { (name, label) -> byName[name]?.let { opAction(it, label) } }
-        val extra = if (shelf.label == "Adjust") listOf(
-            act("curves", "Curves…", Icons.Outlined.ShowChart) { vm.startCurves() },
-            act("levels", "Levels…", Icons.Outlined.Equalizer) { vm.startCurves(levels = true) },
-        ) else emptyList()
+        val extra = when (shelf.label) {
+            "Adjust" -> listOf(
+                act("curves", "Curves…", Icons.Outlined.ShowChart) { vm.startCurves() },
+                act("levels", "Levels…", Icons.Outlined.Equalizer) { vm.startCurves(levels = true) },
+            )
+            "Auto" -> listOf(act("white-balance", "White Balance", Icons.Outlined.WbSunny) { vm.whiteBalance() })
+            else -> emptyList()
+        }
         if (items.isEmpty() && extra.isEmpty()) null
         else MenuGroup("colours:${shelf.label.lowercase()}", shelf.label, shelf.icon, extra + items)
     }
