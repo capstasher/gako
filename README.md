@@ -37,7 +37,7 @@ operation) for Android, and puts a touch interface on top designed for one hand 
   replace/add/subtract/intersect, feather;
   Select menu: all, none, invert, feather, grow, shrink, border, from layer alpha
 - Transform: move, unified transform (scale/rotate/flip with handles, or perspective by dragging corners),
-  crop (with aspect presets)
+  crop (with aspect presets), warp (push, grow, shrink, swirl, erase, smooth: GIMP's Warp Transform)
 - Filters, Curves and Levels respect the selection; Filters > Repeat Last and Recently Used
 - **Filter Brush**: any of the ~200 filters can be painted on where you brush instead of applied everywhere
 - Edit: cut/copy/paste (also via Android's clipboard), Layer via Copy/Cut (then drag it away), clear, fill,

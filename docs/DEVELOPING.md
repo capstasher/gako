@@ -27,6 +27,8 @@ app/src/main/java/io/github/capstasher/gako/
                         dodge/burn, smudge, blur; also the tiles the canvas draws mid-stroke
     PathEditor.kt       the Paths tool's Bézier path and its gestures
     Presets.kt          brush presets (built-in + saved in SharedPreferences as JSON)
+    Warp.kt             Warp Transform: a mesh the brush pushes, the layer redrawn through it with
+                        drawVertices; lasts across strokes until the layer changes otherwise
   engine/               JNI wrapper around libgako.so (GEGL)
   export/               flat formats (PNG, JPEG, WebP, HEIF, TIFF, GIF, BMP, TGA, ICO, PPM) + ORA/XCF
   ui/                   Compose: EditorScreen (layout, dock), ImageCanvas (GPU drawing + gestures),

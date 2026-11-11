@@ -26,6 +26,7 @@ import androidx.compose.material.icons.outlined.Polyline
 import androidx.compose.material.icons.outlined.OpenInFull
 import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material.icons.outlined.Tonality
+import androidx.compose.material.icons.outlined.Waves
 import androidx.compose.ui.graphics.vector.ImageVector
 
 /** GIMP's toolbox, the parts that make sense under a finger. */
@@ -35,6 +36,7 @@ enum class Tool(val label: String, val icon: ImageVector, val group: ToolGroup, 
     Transform("Unified Transform", Icons.Outlined.OpenInFull, ToolGroup.Transform,
         "Drag to move, corners to scale, the top knob to rotate"),
     Crop("Crop", Icons.Outlined.Crop, ToolGroup.Transform, "Drag the edges, then apply"),
+    Warp("Warp Transform", Icons.Outlined.Waves, ToolGroup.Transform, "Push pixels around: move, grow, shrink, swirl"),
     RectSelect("Rectangle Select", Icons.Outlined.Rectangle, ToolGroup.Select, "Drag a rectangle"),
     EllipseSelect("Ellipse Select", Icons.Outlined.PanoramaFishEye, ToolGroup.Select, "Drag an ellipse"),
     FreeSelect("Free Select", Icons.Outlined.Gesture, ToolGroup.Select, "Draw around the area"),
@@ -62,6 +64,7 @@ enum class Tool(val label: String, val icon: ImageVector, val group: ToolGroup, 
     /** A label short enough for the palette grid. */
     val short: String get() = when (this) {
         Transform -> "Transform"
+        Warp -> "Warp"
         RectSelect -> "Rectangle"
         EllipseSelect -> "Ellipse"
         FreeSelect -> "Lasso"
@@ -129,4 +132,5 @@ data class ToolOptions(
     val symmetry: Symmetry = Symmetry.Off,
     /** Rectangle Select: rounded corners (GIMP's "Rounded corners" radius). */
     val cornerRadius: Float = 0f,
+    val warpMode: WarpMode = WarpMode.Move,
 )

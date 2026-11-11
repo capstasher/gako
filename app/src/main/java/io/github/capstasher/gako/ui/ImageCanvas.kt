@@ -482,6 +482,12 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
                     }
                 }
             }
+            // The Warp brush under the finger.
+            if (tool == Tool.Warp) input.warpAt?.let { p ->
+                val r = vm.options.size / 2f
+                nc.drawCircle(p.x, p.y, r, ink)
+                nc.drawCircle(p.x, p.y, r, Paint(gold).apply { strokeWidth = 1.2f * px })
+            }
             if (tool.cloning) input.cloneSource?.let { src ->
                 val r = 12 * px
                 nc.drawCircle(src.x, src.y, r, ink)
@@ -513,7 +519,7 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
             nc.restore()
 
             // Brush outlines in screen space: the size preview at the centre, and under a hovering pen.
-            if (tool.paints || tool == Tool.SelectBrush) {
+            if (tool.paints || tool == Tool.SelectBrush || tool == Tool.Warp) {
                 val r = vm.options.size / 2f * s
                 val ring = Paint().apply { style = Paint.Style.STROKE; isAntiAlias = true }
                 fun outline(x: Float, y: Float) {
@@ -554,7 +560,7 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
  * The layer being painted on: its pre-stroke copy plus the stroke's tiles, so the GPU only re-uploads
  * the tiles that changed. When the stroke is on the mask, the same goes for the mask.
  */
-private fun drawStroking(nc: android.graphics.Canvas, layer: Layer, paint: Paint, s: io.github.capstasher.gako.tools.PaintStroke, onMask: Boolean) {
+private fun drawStroking(nc: android.graphics.Canvas, layer: Layer, paint: Paint, s: io.github.capstasher.gako.tools.LiveView, onMask: Boolean) {
     val bounds = RectF(layer.bounds)
     val copy = Paint().apply { blendMode = BlendMode.SRC; isFilterBitmap = paint.isFilterBitmap }
     fun drawPieces() {

@@ -313,6 +313,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             android.view.KeyEvent.KEYCODE_T -> if (shift) Tool.Transform else Tool.Text
             android.view.KeyEvent.KEYCODE_O -> if (shift) Tool.ColorSelect else Tool.ColorPicker
             android.view.KeyEvent.KEYCODE_M -> Tool.Move
+            android.view.KeyEvent.KEYCODE_W -> Tool.Warp
             android.view.KeyEvent.KEYCODE_R -> Tool.RectSelect
             android.view.KeyEvent.KEYCODE_F -> Tool.FreeSelect
             android.view.KeyEvent.KEYCODE_U -> Tool.FuzzySelect
@@ -376,7 +377,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             .putFloat("size", o.size).putFloat("opacity", o.opacity).putFloat("hardness", o.hardness)
             .putInt("threshold", o.threshold).putFloat("feather", o.feather).putBoolean("sampleMerged", o.sampleMerged)
             .putString("brushShape", o.brushShape.name).putFloat("brushAngle", o.brushAngle).putFloat("smoothing", o.smoothing)
-            .putString("symmetry", o.symmetry.name)
+            .putString("symmetry", o.symmetry.name).putString("warpMode", o.warpMode.name).putFloat("strength", o.strength)
             .apply()
     }
 
@@ -393,6 +394,9 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         smoothing = toolPrefs.getFloat("smoothing", 0f),
         symmetry = runCatching { io.github.capstasher.gako.tools.Symmetry.valueOf(toolPrefs.getString("symmetry", "Off")!!) }
             .getOrDefault(io.github.capstasher.gako.tools.Symmetry.Off),
+        warpMode = runCatching { io.github.capstasher.gako.tools.WarpMode.valueOf(toolPrefs.getString("warpMode", "Move")!!) }
+            .getOrDefault(io.github.capstasher.gako.tools.WarpMode.Move),
+        strength = toolPrefs.getFloat("strength", 0.5f),
     )
 
     fun setForeground(c: Int) {

@@ -40,7 +40,7 @@ class PaintStroke(
     private val mirrorY: Float? = null,
     /** Filter brush: the filtered layer the stroke reveals. */
     private val revealSource: Bitmap? = null,
-) {
+) : LiveView {
     private val bmp: Bitmap = layer.bitmap
     private val before: Bitmap = bmp.copy(Bitmap.Config.ARGB_8888, false)
     private val mask: Bitmap = Bitmap.createBitmap(bmp.width, bmp.height, Bitmap.Config.ALPHA_8)
@@ -320,11 +320,11 @@ class PaintStroke(
     private val viewTiles = HashMap<Int, Bitmap>()
     private val copyPaint = Paint().apply { blendMode = BlendMode.SRC }
 
-    val layerId: Long get() = layer.id
-    val viewBase: Bitmap get() = before
-    val viewTileMap: Map<Int, Bitmap> get() = viewTiles
+    override val layerId: Long get() = layer.id
+    override val viewBase: Bitmap get() = before
+    override val viewTileMap: Map<Int, Bitmap> get() = viewTiles
 
-    fun viewTileRect(i: Int): Rect {
+    override fun viewTileRect(i: Int): Rect {
         val tx = i % viewTilesX
         val ty = i / viewTilesX
         return Rect(tx * viewTile, ty * viewTile, min(bmp.width, (tx + 1) * viewTile), min(bmp.height, (ty + 1) * viewTile))
