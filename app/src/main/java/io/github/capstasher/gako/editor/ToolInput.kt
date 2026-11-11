@@ -156,6 +156,9 @@ class ToolInput(private val vm: EditorViewModel) {
         transformState = null
     }
 
+    /** A brush stroke is under way. */
+    val stroking: Boolean get() = stroke != null
+
     fun hasPendingEdit() = (tool == Tool.Transform && transformState?.changed == true) ||
         (tool == Tool.Crop && cropState != null)
 
@@ -445,6 +448,8 @@ class ToolInput(private val vm: EditorViewModel) {
                 } ?: return@launch
                 if (vm.doc !== d) return@launch
                 val (mask, bounds) = region
+                // Filling turns a text layer into an ordinary one.
+                if (!vm.editingMask && layer.text != null) vm.silently(d.replace(layer.copy(text = null)))
                 vm.editActiveLayer("Bucket Fill", bounds) { l, sel ->
                     val c = Canvas(l.bitmap)
                     val save = c.saveLayer(RectF(0f, 0f, l.width.toFloat(), l.height.toFloat()), Paint().apply {
@@ -459,7 +464,6 @@ class ToolInput(private val vm: EditorViewModel) {
                 vm.busy = null
             }
         }
-        if (layer.text != null) vm.silently(d.replace(layer.copy(text = null)))
     }
 
     // ------------------------------------------------------------ gradient
@@ -643,7 +647,7 @@ class ToolInput(private val vm: EditorViewModel) {
             m.postTranslate(-left.toFloat(), -top.toFloat())
             val smooth = Paint().apply { isFilterBitmap = true; isAntiAlias = true }
             Canvas(out).drawBitmap(l.bitmap, m, smooth)
-            val mask = l.mask?.let { old -> Bitmaps.blank(w, h).also { Canvas(it).drawBitmap(old, m, smooth) } }
+            val mask = l.mask?.let { old -> Bitmaps.blank(w, h, Color.BLACK).also { Canvas(it).drawBitmap(old, m, smooth) } }
             state.replace(l.copy(bitmap = out, mask = mask, x = left, y = top, text = null))
         }
     }

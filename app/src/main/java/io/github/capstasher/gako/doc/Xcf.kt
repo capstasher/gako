@@ -359,8 +359,10 @@ object XcfReader {
         }
 
         /** Bytes per channel and whether values are linear light, from the precision. */
-        fun componentSize() = when (precision) { 100, 150 -> 1; 200, 250, 500, 550 -> 2; 700, 750 -> 8; else -> 4 }
-        fun isFloat() = precision in 500..799
+        // Precision = component type (hundreds: 1 u8, 2 u16, 3 u32, 5 half, 6 float, 7 double) + TRC
+        // (00 linear, 50 non-linear, 75 perceptual in GIMP 3).
+        fun componentSize() = when (precision / 100) { 1 -> 1; 2, 5 -> 2; 7 -> 8; else -> 4 }
+        fun isFloat() = precision / 100 in 5..7
         fun isLinear() = precision % 100 == 0
 
         fun readHierarchy(at: Long, layerType: Int, baseType: Int): Bitmap? {

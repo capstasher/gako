@@ -141,7 +141,7 @@ private fun LayerRow(vm: EditorViewModel, layer: Layer, active: Boolean) {
         Box(
             Modifier.size(44.dp).background(Color(0xFF777777), RoundedCornerShape(3.dp))
                 .border(if (active && !onMask) 2.dp else 1.dp, if (active && !onMask) Gako.Gold else Gako.InkHigh, RoundedCornerShape(3.dp))
-                .clickable { vm.setActiveLayer(layer.id); vm.editMask = false },
+                .clickable { vm.setActiveLayer(layer.id); vm.chooseMaskEditing(false) },
             contentAlignment = Alignment.Center,
         ) {
             Image(thumb, contentDescription = "Edit layer", modifier = Modifier.size(42.dp))
@@ -152,7 +152,7 @@ private fun LayerRow(vm: EditorViewModel, layer: Layer, active: Boolean) {
                 Modifier.size(44.dp).background(Color.Black, RoundedCornerShape(3.dp))
                     .border(if (onMask) 2.dp else 1.dp, if (onMask) Gako.Gold else if (layer.maskEnabled) Gako.InkHigh else Color(0xFFE05555),
                         RoundedCornerShape(3.dp))
-                    .clickable { vm.setActiveLayer(layer.id); vm.editMask = true },
+                    .clickable { vm.setActiveLayer(layer.id); vm.chooseMaskEditing(true) },
                 contentAlignment = Alignment.Center,
             ) {
                 Image(maskThumb, contentDescription = "Edit layer mask", modifier = Modifier.size(42.dp))
@@ -211,7 +211,7 @@ private fun MoreLayerActions(vm: EditorViewModel) {
             val a = vm.doc?.active
             if (a?.mask == null) item("Add Layer Mask…") { vm.dialog = Dialog.AddMask }()
             else {
-                item(if (vm.editingMask) "Edit Layer Pixels" else "Edit Layer Mask") { vm.editMask = !vm.editMask }()
+                item(if (vm.editingMask) "Edit Layer Pixels" else "Edit Layer Mask") { vm.chooseMaskEditing(!vm.editingMask) }()
                 item(if (a.maskEnabled) "Disable Layer Mask" else "Enable Layer Mask") { vm.setMaskEnabled(!a.maskEnabled) }()
                 item("Apply Layer Mask") { vm.applyMask() }()
                 item("Delete Layer Mask") { vm.deleteMask() }()

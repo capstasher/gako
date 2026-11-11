@@ -130,7 +130,16 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Tools, filters and curves work on the active layer's mask instead of its pixels. */
     var editMask by mutableStateOf(false)
+        private set
     val editingMask: Boolean get() = editMask && doc?.active?.mask != null
+
+    /** Switches tools between the layer's pixels and its mask (not while a job uses one of them). */
+    fun chooseMaskEditing(onMask: Boolean) {
+        if (editMask == onMask) return
+        if (blockedByBusy() || session != null || curves != null) return
+        input.reset()
+        editMask = onMask
+    }
 
     /** What edits go to: the active layer, or its mask dressed up as a layer (alpha locked, opaque grey). */
     internal fun targetOf(d: DocState): Layer? {
@@ -189,7 +198,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** Anything modal (filter, text, curves, a tool mid-edit) that should end before another action. */
     private fun endInteractions() {
         cancelSession()
-        cancelText()
+        commitText()
         cancelCurves()
         input.reset()
         exportSession = null
@@ -369,7 +378,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun undo() {
         if (blockedByBusy()) return
-        if (input.hasPendingEdit()) { input.reset(); return }
+        if (input.hasPendingEdit() || input.stroking) { input.reset(); return }
         if (session != null || text != null || curves != null) return
         val step = undoStack.removeLastOrNull() ?: return
         when (step) {
@@ -385,6 +394,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun redo() {
         if (blockedByBusy()) return
+        if (input.stroking) return
         if (session != null || text != null || curves != null) return
         input.reset()
         val step = redoStack.removeLastOrNull() ?: return
@@ -406,8 +416,18 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Undo or redo until exactly [position] steps are done. */
     fun jumpToHistory(position: Int) {
-        while (undoStack.size > position && undoStack.isNotEmpty() && busy == null) undo()
-        while (undoStack.size < position && redoStack.isNotEmpty() && busy == null) redo()
+        if (busy != null) return
+        endInteractions()
+        while (undoStack.size > position) {
+            val before = undoStack.size
+            undo()
+            if (undoStack.size == before) break
+        }
+        while (undoStack.size < position) {
+            val before = undoStack.size
+            redo()
+            if (undoStack.size == before) break
+        }
     }
 
     private fun resetHistory() {
@@ -425,7 +445,9 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             busy = Busy(label)
             try {
                 val out = withContext(Dispatchers.Default) { block(d) }
-                if (out != null && doc === d) change(label, out)
+                if (out != null) {
+                    if (doc === d) change(label, out) else say("$label wasn't applied: the image changed meanwhile")
+                }
             } catch (t: OutOfMemoryError) {
                 say("$label: not enough memory")
             } catch (t: Throwable) {
@@ -581,6 +603,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     private val recoveryFile get() = File(getApplication<Application>().filesDir, "recovery.xcf")
     private val recoveryName get() = File(getApplication<Application>().filesDir, "recovery.name")
     private var savedForRecovery: DocState? = null
+    private var autosaveWrite: Job? = null
     private var savedRevision = -1
 
     /** Called when the app leaves the screen: keeps unsaved work safe if Android kills the process. */
@@ -588,12 +611,19 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         val d = doc ?: return
         if (!dirty) { clearRecovery(); return }
         if (d === savedForRecovery && revision == savedRevision) return
+        // Copy pixels (and masks) a stroke might change while the write runs.
+        val snapshot = runCatching {
+            d.copy(layers = d.layers.map { l ->
+                l.copy(bitmap = l.bitmap.copy(Bitmap.Config.ARGB_8888, false) ?: return,
+                    mask = l.mask?.let { it.copy(Bitmap.Config.ARGB_8888, false) ?: return })
+            })
+        }.getOrNull() ?: return
         savedForRecovery = d
         savedRevision = revision
-        // Copy pixels a stroke might change while the write runs.
-        val snapshot = d.copy(layers = d.layers.map { it.copy(bitmap = it.bitmap.copy(Bitmap.Config.ARGB_8888, false)) })
         val name = documentName
-        viewModelScope.launch(Dispatchers.IO) {
+        val previous = autosaveWrite
+        autosaveWrite = viewModelScope.launch(Dispatchers.IO) {
+            previous?.join()   // one writer at a time
             runCatching {
                 val tmp = File(recoveryFile.path + ".tmp")
                 tmp.outputStream().buffered(1 shl 16).use { io.github.capstasher.gako.doc.XcfWriter.write(snapshot, it, level = 1) }
@@ -672,18 +702,32 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         busy = Busy("Saving")
         viewModelScope.launch {
             try {
+                // Encode fully first, so a failure never leaves the project file half-written.
+                val scratch = File(getApplication<Application>().cacheDir, "export").apply { mkdirs() }
+                val tmp = File(scratch, "save.tmp")
                 withContext(Dispatchers.IO) {
-                    resolver.openOutputStream(uri, "wt")?.use { Exporter.encode(d, format, ExportOptions(), it, File(getApplication<Application>().cacheDir, "export")) }
-                        ?: error("no stream")
+                    tmp.outputStream().buffered(1 shl 16).use { Exporter.encode(d, format, ExportOptions(), it, scratch) }
+                }
+                val stream = withContext(Dispatchers.IO) { runCatching { resolver.openOutputStream(uri, "wt") }.getOrNull() }
+                if (stream == null) {
+                    // Read-only (e.g. from the photo picker): save somewhere new instead.
+                    tmp.delete()
+                    projectUri = null
+                    busy = null
+                    startExport(project = true)
+                    return@launch
+                }
+                withContext(Dispatchers.IO) {
+                    stream.use { out -> tmp.inputStream().use { it.copyTo(out, 1 shl 16) } }
+                    tmp.delete()
                 }
                 if (doc === d) dirty = false
                 clearRecovery()
                 say("Saved $documentName")
+            } catch (t: OutOfMemoryError) {
+                say("Not enough memory to save. Your file wasn't touched.")
             } catch (t: Throwable) {
-                // Read-only (e.g. from the photo picker): save somewhere new instead.
-                projectUri = null
-                busy = null
-                startExport(project = true)
+                say("Save failed: ${t.message ?: t.javaClass.simpleName}")
             } finally {
                 busy = null
             }
@@ -888,7 +932,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         val a = d.active ?: return
         if (blockedByBusy()) return
         endInteractions()
-        val copy = a.copy(id = Layer.newId(), name = layerName(d, "${a.name} copy"), bitmap = Bitmaps.copy(a.bitmap))
+        val copy = a.copy(id = Layer.newId(), name = layerName(d, "${a.name} copy"), bitmap = Bitmaps.copy(a.bitmap),
+            mask = a.mask?.let(Bitmaps::copy))
         change("Duplicate Layer", insertAboveActive(d, copy))
     }
 
@@ -924,6 +969,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     fun setActiveLayer(id: Long) {
         val d = doc ?: return
         if (d.activeId == id || session != null || curves != null) return
+        if (blockedByBusy()) return
         if (text != null) commitText()
         input.reset()
         editMask = false
@@ -933,6 +979,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setLayerVisible(id: Long, visible: Boolean) {
         val d = doc ?: return
+        if (blockedByBusy()) return
         val l = d.layer(id) ?: return
         change(if (visible) "Show Layer" else "Hide Layer", d.replace(l.copy(visible = visible)))
     }
@@ -942,6 +989,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     /** Live opacity change while a slider moves; [commitLayerProperty] records it. */
     fun setLayerOpacityLive(opacity: Float) {
         val d = doc ?: return
+        if (busy != null) return
         val l = d.active ?: return
         if (propertyBefore == null) propertyBefore = d
         silently(d.replace(l.copy(opacity = opacity.coerceIn(0f, 1f))))
@@ -957,12 +1005,14 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setLayerMode(mode: LayerMode) {
         val d = doc ?: return
+        if (blockedByBusy()) return
         val l = d.active ?: return
         if (l.mode != mode) change("Layer Mode", d.replace(l.copy(mode = mode)))
     }
 
     fun renameLayer(id: Long, name: String) {
         val d = doc ?: return
+        if (blockedByBusy()) return
         val l = d.layer(id) ?: return
         val n = name.trim().ifEmpty { return }
         if (n != l.name) change("Rename Layer", d.replace(l.copy(name = n)))
@@ -970,6 +1020,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setLockAlpha(lock: Boolean) {
         val d = doc ?: return
+        if (blockedByBusy()) return
         val l = d.active ?: return
         change("Lock Alpha Channel", d.replace(l.copy(lockAlpha = lock)))
     }
@@ -1017,6 +1068,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun deleteMask() {
         val d = doc ?: return
+        if (blockedByBusy()) return
         val a = d.active ?: return
         if (a.mask == null) return
         editMask = false
@@ -1025,6 +1077,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setMaskEnabled(enabled: Boolean) {
         val d = doc ?: return
+        if (blockedByBusy()) return
         val a = d.active ?: return
         if (a.mask == null) return
         change(if (enabled) "Enable Layer Mask" else "Disable Layer Mask", d.replace(a.copy(maskEnabled = enabled)))
@@ -1231,7 +1284,13 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         val bmp = TextSession.render(t.info)
         val existing = t.layerId?.let { d.layer(it) }
         if (existing != null) {
-            change("Edit Text", d.replace(existing.copy(bitmap = bmp, text = t.info, x = t.x, y = t.y)))
+            // The text's box changes size: keep the mask where it was on the canvas.
+            val mask = existing.mask?.let { old ->
+                Bitmaps.blank(bmp.width, bmp.height, Color.WHITE).also {
+                    Canvas(it).drawBitmap(old, (existing.x - t.x).toFloat(), (existing.y - t.y).toFloat(), null)
+                }
+            }
+            change("Edit Text", d.replace(existing.copy(bitmap = bmp, text = t.info, x = t.x, y = t.y, mask = mask)))
         } else {
             val name = t.info.text.lineSequence().first().take(24)
             change("Add Text", insertAboveActive(d, Layer(Layer.newId(), name, bmp, t.x, t.y, text = t.info)))
@@ -1273,13 +1332,15 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         val d = doc ?: return
         val layer = targetOf(d)?.takeIf { it.id == c.layerId } ?: return
         val luts = c.luts()
+        val onMask = editingMask
         curves = null
         preview = null
         docJob(if (c.levels) "Levels" else "Curves") { state ->
             val result = Curves.apply(layer.bitmap, luts)
             val merged = Compositor.selectionFor(layer, state.selection)?.let { Compositor.mergeThroughMask(layer.bitmap, result, it) } ?: result
             val current = state.layer(layer.id) ?: return@docJob null
-            state.replace(withTarget(current, Bitmaps.mutable(merged)))
+            val out = Bitmaps.mutable(merged)
+            state.replace(if (onMask && current.mask != null) current.copy(mask = out) else current.copy(bitmap = out, text = null))
         }
     }
 
@@ -1462,6 +1523,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun runCommit(title: String, operation: String, values: Map<String, Any?>, layer: Layer) {
+        val onMask = editingMask
         val tag = Any()
         commitTag = tag
         busy = Busy(title, null, cancellable = true)
@@ -1471,14 +1533,16 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         try {
             when (result) {
                 is Engine.Result.Ok -> {
-                    val d = doc ?: return
-                    val current = d.layer(layer.id) ?: return
-                    val mask = Compositor.selectionFor(current, d.selection)
+                    val d0 = doc ?: return
+                    val mask = d0.layer(layer.id)?.let { Compositor.selectionFor(it, d0.selection) }
                     val merged = if (mask != null) withContext(Dispatchers.Default) {
                         Compositor.mergeThroughMask(src, result.bitmap, mask)
                     } else result.bitmap
                     preview = null
-                    change(title, d.replace(withTarget(current, Bitmaps.mutable(merged))))
+                    val d = doc ?: return
+                    val current = d.layer(layer.id) ?: return
+                    val out = Bitmaps.mutable(merged)
+                    change(title, d.replace(if (onMask && current.mask != null) current.copy(mask = out) else current.copy(bitmap = out, text = null)))
                 }
                 is Engine.Result.Failed -> say("$title failed: ${result.message}")
                 Engine.Result.Cancelled -> say("$title cancelled")
