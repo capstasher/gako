@@ -101,12 +101,14 @@ object XcfWriter {
     fun textToString(t: TextInfo): String = org.json.JSONObject().apply {
         put("text", t.text); put("size", t.size.toDouble()); put("color", t.color); put("font", t.font.name)
         put("bold", t.bold); put("italic", t.italic); put("align", t.align.name)
+        put("outline", t.outline.toDouble()); put("outlineColor", t.outlineColor)
     }.toString()
 
     fun textFromString(s: String): TextInfo? = runCatching {
         val o = org.json.JSONObject(s)
         TextInfo(o.getString("text"), o.getDouble("size").toFloat(), o.getInt("color"),
-            TextFont.valueOf(o.getString("font")), o.getBoolean("bold"), o.getBoolean("italic"), TextAlign.valueOf(o.getString("align")))
+            TextFont.valueOf(o.getString("font")), o.getBoolean("bold"), o.getBoolean("italic"), TextAlign.valueOf(o.getString("align")),
+            o.optDouble("outline", 0.0).toFloat(), o.optInt("outlineColor", -0x1000000))
     }.getOrNull()
 
     /** Hierarchy → one level → zlib tiles. [bpp] 4 writes RGBA, 1 writes grey (the red channel). */

@@ -54,6 +54,7 @@ import kotlin.math.roundToInt
 @Composable
 fun TextPanel(t: TextSession, vm: EditorViewModel, modifier: Modifier = Modifier) {
     var pickColor by remember { mutableStateOf(false) }
+    var pickOutline by remember { mutableStateOf(false) }
     val focus = remember { FocusRequester() }
     LaunchedEffect(t) { if (t.info.text.isEmpty()) runCatching { focus.requestFocus() } }
     val info = t.info
@@ -82,7 +83,11 @@ fun TextPanel(t: TextSession, vm: EditorViewModel, modifier: Modifier = Modifier
                 Text("Size", Modifier.width(48.dp), style = MaterialTheme.typography.bodyMedium)
                 Slider(
                     value = ((info.size - 4f) / 996f).coerceIn(0f, 1f).pow(1 / 2.5f),
-                    onValueChange = { s -> t.info = t.info.copy(size = 4f + 996f * s.pow(2.5f)) },
+                    onValueChange = { s ->
+                        val size = 4f + 996f * s.pow(2.5f)
+                        // The outline keeps its proportion to the letters.
+                        t.info = t.info.copy(size = size, outline = t.info.outline * size / t.info.size.coerceAtLeast(1f))
+                    },
                     modifier = Modifier.weight(1f),
                     colors = SliderDefaults.colors(thumbColor = Gako.Gold, activeTrackColor = Gako.Gold, inactiveTrackColor = Gako.InkHigh),
                 )
@@ -91,6 +96,19 @@ fun TextPanel(t: TextSession, vm: EditorViewModel, modifier: Modifier = Modifier
                 Box(Modifier.size(36.dp).background(Color(info.color), RoundedCornerShape(6.dp))
                     .border(1.dp, Gako.GoldDim, RoundedCornerShape(6.dp)).clickable { pickColor = true })
             }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Outline", Modifier.width(64.dp), style = MaterialTheme.typography.bodyMedium)
+                Slider(
+                    value = (info.outline / (info.size * 0.25f).coerceAtLeast(1f)).coerceIn(0f, 1f),
+                    onValueChange = { v -> t.info = t.info.copy(outline = v * (t.info.size * 0.25f).coerceAtLeast(1f)) },
+                    modifier = Modifier.weight(1f),
+                    colors = SliderDefaults.colors(thumbColor = Gako.Gold, activeTrackColor = Gako.Gold, inactiveTrackColor = Gako.InkHigh),
+                )
+                Text("${info.outline.roundToInt()} px", style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                    color = Gako.Gold, modifier = Modifier.width(64.dp).padding(start = 6.dp))
+                Box(Modifier.size(36.dp).background(Color(info.outlineColor), RoundedCornerShape(6.dp))
+                    .border(1.dp, Gako.GoldDim, RoundedCornerShape(6.dp)).clickable { pickOutline = true })
+            }
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 TextFont.entries.forEach { f -> OptChip(f.label, info.font == f) { t.info = t.info.copy(font = f) } }
                 OptChip("Bold", info.bold) { t.info = t.info.copy(bold = !t.info.bold) }
@@ -98,6 +116,12 @@ fun TextPanel(t: TextSession, vm: EditorViewModel, modifier: Modifier = Modifier
                 TextAlign.entries.forEach { a -> OptChip(a.name, info.align == a) { t.info = t.info.copy(align = a) } }
             }
             Text("Drag on the image to move the text.", style = MaterialTheme.typography.labelSmall, color = Gako.Muted)
+        }
+    }
+    if (pickOutline) {
+        ColorPickerDialog("Outline Colour", info.outlineColor, onDismiss = { pickOutline = false }) { c ->
+            t.info = t.info.copy(outlineColor = c)
+            pickOutline = false
         }
     }
     if (pickColor) {
