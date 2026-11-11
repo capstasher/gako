@@ -159,6 +159,15 @@ fun EditorScreen(
 
         if (showAbout) AboutDialog(vm) { showAbout = false }
         vm.dialog?.let { DialogHost(vm, it) }
+        vm.confirm?.let { c ->
+            AlertDialog(
+                onDismissRequest = { vm.confirm = null },
+                title = { Text(c.title) },
+                text = { Text(c.message) },
+                confirmButton = { TextButton(onClick = c.run) { Text(c.action, color = MaterialTheme.colorScheme.error) } },
+                dismissButton = { TextButton(onClick = { vm.confirm = null }) { Text("Cancel") } },
+            )
+        }
     }
 }
 

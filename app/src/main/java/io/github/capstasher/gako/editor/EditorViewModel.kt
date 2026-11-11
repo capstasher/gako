@@ -388,13 +388,33 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         if (tool == Tool.Transform) input.startTransform()
     }
 
-    fun newImage(w: Int, h: Int, fill: Int?) {
+    /** A question before throwing away unsaved work. */
+    class Confirm(val title: String, val message: String, val action: String, val run: () -> Unit)
+    var confirm by mutableStateOf<Confirm?>(null)
+
+    /** Runs [run] now, or after asking if it would replace an image with unsaved changes. */
+    private fun guardDiscard(what: String, run: () -> Unit) {
+        if (doc != null && dirty) {
+            confirm = Confirm("Discard changes?", "“$documentName” has unsaved changes. $what replaces it.", "Discard") {
+                confirm = null
+                run()
+            }
+        } else run()
+    }
+
+    fun newImage(w: Int, h: Int, fill: Int?) = guardDiscard("A new image") { newImageNow(w, h, fill) }
+
+    private fun newImageNow(w: Int, h: Int, fill: Int?) {
         if (blockedByBusy()) return
         if (w <= 0 || h <= 0 || w.toLong() * h > MAX_PIXELS) { say("That size isn't possible (max ${MAX_PIXELS / 1_000_000} MP)"); return }
         newDocument(DocOps.newImage(w, h, fill), "Untitled")
     }
 
     fun open(uri: Uri, asLayers: Boolean = false) {
+        if (asLayers && doc != null) openNow(uri, true) else guardDiscard("Opening another image") { openNow(uri, false) }
+    }
+
+    private fun openNow(uri: Uri, asLayers: Boolean) {
         if (blockedByBusy()) return
         endInteractions()
         busy = Busy("Opening")
@@ -1074,7 +1094,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         }
         val (b, r) = clipboard ?: run { say("The clipboard is empty"); return }
         if (asNewImage) {
-            newDocument(DocOps.fromBitmap(Bitmaps.copy(b), "Pasted"), "Pasted")
+            guardDiscard("Pasting as a new image") { newDocument(DocOps.fromBitmap(Bitmaps.copy(b), "Pasted"), "Pasted") }
             return
         }
         val d = doc ?: run { newDocument(DocOps.fromBitmap(Bitmaps.copy(b), "Pasted"), "Pasted"); return }
