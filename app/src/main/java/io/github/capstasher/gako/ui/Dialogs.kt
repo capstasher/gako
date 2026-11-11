@@ -73,6 +73,7 @@ fun DialogHost(vm: EditorViewModel, dialog: Dialog) {
             vm.modifySelection(dialog.kind, it)
         }
         Dialog.NewLayer -> NewLayerDialog(vm, close)
+        Dialog.History -> HistoryDialog(vm, close)
         Dialog.AddMask -> AlertDialog(
             onDismissRequest = close,
             title = { Text("Add Layer Mask") },
@@ -422,3 +423,37 @@ private fun parseHex(t: String): Int? {
 
 @Suppress("unused")
 private fun Float.r() = roundToInt()
+
+/** GIMP's Undo History: every step, the current one highlighted; tap one to go back (or forward) to it. */
+@Composable
+private fun HistoryDialog(vm: EditorViewModel, close: () -> Unit) {
+    val labels = vm.historyLabels
+    val pos = vm.historyPosition
+    AlertDialog(
+        onDismissRequest = close,
+        title = { Text("Undo History") },
+        text = {
+            androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxWidth().height(360.dp)) {
+                item {
+                    HistoryRow("Opened image", pos == 0, done = true) { vm.jumpToHistory(0) }
+                }
+                items(labels.size) { i ->
+                    HistoryRow(labels[i], pos == i + 1, done = i < pos) { vm.jumpToHistory(i + 1) }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = close) { Text("Close") } },
+    )
+}
+
+@Composable
+private fun HistoryRow(label: String, current: Boolean, done: Boolean, onClick: () -> Unit) {
+    Text(
+        label,
+        style = MaterialTheme.typography.bodyLarge,
+        color = when { current -> Gako.Gold; done -> Gako.Parchment; else -> Gako.Muted.copy(alpha = 0.6f) },
+        modifier = Modifier.fillMaxWidth()
+            .background(if (current) Gako.Oxblood.copy(alpha = 0.6f) else Color.Transparent, RoundedCornerShape(6.dp))
+            .clickable(onClick = onClick).padding(horizontal = 10.dp, vertical = 10.dp),
+    )
+}

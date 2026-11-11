@@ -217,6 +217,7 @@ fun buildMenus(vm: EditorViewModel, callbacks: MenuCallbacks): List<MenuGroup> {
 
     // ---- Edit
     val edit = MenuGroup("edit", "Edit", Icons.Outlined.EditNote, listOf(
+        act("history", "Undo History…", Icons.Outlined.History) { vm.dialog = Dialog.History },
         act("cut", "Cut", Icons.Outlined.ContentCut) { vm.cut() },
         act("copy", "Copy", Icons.Outlined.ContentCopy) { vm.copy() },
         act("copy-visible", "Copy Visible", Icons.Outlined.CopyAll) { vm.copy(merged = true) },
