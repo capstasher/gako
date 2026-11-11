@@ -1528,7 +1528,10 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         commitTag = tag
         busy = Busy(title, null, cancellable = true)
         val src = layer.bitmap
-        val result = Engine.apply(operation, values, src, tag) { p -> busy = busy?.copy(progress = p) }
+        // Like GIMP, a filter that draws past the layer (drop shadow, glow) grows it — unless a
+        // selection or a mask pins the layer's shape.
+        val grow = !onMask && layer.mask == null && doc?.selection == null
+        val result = Engine.apply(operation, values, src, tag, grow = grow) { p -> busy = busy?.copy(progress = p) }
         commitTag = null
         try {
             when (result) {
@@ -1542,7 +1545,9 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                     val d = doc ?: return
                     val current = d.layer(layer.id) ?: return
                     val out = Bitmaps.mutable(merged)
-                    change(title, d.replace(if (onMask && current.mask != null) current.copy(mask = out) else current.copy(bitmap = out, text = null)))
+                    change(title, d.replace(
+                        if (onMask && current.mask != null) current.copy(mask = out)
+                        else current.copy(bitmap = out, text = null, x = current.x + result.x, y = current.y + result.y)))
                 }
                 is Engine.Result.Failed -> say("$title failed: ${result.message}")
                 Engine.Result.Cancelled -> say("$title cancelled")

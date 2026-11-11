@@ -434,6 +434,99 @@ set_property_from_json (GeglNode    *node,
   return ok;
 }
 
+/* Builds buffer-source → operation with its properties set. */
+static gboolean
+build_graph (const char  *operation,
+             const char  *params_json,
+             GeglBuffer  *in_buf,
+             GeglNode   **graph_out,
+             GeglNode   **op_out,
+             GError     **error)
+{
+  GeglNode *graph = gegl_node_new ();
+  GeglNode *op = gegl_node_new_child (graph, "operation", operation, NULL);
+
+  if (params_json && *params_json)
+    {
+      JsonParser *parser = json_parser_new ();
+      if (!json_parser_load_from_data (parser, params_json, -1, error))
+        {
+          g_object_unref (parser);
+          g_object_unref (graph);
+          return FALSE;
+        }
+      JsonNode *root = json_parser_get_root (parser);
+      if (root && JSON_NODE_HOLDS_OBJECT (root))
+        {
+          JsonObject *obj = json_node_get_object (root);
+          GList *members = json_object_get_members (obj);
+          for (GList *l = members; l; l = l->next)
+            if (!set_property_from_json (op, operation, l->data,
+                                         json_object_get_member (obj, l->data), error))
+              break;
+          g_list_free (members);
+        }
+      g_object_unref (parser);
+      if (error && *error)
+        {
+          g_object_unref (graph);
+          return FALSE;
+        }
+    }
+
+  if (in_buf && gegl_node_has_pad (op, "input"))
+    {
+      GeglNode *source = gegl_node_new_child (graph, "operation", "gegl:buffer-source",
+                                              "buffer", in_buf, NULL);
+      gegl_node_link (source, op);
+    }
+
+  *graph_out = graph;
+  *op_out = op;
+  return TRUE;
+}
+
+int
+gako_core_bounds (const char *operation,
+                  const char *params_json,
+                  int         width,
+                  int         height,
+                  int        *x,
+                  int        *y,
+                  int        *w,
+                  int        *h,
+                  char      **error_out)
+{
+  const Babl *format = babl_format (GAKO_PIXEL_FORMAT);
+  GeglRectangle rect = { 0, 0, width, height };
+  GeglBuffer *in_buf;
+  GeglNode *graph = NULL, *op = NULL;
+  GError *error = NULL;
+  GeglRectangle bb;
+
+  if (!operation || !gegl_has_operation (operation))
+    {
+      if (error_out)
+        *error_out = g_strdup_printf ("Unknown operation %s", operation ? operation : "(null)");
+      return -1;
+    }
+
+  in_buf = gegl_buffer_new (&rect, format);
+  if (!build_graph (operation, params_json, in_buf, &graph, &op, &error))
+    {
+      if (error_out)
+        *error_out = g_strdup (error ? error->message : "unknown error");
+      g_clear_error (&error);
+      g_object_unref (in_buf);
+      return -1;
+    }
+  bb = gegl_node_get_bounding_box (op);
+  *x = bb.x; *y = bb.y; *w = bb.width; *h = bb.height;
+  g_object_unref (graph);
+  g_object_unref (in_buf);
+  return 0;
+}
+
 int
 gako_core_apply (const char       *operation,
                  const char       *params_json,
@@ -448,10 +541,34 @@ gako_core_apply (const char       *operation,
                  void             *progress_data,
                  char            **error_out)
 {
+  return gako_core_apply_rect (operation, params_json, src, width, height, src_stride,
+                               0, 0, width, height, dst, dst_stride,
+                               cancel, progress, progress_data, error_out);
+}
+
+int
+gako_core_apply_rect (const char       *operation,
+                      const char       *params_json,
+                      const uint8_t    *src,
+                      int               width,
+                      int               height,
+                      int               src_stride,
+                      int               out_x,
+                      int               out_y,
+                      int               out_w,
+                      int               out_h,
+                      uint8_t          *dst,
+                      int               dst_stride,
+                      volatile int     *cancel,
+                      GakoProgressFunc  progress,
+                      void             *progress_data,
+                      char            **error_out)
+{
   const Babl *format = babl_format (GAKO_PIXEL_FORMAT);
   GeglRectangle rect = { 0, 0, width, height };
+  GeglRectangle out_rect = { out_x, out_y, out_w, out_h };
   GeglBuffer *in_buf = NULL, *out_buf = NULL;
-  GeglNode *graph = NULL, *source = NULL, *op = NULL, *sink;
+  GeglNode *graph = NULL, *op = NULL, *sink;
   GeglProcessor *processor;
   GError *error = NULL;
   double fraction = 0.0;
@@ -464,48 +581,17 @@ gako_core_apply (const char       *operation,
       return -1;
     }
 
-  graph = gegl_node_new ();
-  op = gegl_node_new_child (graph, "operation", operation, NULL);
+  in_buf = gegl_buffer_new (&rect, format);
+  gegl_buffer_set (in_buf, &rect, 0, format, src, src_stride);
+  if (!build_graph (operation, params_json, in_buf, &graph, &op, &error))
+    goto fail;
 
-  if (params_json && *params_json)
-    {
-      JsonParser *parser = json_parser_new ();
-      if (!json_parser_load_from_data (parser, params_json, -1, &error))
-        {
-          g_object_unref (parser);
-          goto fail;
-        }
-      JsonNode *root = json_parser_get_root (parser);
-      if (root && JSON_NODE_HOLDS_OBJECT (root))
-        {
-          JsonObject *obj = json_node_get_object (root);
-          GList *members = json_object_get_members (obj);
-          for (GList *l = members; l; l = l->next)
-            if (!set_property_from_json (op, operation, l->data,
-                                         json_object_get_member (obj, l->data), &error))
-              break;
-          g_list_free (members);
-        }
-      g_object_unref (parser);
-      if (error)
-        goto fail;
-    }
-
-  if (gegl_node_has_pad (op, "input"))
-    {
-      in_buf = gegl_buffer_new (&rect, format);
-      gegl_buffer_set (in_buf, &rect, 0, format, src, src_stride);
-      source = gegl_node_new_child (graph, "operation", "gegl:buffer-source",
-                                    "buffer", in_buf, NULL);
-      gegl_node_link (source, op);
-    }
-
-  out_buf = gegl_buffer_new (&rect, format);
+  out_buf = gegl_buffer_new (&out_rect, format);
   sink = gegl_node_new_child (graph, "operation", "gegl:write-buffer",
                               "buffer", out_buf, NULL);
   gegl_node_link (op, sink);
 
-  processor = gegl_node_new_processor (sink, &rect);
+  processor = gegl_node_new_processor (sink, &out_rect);
   while (gegl_processor_work (processor, &fraction))
     {
       if (cancel && *cancel)
@@ -520,7 +606,7 @@ gako_core_apply (const char       *operation,
 
   if (result == 0)
     {
-      gegl_buffer_get (out_buf, &rect, 1.0, format, dst, dst_stride, GEGL_ABYSS_NONE);
+      gegl_buffer_get (out_buf, &out_rect, 1.0, format, dst, dst_stride, GEGL_ABYSS_NONE);
       if (progress)
         progress (1.0, progress_data);
     }
