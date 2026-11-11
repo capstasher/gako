@@ -102,6 +102,7 @@ fun ToolOptionsBar(vm: EditorViewModel) {
         Tool.Smudge, Tool.Blur, Tool.Warp -> listOf(size, strength, hardness)
         Tool.RectSelect -> listOf(feather, corners)
         Tool.SelectBrush -> listOf(size, hardness, feather)
+        Tool.ForegroundSelect -> if (vm.input.fgOutline != null) listOf(size, feather) else listOf(feather)
         Tool.EllipseSelect, Tool.FreeSelect -> listOf(feather)
         Tool.FuzzySelect, Tool.ColorSelect -> listOf(threshold, feather)
         Tool.BucketFill -> if (o.fillArea == FillArea.Similar) listOf(threshold, opacity) else listOf(opacity)
@@ -232,6 +233,17 @@ fun ToolOptionsBar(vm: EditorViewModel) {
                     IconButton(onClick = { vm.input.startCrop() }) { Icon(Icons.Outlined.RestartAlt, "Reset", tint = Gako.Muted) }
                     CropAspect.entries.forEach { a -> OptChip(a.label, o.cropAspect == a) { set { it.copy(cropAspect = a) } } }
                 }
+                Tool.ForegroundSelect -> {
+                    val inp = vm.input
+                    if (inp.fgOutline == null) Text("Draw roughly around the object", style = MaterialTheme.typography.labelMedium, color = Gako.Muted)
+                    else {
+                        OptChip("Select", false) { inp.foregroundSelect() }
+                        OptChip("Foreground", !inp.fgMarkBackground) { inp.fgMarkBackground = false }
+                        OptChip("Background", inp.fgMarkBackground) { inp.fgMarkBackground = true }
+                        OptChip("Undo stroke", false) { inp.fgUndoStroke() }
+                        OptChip("Start over", false) { inp.fgStartOver() }
+                    }
+                }
                 Tool.Measure -> {
                     val m = vm.input.measure
                     if (m == null) Text("Drag along something that should be level or upright",
@@ -275,7 +287,7 @@ fun ToolOptionsBar(vm: EditorViewModel) {
             }
             if (numbers.isEmpty() && tool !in setOf(Tool.Crop, Tool.Transform, Tool.RectSelect, Tool.EllipseSelect,
                     Tool.FreeSelect, Tool.FuzzySelect, Tool.ColorSelect, Tool.BucketFill, Tool.Gradient, Tool.ColorPicker, Tool.Paths,
-                    Tool.SelectBrush, Tool.Measure)) {
+                    Tool.SelectBrush, Tool.Measure, Tool.ForegroundSelect)) {
                 Text(tool.hint, style = MaterialTheme.typography.labelMedium, color = Gako.Muted)
             }
         }

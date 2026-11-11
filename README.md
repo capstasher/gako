@@ -35,7 +35,8 @@ operation) for Android, and puts a touch interface on top designed for one hand 
 - Paths: Bézier paths by tapping (corners) and dragging (curves); several named paths per image, each
   with one or more strokes (holes, pieces); selection from path, stroke, fill;
   saved in XCF, so they open as paths in GIMP and back
-- Select: rectangle (optionally rounded), ellipse, free (lasso), selection brush (paint it on), fuzzy, by colour;
+- Select: rectangle (optionally rounded), ellipse, free (lasso), selection brush (paint it on), fuzzy, by colour,
+  **foreground select** (draw roughly around an object, paint over it, and GEGL's matting finds its edge, as in GIMP);
   replace/add/subtract/intersect, feather;
   Select menu: all, none, invert, feather, grow, shrink, border, from layer alpha
 - Transform: move, unified transform (scale/rotate/flip with handles, or perspective by dragging corners),

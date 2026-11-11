@@ -293,3 +293,59 @@ JNI_FN (nativeApply) (JNIEnv *env, jclass klass,
   g_free (json);
   return rc;
 }
+
+/* Foreground matting: alpha (w×h bytes) from the image and a trimap (0 bg, 255 fg, else unknown). */
+JNIEXPORT jint JNICALL
+JNI_FN (nativeMatting) (JNIEnv *env, jclass klass,
+                        jobject src_bitmap, jbyteArray trimap, jint iterations, jbyteArray alpha_out)
+{
+  AndroidBitmapInfo info;
+  void *px = NULL;
+  jbyte *tri = NULL, *alpha = NULL;
+  char *err = NULL;
+  int rc;
+  (void) klass;
+
+  cancel_flag = 0;
+  set_last_error (NULL);
+  if (AndroidBitmap_getInfo (env, src_bitmap, &info) != ANDROID_BITMAP_RESULT_SUCCESS ||
+      info.format != ANDROID_BITMAP_FORMAT_RGBA_8888)
+    {
+      set_last_error ("The image must be ARGB_8888");
+      return -1;
+    }
+  if ((*env)->GetArrayLength (env, trimap) < (jsize) (info.width * info.height) ||
+      (*env)->GetArrayLength (env, alpha_out) < (jsize) (info.width * info.height))
+    {
+      set_last_error ("The trimap or the output is too small");
+      return -1;
+    }
+  if (AndroidBitmap_lockPixels (env, src_bitmap, &px) != ANDROID_BITMAP_RESULT_SUCCESS)
+    {
+      set_last_error ("Couldn't lock the image's pixels");
+      return -1;
+    }
+  tri = (*env)->GetByteArrayElements (env, trimap, NULL);
+  alpha = (*env)->GetByteArrayElements (env, alpha_out, NULL);
+  if (!tri || !alpha)
+    {
+      if (tri) (*env)->ReleaseByteArrayElements (env, trimap, tri, JNI_ABORT);
+      if (alpha) (*env)->ReleaseByteArrayElements (env, alpha_out, alpha, JNI_ABORT);
+      AndroidBitmap_unlockPixels (env, src_bitmap);
+      set_last_error ("Out of memory");
+      return -1;
+    }
+
+  rc = gako_core_matting (px, (int) info.width, (int) info.height, (int) info.stride,
+                          (const uint8_t *) tri, (int) info.width, iterations,
+                          (uint8_t *) alpha, (int) info.width,
+                          &cancel_flag, NULL, NULL, &err);
+
+  (*env)->ReleaseByteArrayElements (env, trimap, tri, JNI_ABORT);
+  (*env)->ReleaseByteArrayElements (env, alpha_out, alpha, rc == 0 ? 0 : JNI_ABORT);
+  AndroidBitmap_unlockPixels (env, src_bitmap);
+  if (rc < 0)
+    set_last_error (err ? err : "unknown error");
+  gako_free (err);
+  return rc;
+}

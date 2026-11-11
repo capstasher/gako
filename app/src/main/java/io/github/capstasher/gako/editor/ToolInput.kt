@@ -114,6 +114,15 @@ class ToolInput(private val vm: EditorViewModel) {
     private var selLast: PointF? = null
 
     var dragRect by mutableStateOf<RectF?>(null); private set
+    /** Foreground Select: the rough outline around the object, then strokes marking foreground (or background). */
+    var fgOutline by mutableStateOf<Path?>(null); private set
+    val fgStrokes = androidx.compose.runtime.mutableStateListOf<FgStroke>()
+    var fgRevision by mutableIntStateOf(0); private set
+    var fgMarkBackground by mutableStateOf(false)
+    private var fgCurrent: FgStroke? = null
+
+    class FgStroke(val path: Path, val width: Float, val foreground: Boolean)
+
     /** The Measure tool's line (canvas pixels); it stays until another tool or a new line. */
     var measure by mutableStateOf<Pair<PointF, PointF>?>(null); private set
     private var measureEnd = 1
@@ -259,6 +268,9 @@ class ToolInput(private val vm: EditorViewModel) {
         warp = null
         warpAt = null
         measure = null
+        fgOutline = null
+        fgStrokes.clear()
+        fgCurrent = null
         airJob?.cancel()
         dragRect = null
         lasso = null
@@ -310,6 +322,15 @@ class ToolInput(private val vm: EditorViewModel) {
                 path.down(x, y, tol)
             }
             Tool.Warp -> beginWarp(d, x, y)
+            Tool.ForegroundSelect -> if (fgOutline == null) {
+                lassoPoints = arrayListOf(PointF(x, y))
+                lasso = Path().apply { moveTo(x, y) }
+                lassoRevision++
+            } else {
+                fgCurrent = FgStroke(Path().apply { moveTo(x, y); lineTo(x + 0.01f, y) }, options.size.coerceAtLeast(1f), !fgMarkBackground)
+                    .also { fgStrokes.add(it) }
+                fgRevision++
+            }
             Tool.Measure -> {
                 val m = measure
                 measureEnd = when {
@@ -387,6 +408,11 @@ class ToolInput(private val vm: EditorViewModel) {
             Tool.Transform -> dragTransform(x, y)
             Tool.Paths -> path.move(x, y)
             Tool.Warp -> warpTo(x, y)
+            Tool.ForegroundSelect -> if (fgOutline == null) {
+                lassoPoints.add(PointF(x, y))
+                lasso?.lineTo(x, y)
+                lassoRevision++
+            } else fgCurrent?.let { it.path.lineTo(x, y); fgRevision++ }
             Tool.Measure -> measure?.let { m -> measure = if (measureEnd == 0) PointF(x, y) to m.second else m.first to PointF(x, y) }
             Tool.SelectBrush -> { selPath?.lineTo(x, y); selDab(x, y); selStrokeRevision++ }
             else -> Unit
@@ -446,6 +472,18 @@ class ToolInput(private val vm: EditorViewModel) {
             }
             Tool.Paths -> path.up()
             Tool.Warp -> endWarp()
+            Tool.ForegroundSelect -> if (fgOutline == null) {
+                val pts = lassoPoints
+                lasso = null
+                if (pts.size >= 3) {
+                    fgOutline = Path().apply {
+                        moveTo(pts[0].x, pts[0].y)
+                        for (i in 1 until pts.size) lineTo(pts[i].x, pts[i].y)
+                        close()
+                    }
+                    vm.say("Now paint over the object, then tap Select")
+                }
+            } else fgCurrent = null
             Tool.Measure -> measure?.let { m -> if (hypot(m.second.x - m.first.x, m.second.y - m.first.y) < 1f) measure = null }
             Tool.SelectBrush -> {
                 val m = selStroke ?: return
@@ -488,6 +526,11 @@ class ToolInput(private val vm: EditorViewModel) {
         gradient = null
         moveDelta = null
         if (tool == Tool.Paths) path.cancel()
+        if (tool == Tool.ForegroundSelect) {
+            if (fgOutline == null) lasso = null
+            fgCurrent?.let { fgStrokes.remove(it) }
+            fgCurrent = null
+        }
         selStroke = null
         selPath = null
         selCanvas = null
@@ -510,6 +553,7 @@ class ToolInput(private val vm: EditorViewModel) {
             }
             Tool.RectSelect, Tool.EllipseSelect, Tool.FreeSelect -> tapSelect()
             Tool.SelectBrush -> { down(x, y, 1f, tol); up() }
+            Tool.ForegroundSelect -> if (fgOutline != null) { down(x, y, 1f, tol); up() }
             Tool.FuzzySelect, Tool.ColorSelect -> colourSelect(d, x, y)
             Tool.BucketFill -> bucketFill(d, x, y)
             Tool.ColorPicker -> pick(d, x, y)
@@ -715,14 +759,14 @@ class ToolInput(private val vm: EditorViewModel) {
         r.right.roundToInt().toFloat(), r.bottom.roundToInt().toFloat())
 
     /** Builds a shape mask off the main thread, feathers it, then combines it with the selection. */
-    private fun select(d: DocState, label: String, modeOverride: SelectMode? = null, shape: () -> Bitmap) {
+    private fun select(d: DocState, label: String, modeOverride: SelectMode? = null, shape: suspend () -> Bitmap?) {
         val mode = modeOverride ?: options.selectMode
         val feather = options.feather
         vm.viewModelScope.launch {
             vm.busy = EditorViewModel.Busy(label)
             try {
                 val combined = withContext(Dispatchers.Default) {
-                    var m = shape()
+                    var m = shape() ?: return@withContext null
                     if (feather > 0f) {
                         val r = Engine.apply("gegl:gaussian-blur",
                             mapOf("std-dev-x" to feather / 2.0, "std-dev-y" to feather / 2.0), Selections.maskToGrey(m))
@@ -730,11 +774,101 @@ class ToolInput(private val vm: EditorViewModel) {
                     }
                     Selections.combine(d.selection?.mask, m, mode)
                 }
-                if (vm.doc === d) vm.setSelection(label, combined)
+                if (combined != null && vm.doc === d) vm.setSelection(label, combined)
+            } catch (e: OutOfMemoryError) {
+                vm.say("$label: not enough memory")
             } finally {
                 vm.busy = null
             }
         }
+    }
+
+    fun fgUndoStroke() {
+        if (fgStrokes.isNotEmpty()) fgStrokes.removeAt(fgStrokes.lastIndex) else fgOutline = null
+        fgRevision++
+    }
+
+    fun fgStartOver() {
+        fgOutline = null
+        fgStrokes.clear()
+        fgRevision++
+    }
+
+    /**
+     * Foreground Select: GEGL's matting (what GIMP's tool uses) works out the object's edge inside
+     * the outline from the strokes, on what's visible. It runs on the outline's box only, at up to
+     * ~2.5 MP (scaled back up after), so it's quick and fits in a phone's memory.
+     */
+    fun foregroundSelect() {
+        val d = doc ?: return
+        val outline = fgOutline ?: run { vm.say("First draw roughly around the object"); return }
+        if (fgStrokes.none { it.foreground }) { vm.say("Paint over the object first (Foreground)"); return }
+        val strokes = fgStrokes.toList()
+        val box = RectF().also { outline.computeBounds(it, true) }
+        val crop = Rect(kotlin.math.floor(box.left).toInt() - 6, kotlin.math.floor(box.top).toInt() - 6,
+            ceil(box.right).toInt() + 6, ceil(box.bottom).toInt() + 6)
+        if (!crop.intersect(0, 0, d.width, d.height)) return
+        val scale = kotlin.math.sqrt(minOf(1.0, FG_MAX_PIXELS / (crop.width().toDouble() * crop.height()))).toFloat()
+        val sw = max(1, (crop.width() * scale).roundToInt())
+        val sh = max(1, (crop.height() * scale).roundToInt())
+        select(d, "Foreground Select") {
+            val view = Matrix().apply {
+                setTranslate(-crop.left.toFloat(), -crop.top.toFloat())
+                postScale(sw / crop.width().toFloat(), sh / crop.height().toFloat())
+            }
+            // What's visible, over white.
+            val image = Bitmaps.blank(sw, sh, Color.WHITE)
+            Canvas(image).apply { concat(view); Compositor.drawLayers(this, d) }
+            // The trimap: outside the outline background (0), inside unknown (128), strokes 255 / 0.
+            val tri = Bitmap.createBitmap(sw, sh, Bitmap.Config.ALPHA_8)
+            Canvas(tri).apply {
+                concat(view)
+                drawPath(outline, Paint().apply { color = Color.argb(128, 0, 0, 0); blendMode = BlendMode.SRC })
+                for (s in strokes) drawPath(s.path, Paint().apply {
+                    style = Paint.Style.STROKE
+                    strokeWidth = s.width
+                    strokeCap = Paint.Cap.ROUND
+                    strokeJoin = Paint.Join.ROUND
+                    color = if (s.foreground) Color.BLACK else Color.TRANSPARENT
+                    blendMode = BlendMode.SRC
+                })
+            }
+            val trimap = alphaBytes(tri)
+            when (val r = Engine.matting(image, trimap)) {
+                is Engine.Result2.Ok -> {
+                    if (r.alpha.none { it != 0.toByte() }) {
+                        vm.say("Nothing came out: paint more of the object, and keep the outline around it")
+                        return@select null
+                    }
+                    val small = Bitmap.createBitmap(sw, sh, Bitmap.Config.ALPHA_8)
+                    fromAlphaBytes(small, r.alpha)
+                    val mask = Selections.emptyMask(d.width, d.height)
+                    Canvas(mask).drawBitmap(small, null, crop, Paint().apply { isFilterBitmap = true })
+                    fgStartOver()
+                    mask
+                }
+                is Engine.Result2.Failed -> { vm.say("Foreground Select failed: ${r.message}"); null }
+                Engine.Result2.Cancelled -> null
+            }
+        }
+    }
+
+    /** An ALPHA_8 bitmap's bytes, one per pixel, rows packed. */
+    private fun alphaBytes(b: Bitmap): ByteArray {
+        val buf = java.nio.ByteBuffer.allocate(b.rowBytes * b.height)
+        b.copyPixelsToBuffer(buf)
+        val src = buf.array()
+        if (b.rowBytes == b.width) return src
+        return ByteArray(b.width * b.height).also { out ->
+            for (y in 0 until b.height) System.arraycopy(src, y * b.rowBytes, out, y * b.width, b.width)
+        }
+    }
+
+    private fun fromAlphaBytes(b: Bitmap, bytes: ByteArray) {
+        val padded = if (b.rowBytes == b.width) bytes else ByteArray(b.rowBytes * b.height).also { out ->
+            for (y in 0 until b.height) System.arraycopy(bytes, y * b.width, out, y * b.rowBytes, b.width)
+        }
+        b.copyPixelsFromBuffer(java.nio.ByteBuffer.wrap(padded))
     }
 
     /** Pixels to sample for fuzzy select / fill: the active layer, or everything visible. */
@@ -992,4 +1126,9 @@ class ToolInput(private val vm: EditorViewModel) {
 
     @Suppress("unused")
     private fun layerOf(d: DocState): Layer? = d.active
+
+    private companion object {
+        /** Foreground Select works on at most this many pixels (it needs ~30 bytes each). */
+        const val FG_MAX_PIXELS = 2_500_000.0
+    }
 }
