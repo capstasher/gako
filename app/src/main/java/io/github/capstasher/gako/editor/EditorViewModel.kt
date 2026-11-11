@@ -1394,6 +1394,28 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Colours > Auto > White Balance: each colour channel stretched to its 0.5%/99.5% points. */
+    fun whiteBalance() {
+        val d = doc ?: run { say("Open an image first"); return }
+        val layer = targetOf(d) ?: return
+        val onMask = editingMask
+        docJob("White Balance") { state ->
+            val c = CurvesSession(layer.id, layer.bitmap, true, Histogram.of(proxyFor(layer.bitmap)))
+            c.autoLevels()
+            val result = Curves.apply(layer.bitmap, c.luts())
+            val merged = Compositor.selectionFor(layer, state.selection)?.let { Compositor.mergeThroughMask(layer.bitmap, result, it) } ?: result
+            val current = state.layer(layer.id) ?: return@docJob null
+            val out = Bitmaps.mutable(merged)
+            state.replace(if (onMask && current.mask != null) current.copy(mask = out) else current.copy(bitmap = out, text = null))
+        }
+    }
+
+    /** A small copy for statistics (histograms) without touching every pixel. */
+    private fun proxyFor(b: Bitmap): Bitmap {
+        val s = minOf(1.0, 1024.0 / max(b.width, b.height))
+        return if (s >= 1.0) b else Bitmap.createScaledBitmap(b, (b.width * s).roundToInt().coerceAtLeast(1), (b.height * s).roundToInt().coerceAtLeast(1), true)
+    }
+
     private var curvesJob: Job? = null
 
     fun updateCurvesPreview() {
