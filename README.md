@@ -110,7 +110,7 @@ ANDROID_NDK_HOME=/path/to/ndk native/stage-jnilibs.sh android-x86_64 x86_64
 gradle :app:assembleDebug -Pgako.abis=x86_64        # or arm64-v8a,x86_64
 gradle :app:testDebugUnitTest                         # JVM tests (curves, flood fill, layer-tree moves)
 scripts/emulator.sh start                             # test emulators: as many as this machine runs well
-scripts/devtest.sh                                    # on-device tests across them, + JVM tests (~4 s)
+scripts/devtest.sh                                    # on-device tests across them, + JVM tests (~5 s)
 ```
 
 See [docs/DEVELOPING.md](docs/DEVELOPING.md) for a map of the code and how it was tested.

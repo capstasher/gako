@@ -127,8 +127,8 @@ supports, so other machines get their own best setup.
   emulator can lose its GL context when the desktop is busy). Overrides: `GAKO_AVD`, `GAKO_EMU_GPU`,
   `GAKO_EMULATORS`.
 - **`scripts/devtest.sh [Class[#test] …]`** runs the on-device tests across every connected device:
-  ~4–5 s for all 22 on three emulators (plus the 16 JVM unit tests alongside, on a full run), against
-  ~8 s on one. It splits the tests so each device gets about the same total time, from per-test
+  ~5 s for all 28 on three emulators (plus the 19 JVM unit tests alongside, on a full run), against
+  ~10 s on one. It splits the tests so each device gets about the same total time, from per-test
   durations it records on every run (`app/build/devtest/timings.tsv`; without python3 it falls back
   to Android's `numShards`). It builds only the ABIs the devices need (warm daemon, configuration
   cache), installs with plain `adb` only when an APK changed (file hash plus the device's install
