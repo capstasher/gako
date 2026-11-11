@@ -257,7 +257,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
             android.view.KeyEvent.KEYCODE_C -> if (shift) Tool.Crop else Tool.Clone
             android.view.KeyEvent.KEYCODE_S -> Tool.Smudge
             android.view.KeyEvent.KEYCODE_D -> if (shift) Tool.DodgeBurn else null
-            android.view.KeyEvent.KEYCODE_B -> if (shift) Tool.BucketFill else null
+            android.view.KeyEvent.KEYCODE_B -> if (shift) Tool.BucketFill else Tool.Paths
             android.view.KeyEvent.KEYCODE_G -> Tool.Gradient
             android.view.KeyEvent.KEYCODE_T -> if (shift) Tool.Transform else Tool.Text
             android.view.KeyEvent.KEYCODE_O -> if (shift) Tool.ColorSelect else Tool.ColorPicker
@@ -489,6 +489,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun newDocument(state: DocState, name: String, keepRecovery: Boolean = false) {
         if (!keepRecovery) clearRecovery()
+        input.path.clear()
         metadata = null
         projectUri = null
         projectFormat = null

@@ -22,7 +22,8 @@ app/src/main/java/io/github/capstasher/gako/
   tools/
     Tools.kt            the Tool enum and ToolOptions
     PaintStroke.kt      one brush stroke: paintbrush, pencil, airbrush, eraser, clone, heal,
-                        dodge/burn, smudge, blur
+                        dodge/burn, smudge, blur; also the tiles the canvas draws mid-stroke
+    PathEditor.kt       the Paths tool's Bézier path and its gestures
   engine/               JNI wrapper around libgako.so (GEGL)
   export/               flat formats (PNG, JPEG, WebP, HEIF, TIFF, GIF, BMP, TGA, ICO, PPM) + ORA/XCF
   ui/                   Compose: EditorScreen (layout, dock), ImageCanvas (GPU drawing + gestures),
@@ -83,6 +84,7 @@ Stage 3 was tested on an Android 15 x86_64 emulator (Pixel 7 profile), driving i
 
 - Layer groups are flattened into their children on XCF import; no group UI.
 - Filters that grow a layer (drop shadow…) grow it only within the canvas.
-- Very large layers re-upload a whole texture per brush move; tiling the display would help.
-- No paths tool, no guides, no brush shapes beyond round.
+- During a stroke the canvas draws the pre-stroke copy plus 256 px tiles; other edits on huge layers
+  still re-upload the whole texture once per change.
+- Paths live in memory only (not saved in XCF yet), one path per image; no guides, no brush shapes beyond round.
 - ORA bakes masks (the format has none); XCF keeps them.

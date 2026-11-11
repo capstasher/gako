@@ -304,6 +304,25 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
                     handle(nc, knob.x, knob.y, 10 * px, px, round = true)
                 }
             }
+            // The Paths tool's path: always shown while it's the tool, faintly otherwise.
+            val pts = input.path.points
+            if (pts.isNotEmpty() && vm.session == null) {
+                val editing = tool == Tool.Paths
+                val p = input.path.toPath()
+                nc.drawPath(p, ink)
+                nc.drawPath(p, Paint(gold).apply { if (!editing) alpha = 120 })
+                if (editing) {
+                    val handlePaint = Paint(gold).apply { strokeWidth = 1.2f * px }
+                    pts.forEachIndexed { i, pt ->
+                        if (pt.smooth) {
+                            nc.drawLine(pt.inX, pt.inY, pt.outX, pt.outY, handlePaint)
+                            handle(nc, pt.inX, pt.inY, 5 * px, px, round = true)
+                            handle(nc, pt.outX, pt.outY, 5 * px, px, round = true)
+                        }
+                        handle(nc, pt.x, pt.y, if (i == 0) 8 * px else 6 * px, px, round = i == 0 && !input.path.closed)
+                    }
+                }
+            }
             if (tool.cloning) input.cloneSource?.let { src ->
                 val r = 12 * px
                 nc.drawCircle(src.x, src.y, r, ink)

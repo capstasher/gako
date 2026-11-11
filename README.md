@@ -25,7 +25,8 @@ operation) for Android, and puts a touch interface on top designed for one hand 
 **Tools** (one finger uses the tool, two fingers always pan and zoom)
 - Paint: paintbrush, pencil, airbrush, eraser, clone, heal, smudge, blur, dodge/burn, bucket fill, gradient
   (linear/radial/mirrored, FG→BG or FG→transparent), text (re-editable, with outline), colour picker; stylus pressure
-- Select: rectangle, ellipse, free (lasso), fuzzy, by colour; replace/add/subtract/intersect, feather;
+- Paths: Bézier paths by tapping (corners) and dragging (curves); selection from path, stroke, fill
+- Select: rectangle (optionally rounded), ellipse, free (lasso), fuzzy, by colour; replace/add/subtract/intersect, feather;
   Select menu: all, none, invert, feather, grow, shrink, border, from layer alpha
 - Transform: move, unified transform (scale/rotate/flip with handles, or perspective by dragging corners),
   crop (with aspect presets)
@@ -36,7 +37,9 @@ operation) for Android, and puts a touch interface on top designed for one hand 
 - Save projects as **XCF** (GIMP's own format; GIMP 2.10/3.x open them with layers and masks) or OpenRaster;
   File > Save overwrites the project file, and New/Open ask before discarding unsaved work
 - Open XCF from any GIMP version (all precisions, RLE/zlib, masks, groups), ORA, and every image Android decodes
-- Export PNG, JPEG, WebP, HEIF, TIFF, GIF, BMP, TGA, ICO, PPM, ORA; share; "Open with GAKO"
+- Export PNG, JPEG, WebP, HEIF, TIFF, GIF, BMP, TGA, ICO, PPM, ORA, at full size or smaller; share; "Open with GAKO"
+- Take a photo straight into GAKO; a photo's EXIF (camera, date, exposure) carries over to JPEG/PNG/WebP
+  exports, its location only if you ask
 - Unsaved work is kept in a recovery file and restored if Android closes the app
 
 **Phone-first UI**
@@ -50,7 +53,7 @@ operation) for Android, and puts a touch interface on top designed for one hand 
 1. ✅ **Engine**: GEGL on Android, filters on photos
 2. ✅ **Layers**: layered documents, undo, XCF/ORA
 3. ✅ **Tools**: paint, select, transform, crop, curves, levels, text
-4. **More**: paths, tiled GEGL buffers for huge images, plug-ins (Script-Fu / Python), tablet layout
+4. **More**: layer groups, saving paths in XCF, tiled GEGL buffers for huge images, plug-ins (Script-Fu / Python), tablet layout
 
 ## Install
 
