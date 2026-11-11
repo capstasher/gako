@@ -162,7 +162,25 @@ fun ToolOptionsBar(vm: EditorViewModel) {
                     GradientShape.entries.forEach { g -> OptChip(g.label, o.gradientShape == g) { set { it.copy(gradientShape = g) } } }
                     GradientColors.entries.forEach { g -> OptChip(g.label, o.gradientColors == g) { set { it.copy(gradientColors = g) } } }
                 }
-                Tool.ColorPicker -> OptChip("Sample merged", o.sampleMerged) { set { it.copy(sampleMerged = !it.sampleMerged) } }
+                Tool.ColorPicker -> {
+                    OptChip("Sample merged", o.sampleMerged) { set { it.copy(sampleMerged = !it.sampleMerged) } }
+                    val c = vm.fg
+                    val hex = String.format(java.util.Locale.US, "#%06X", c and 0xFFFFFF)
+                    val clip = androidx.compose.ui.platform.LocalClipboardManager.current
+                    androidx.compose.foundation.layout.Box(
+                        Modifier.size(28.dp).background(androidx.compose.ui.graphics.Color(c), RoundedCornerShape(6.dp))
+                            .border(1.dp, Gako.GoldDim, RoundedCornerShape(6.dp)),
+                    )
+                    Text(
+                        "$hex  ${(c shr 16) and 0xFF}, ${(c shr 8) and 0xFF}, ${c and 0xFF}",
+                        style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace),
+                        color = Gako.Parchment,
+                        modifier = Modifier.clickable {
+                            clip.setText(androidx.compose.ui.text.AnnotatedString(hex))
+                            vm.say("Copied $hex")
+                        }.padding(horizontal = 4.dp, vertical = 8.dp),
+                    )
+                }
                 Tool.FilterBrush -> Text(vm.filterBrush?.let { "Painting: ${it.title}" } ?: "Open a filter, then tap its brush button",
                     style = MaterialTheme.typography.labelMedium, color = Gako.Gold)
                 Tool.Paths -> {
