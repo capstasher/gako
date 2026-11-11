@@ -446,6 +446,8 @@ object XcfReader {
 
         /** Groups seen so far, by their item path: whether they show, and their opacity. */
         val groups = HashMap<List<Int>, Pair<Boolean, Float>>()
+        /** Top-level items carry no item path; they're numbered in file order. */
+        var topLevel = 0
 
         fun readLayer(at: Long, baseType: Int): Pair<Layer, Boolean>? {
             goTo(at)
@@ -481,6 +483,7 @@ object XcfReader {
             opacityFloat?.let { info.opacity = it.coerceIn(0f, 1f) }
             val hierarchy = ptr()
             val mask = ptr()
+            if (info.path.isEmpty()) info.path = listOf(topLevel++)
             // A layer inside groups shows only if they all do, at their combined opacity.
             var shown = info.visible
             var opacity = info.opacity
