@@ -135,6 +135,42 @@ class GimpModesTest {
         assertTrue("off by $worst at $where", worst <= 2)
     }
 
+    /**
+     * GIMP's own colour operations as GIMP 3 layer effects (`assets/gimp/ops.zip`, made by
+     * `scripts/gimp_ops_oracle.py`): Brightness-Contrast, Levels (linear and perceptual),
+     * Hue-Saturation with overlap, Colorize, Color Balance, Threshold, Posterize and every
+     * Desaturate mode, each drawn as GIMP 3.2 drew it.
+     */
+    @Test fun appliesGimpColourEffects() = kotlinx.coroutines.runBlocking {
+        val assets = InstrumentationRegistry.getInstrumentation().context.assets
+        val files = HashMap<String, ByteArray>()
+        ZipInputStream(assets.open("gimp/ops.zip")).use { z ->
+            while (true) { val e = z.nextEntry ?: break; files[e.name.removeSuffix(".xcf")] = z.readBytes() }
+        }
+        val want = GZIPInputStream(assets.open("gimp/ops-expected.bin")).bufferedReader().readLines().filter { it.isNotBlank() }
+            .associate { l -> l.substringBefore(' ') to l.substringAfter(' ').chunked(2).map { it.toInt(16) } }
+        val failures = ArrayList<String>()
+        for ((name, xcf) in files.toSortedMap()) {
+            val doc = XcfReader.read(ByteArrayInputStream(xcf))
+            // No GEGL needed: these are GAKO's port of GIMP's own operations.
+            val out = io.github.capstasher.gako.engine.Effects.apply(doc, emptySet())
+            if (out.applied != 1) { failures += "$name: applied ${out.applied}, skipped ${out.skipped}"; continue }
+            val got = Compositor.flatten(out.doc)
+            val exp = want.getValue(name)
+            var worst = 0; var where = ""
+            for (y in 0 until doc.height) for (x in 0 until doc.width) {
+                val i = (y * doc.width + x) * 4
+                val p = got.getPixel(x, y)
+                val a = exp[i + 3]
+                var off = abs(a - (p ushr 24)) - 1
+                if (a >= 16) for (c in 0..2) off = max(off, abs(exp[i + c] - ((p shr (16 - 8 * c)) and 255)) - tolerance(a))
+                if (off > worst) { worst = off; where = "($x,$y) GIMP ${exp.subList(i, i + 4)} GAKO ${listOf((p shr 16) and 255, (p shr 8) and 255, p and 255, p ushr 24)}" }
+            }
+            if (worst > 0) failures += "$name: off by $worst more than allowed at $where"
+        }
+        assertTrue("${failures.size} of ${files.size} differ from GIMP:\n" + failures.joinToString("\n"), failures.isEmpty())
+    }
+
     @Test fun xcfKeepsModesAndBlendSettings() {
         for ((name, xcf) in cases()) {
             if (!name.startsWith("m") && !name.startsWith("cs_") && !name.startsWith("bs_") && !name.startsWith("cm_")) continue

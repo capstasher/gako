@@ -97,12 +97,14 @@ native/bridge/          C bridge over GEGL: list/describe/apply operations, boun
 
 `native/build-native.sh android-x86_64` + `native/stage-jnilibs.sh android-x86_64 x86_64` build the
 engine for the emulator; then `gradle :app:assembleDebug -Pgako.abis=x86_64`.
-`gradle :app:testDebugUnitTest` runs the JVM tests (curves, levels, fuzzy select, by colour, layer-tree moves).
+`gradle :app:testDebugUnitTest` runs the JVM tests (curves, levels, fuzzy select, by colour, layer-tree moves,
+GIMP's serialized operation settings).
 Instrumented tests (`app/src/androidTest`) run on a device or emulator: XCF/PSD/ORA round trips
 (structure, pixels, masks, paths, kept GIMP modes), Warp, Straighten, layer transforms, `GimpModesTest`
 (127 small XCFs made by GIMP 3.2 itself, every mode legacy and linear, groups, masks, spaces, each drawn by
 GAKO and compared with GIMP's own render; `scripts/gimp_modes_oracle.py` remakes them; plus a file with
-GIMP 3 layer effects, drawn within one level of GIMP), and `UiTest`,
+GIMP 3 layer effects, drawn within one level of GIMP, and 16 cases of GIMP's colour operations as effects,
+from `scripts/gimp_ops_oracle.py`), and `UiTest`,
 which drives the real screens (buttons found by label, the canvas touched at image pixels through
 `EditorViewModel.docToView`, the editor's state checked directly). Use a host-GPU emulator
 (`-gpu host`); the SwiftShader one can crash.
@@ -180,6 +182,8 @@ Stage 3 was tested on an Android 15 x86_64 emulator (Pixel 7 profile), driving i
   GIMP 3's layer effects (non-destructive filters, XCF 20+) are read and applied when the file opens
   (`engine/Effects.kt`): each GEGL operation with its saved arguments, blended back with the effect's
   mode and opacity through its mask, clipped or not, as GIMP draws them; they become part of the
-  layer (GAKO has no non-destructive filters yet). A layer whose effects use a GIMP-only operation
-  (curves, levels… from GIMP's own code, not GEGL) or a gradient/config argument shows without them,
-  and the user is told.
+  layer (GAKO has no non-destructive filters yet). GIMP's own colour operations, which aren't GEGL's
+  (Brightness-Contrast, Levels, Curves, Hue-Saturation, Colorize, Color Balance, Threshold, Posterize,
+  Desaturate), are ported in `doc/GimpOps.kt`, each in the colour space GIMP uses for it, reading the
+  settings GIMP serializes ("(brightness 0.2)…"; Curves keeps its sampled curve, so no spline is
+  needed). A layer whose effects use anything else GAKO lacks shows without them, and the user is told.
