@@ -229,11 +229,18 @@ object XcfWriter {
         val slots = IntArray(layers.size) { b.size.also { b.u32(0) } }
         b.u32(0)                                           // end of layers
         // Saved channels, then the selection as GIMP saves it (a channel marked as the selection).
-        val selection = doc.selection?.let { sel ->
+        // In Quick Mask the selection is being painted: that's what's saved (so a recovery keeps it).
+        val selectionGrey = all.quickMask?.let { qm ->
+            Bitmaps.blank(doc.width, doc.height, android.graphics.Color.BLACK).also {
+                android.graphics.Canvas(it).drawBitmap(qm.bitmap, qm.x.toFloat(), qm.y.toFloat(), null)
+            }
+        } ?: doc.selection?.let { sel ->
             val bytes = Selections.bytesOf(sel.mask)
             val px = IntArray(bytes.size) { val v = bytes[it].toInt() and 255; (0xFF shl 24) or (v shl 16) or (v shl 8) or v }
-            Channel("Selection Mask", Bitmaps.blank(doc.width, doc.height).also { it.setPixels(px, 0, doc.width, 0, 0, doc.width, doc.height) },
-                listOf(XcfProp(XcfProps.SELECTION, ByteArray(0)), XcfProp(XcfProps.VISIBLE, byteArrayOf(0, 0, 0, 0))))
+            Bitmaps.blank(doc.width, doc.height).also { it.setPixels(px, 0, doc.width, 0, 0, doc.width, doc.height) }
+        }
+        val selection = selectionGrey?.let {
+            Channel("Selection Mask", it, listOf(XcfProp(XcfProps.SELECTION, ByteArray(0)), XcfProp(XcfProps.VISIBLE, byteArrayOf(0, 0, 0, 0))))
         }
         val channels = doc.gimp.channels.filter { it.bitmap.width == doc.width && it.bitmap.height == doc.height } + listOfNotNull(selection)
         val channelSlots = IntArray(channels.size) { b.size.also { b.u32(0) } }
