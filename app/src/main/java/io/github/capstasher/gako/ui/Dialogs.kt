@@ -26,6 +26,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.LinkOff
 import androidx.compose.material3.AlertDialog
+import androidx.compose.ui.graphics.asImageBitmap
+import io.github.capstasher.gako.doc.Compositor
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -79,6 +83,7 @@ fun DialogHost(vm: EditorViewModel, dialog: Dialog) {
         Dialog.NewLayer -> NewLayerDialog(vm, close)
         Dialog.History -> HistoryDialog(vm, close)
         Dialog.NewGuide -> if (d != null) NewGuideDialog(vm, d.width, d.height, close) else close()
+        Dialog.Channels -> if (d != null) ChannelsDialog(vm, close) else close()
         Dialog.AddMask -> AlertDialog(
             onDismissRequest = close,
             title = { Text("Add Layer Mask") },
@@ -317,6 +322,51 @@ private fun AmountDialog(title: String, close: () -> Unit, onSet: (Float) -> Uni
         text = { field(t, "Pixels", { t = it }, Modifier.fillMaxWidth()) },
         confirmButton = { TextButton(enabled = v != null, onClick = { close(); onSet(v!!) }) { Text("OK") } },
         dismissButton = { TextButton(onClick = close) { Text("Cancel") } },
+    )
+}
+
+/**
+ * GIMP's Channels dialog, for saved selections: each channel's thumbnail and name; tap one to make it
+ * the selection, or add, subtract, intersect, delete. Channels from GIMP files show here too.
+ */
+@Composable
+private fun ChannelsDialog(vm: EditorViewModel, close: () -> Unit) {
+    val d = vm.doc ?: return
+    val channels = d.gimp.channels
+    AlertDialog(
+        onDismissRequest = close,
+        title = { Text("Channels") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (channels.isEmpty()) Text("No channels yet. Select > Save to Channel keeps the selection here; " +
+                    "channels in GIMP files show here too.", style = MaterialTheme.typography.bodyMedium, color = Gako.Muted)
+                channels.forEachIndexed { i, ch ->
+                    var more by remember { mutableStateOf(false) }
+                    Row(verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth().clickable { close(); vm.channelToSelection(i, io.github.capstasher.gako.doc.SelectMode.Replace) }) {
+                        val thumb = remember(ch.bitmap) { Compositor.thumbnail(ch.bitmap, 96).asImageBitmap() }
+                        androidx.compose.foundation.Image(thumb, null, Modifier.size(40.dp).border(1.dp, Gako.InkHigh))
+                        Text(ch.name, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f).padding(start = 10.dp),
+                            maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                        Box {
+                            TextButton(onClick = { more = true }) { Text("⋯", color = Gako.Gold) }
+                            DropdownMenu(expanded = more, onDismissRequest = { more = false }) {
+                                listOf(io.github.capstasher.gako.doc.SelectMode.Add to "Add to selection",
+                                    io.github.capstasher.gako.doc.SelectMode.Subtract to "Subtract from selection",
+                                    io.github.capstasher.gako.doc.SelectMode.Intersect to "Intersect with selection").forEach { (m, label) ->
+                                    DropdownMenuItem(text = { Text(label) }, onClick = { more = false; close(); vm.channelToSelection(i, m) })
+                                }
+                                DropdownMenuItem(text = { Text("Delete channel") }, onClick = { more = false; vm.deleteChannel(i) })
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = d.selection != null, onClick = { vm.saveSelectionToChannel() }) { Text("Save selection") }
+        },
+        dismissButton = { TextButton(onClick = close) { Text("Close") } },
     )
 }
 

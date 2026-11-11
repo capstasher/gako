@@ -154,6 +154,15 @@ class UiTest {
         val bytes = io.github.capstasher.gako.doc.Selections.bytesOf(sel.mask)
         assertEquals("the stroke is out of the selection", 0, bytes[150 * 400 + 200].toInt() and 255)
         assertEquals("the rest is in", 255, bytes[50 * 400 + 200].toInt() and 255)
+        // Saved to a channel and back (GIMP's Save to Channel, Channel to Selection).
+        rule.runOnUiThread { vm.saveSelectionToChannel(); vm.selectNone() }
+        idle()
+        assertEquals(null, vm.doc!!.selection)
+        rule.runOnUiThread { vm.channelToSelection(0, io.github.capstasher.gako.doc.SelectMode.Replace) }
+        idle()
+        assertTrue("the channel gives the selection back",
+            bytes.contentEquals(io.github.capstasher.gako.doc.Selections.bytesOf(vm.doc!!.selection!!.mask)))
+        rule.runOnUiThread { vm.undo(); vm.undo(); vm.undo() }    // back to just after Quick Mask Off
         // Undo goes back into Quick Mask, stroke and all.
         rule.runOnUiThread { vm.undo() }
         idle()

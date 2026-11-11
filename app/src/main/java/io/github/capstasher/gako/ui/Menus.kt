@@ -259,6 +259,8 @@ fun buildMenus(vm: EditorViewModel, callbacks: MenuCallbacks): List<MenuGroup> {
         act("sel-shrink", "Shrink…", Icons.Outlined.ZoomInMap, hasSelection) { vm.dialog = Dialog.ModifySelection(EditorViewModel.SelectionChange.Shrink) },
         act("sel-border", "Border…", Icons.Outlined.BorderStyle, hasSelection) { vm.dialog = Dialog.ModifySelection(EditorViewModel.SelectionChange.Border) },
         act("sel-alpha", "From Layer Alpha", Icons.Outlined.Opacity) { vm.alphaToSelection() },
+        act("sel-save", "Save to Channel", Icons.Outlined.SaveAlt, hasSelection) { vm.saveSelectionToChannel() },
+        act("sel-channels", "Channels…", Icons.Outlined.Layers) { vm.dialog = Dialog.Channels },
         MenuAction("sel-quickmask", if (vm.quickMaskOn) "Quick Mask Off" else "Quick Mask", Icons.Outlined.Masks,
             enabled = hasImage, selected = vm.quickMaskOn, closesMenu = true) { vm.toggleQuickMask() },
     ))
