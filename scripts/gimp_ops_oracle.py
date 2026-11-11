@@ -58,10 +58,12 @@ case("threshold_lum", "gimp:threshold", [("channel", HC.LUMINANCE), ("low", 0.3)
 case("posterize", "gimp:posterize", [("levels", 4)])
 for m, mode in enumerate(["lightness", "luma", "average", "luminance", "value"]):
     case(f"desaturate_{mode}", "gimp:desaturate", [("mode", Gimp.DesaturateMode(m))])
+# No dates or file names in the archives, so the same cases always give the same bytes.
 os.makedirs(ASSETS, exist_ok=True)
-with gzip.open(f"{ASSETS}/ops-expected.bin", "wt") as f:
-    f.write("\n".join(lines) + "\n")
+with open(f"{ASSETS}/ops-expected.bin", "wb") as raw, gzip.GzipFile("", "wb", fileobj=raw, mtime=0) as f:
+    f.write(("\n".join(lines) + "\n").encode())
 with zipfile.ZipFile(f"{ASSETS}/ops.zip", "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
     for name in sorted(os.listdir(OUT)):
-        z.write(os.path.join(OUT, name), name)
+        with open(os.path.join(OUT, name), "rb") as src:
+            z.writestr(zipfile.ZipInfo(name, (1980, 1, 1, 0, 0, 0)), src.read(), zipfile.ZIP_DEFLATED, 9)
 print("cases", len(lines))
