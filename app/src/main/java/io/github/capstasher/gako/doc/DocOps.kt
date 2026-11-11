@@ -59,6 +59,30 @@ object DocOps {
         return mapAll(doc, m, nw, nh)
     }
 
+    /**
+     * Rotates the whole image by [degrees] (clockwise) about its centre. [crop]: keep the biggest
+     * rectangle of the same shape that the rotated image fills (no empty corners), as when
+     * straightening a photo; otherwise the canvas grows to hold all of it.
+     */
+    fun rotateBy(doc: DocState, degrees: Float, crop: Boolean): DocState {
+        if (degrees == 0f) return doc
+        val w = doc.width.toFloat()
+        val h = doc.height.toFloat()
+        val a = Math.toRadians(degrees.toDouble())
+        val c = kotlin.math.abs(kotlin.math.cos(a)).toFloat()
+        val s = kotlin.math.abs(kotlin.math.sin(a)).toFloat()
+        val (nw, nh) = if (crop) {
+            val k = minOf(w / (w * c + h * s), h / (w * s + h * c))
+            (w * k).toInt().coerceAtLeast(1) to (h * k).toInt().coerceAtLeast(1)
+        } else (w * c + h * s).roundToInt() to (w * s + h * c).roundToInt()
+        val m = Matrix().apply {
+            postRotate(degrees, w / 2, h / 2)
+            postTranslate(nw / 2f - w / 2, nh / 2f - h / 2)
+        }
+        // Layers keep only what's on the new canvas.
+        return crop(mapAll(doc, m, nw, nh), Rect(0, 0, nw, nh))
+    }
+
     fun flip(doc: DocState, horizontal: Boolean): DocState {
         val m = Matrix().apply {
             if (horizontal) { postScale(-1f, 1f); postTranslate(doc.width.toFloat(), 0f) }

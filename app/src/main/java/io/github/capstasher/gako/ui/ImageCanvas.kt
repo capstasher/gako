@@ -490,6 +490,13 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
                     }
                 }
             }
+            // The Measure tool's line.
+            if (tool == Tool.Measure) input.measure?.let { (a, b) ->
+                nc.drawLine(a.x, a.y, b.x, b.y, ink)
+                nc.drawLine(a.x, a.y, b.x, b.y, gold)
+                handle(nc, a.x, a.y, 6 * px, px, round = true)
+                handle(nc, b.x, b.y, 6 * px, px, round = true)
+            }
             // The Warp brush under the finger.
             if (tool == Tool.Warp) input.warpAt?.let { p ->
                 val r = vm.options.size / 2f

@@ -92,7 +92,9 @@ Stage 3 was tested on an Android 15 x86_64 emulator (Pixel 7 profile), driving i
 ## Known limits / next steps
 
 - GIMP 2.10+'s default ("non-legacy") modes blend in linear light; GAKO blends in sRGB like GIMP's
-  legacy modes (which it writes), so a semi-transparent layer from such a file can look a little different.
+  legacy modes (which it writes). The difference is large for semi-transparency: black at 50% over
+  white is 188 in GIMP 3.2's Normal, 127 in GAKO (and in GIMP's Normal (legacy)). Doing it right needs
+  a linear compositor for the screen too (AGSL on Android 13+, or tiled F16 compositing on the CPU).
 - Group masks aren't supported (groups have no mask); filters and painting work on layers, not groups.
 - Filters that grow a layer (drop shadow…) grow it only within the canvas.
 - During a stroke the canvas draws the pre-stroke copy plus 256 px tiles; other edits on huge layers
