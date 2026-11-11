@@ -56,7 +56,12 @@ class PaintStroke(
         if (tool == Tool.Airbrush) alpha = (options.airRate * 160).roundToInt().coerceIn(4, 255)
     }
     private val pencilPaint = Paint().apply { isAntiAlias = false; color = Color.BLACK }
-    private val spacing = if (tool == Tool.Airbrush) max(1f, baseSize * 0.08f) else max(0.5f, baseSize * if (hard) 0.2f else 0.1f)
+    // Flat nibs need closer dabs, or their thin edge shows each one.
+    private val spacing = when {
+        tool == Tool.Airbrush -> max(1f, baseSize * 0.08f)
+        options.brushShape != BrushShape.Round -> max(0.5f, baseSize * 0.03f)
+        else -> max(0.5f, baseSize * if (hard) 0.2f else 0.1f)
+    }
 
     private val restorePaint = Paint().apply { blendMode = BlendMode.SRC }
     private val maskTint = Paint().apply { this.color = this@PaintStroke.color or (0xFF shl 24) }
