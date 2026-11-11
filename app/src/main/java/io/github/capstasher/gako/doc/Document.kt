@@ -109,6 +109,23 @@ class PathStroke(val points: FloatArray, val closed: Boolean) {
     fun mapped(m: android.graphics.Matrix) = PathStroke(points.copyOf().also { m.mapPoints(it) }, closed)
 
     fun sameAs(o: PathStroke?) = o != null && closed == o.closed && points.contentEquals(o.points)
+
+    /** Adds this stroke to [into] as cubic segments (closed if the stroke is). */
+    fun addTo(into: android.graphics.Path, close: Boolean = closed) {
+        val n = anchors
+        if (n == 0) return
+        val f = points
+        into.moveTo(f[2], f[3])
+        for (i in 1 until n) {
+            val a = (i - 1) * 6; val b = i * 6
+            into.cubicTo(f[a + 4], f[a + 5], f[b], f[b + 1], f[b + 2], f[b + 3])
+        }
+        if (close && n > 1) {
+            val a = (n - 1) * 6
+            into.cubicTo(f[a + 4], f[a + 5], f[0], f[1], f[2], f[3])
+            into.close()
+        }
+    }
 }
 
 /** A named path of one or more strokes (GIMP's paths can have several). */

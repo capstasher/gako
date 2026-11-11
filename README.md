@@ -30,7 +30,8 @@ operation) for Android, and puts a touch interface on top designed for one hand 
   round, square or calligraphy brushes with angle, stroke smoothing, mirror symmetry (↔ ↕ ✚), stylus pressure;
   ★ Brushes: built-in brush presets plus your own saved ones;
   long-press with a brush, fill, gradient or text picks the colour under the finger
-- Paths: Bézier paths by tapping (corners) and dragging (curves); selection from path, stroke, fill;
+- Paths: Bézier paths by tapping (corners) and dragging (curves); several named paths per image, each
+  with one or more strokes (holes, pieces); selection from path, stroke, fill;
   saved in XCF, so they open as paths in GIMP and back
 - Select: rectangle (optionally rounded), ellipse, free (lasso), selection brush (paint it on), fuzzy, by colour;
   replace/add/subtract/intersect, feather;
@@ -68,7 +69,7 @@ operation) for Android, and puts a touch interface on top designed for one hand 
 1. ✅ **Engine**: GEGL on Android, filters on photos
 2. ✅ **Layers**: layered documents, undo, XCF/ORA
 3. ✅ **Tools**: paint, select, transform, crop, curves, levels, text
-4. **More**: several editable paths per image, linear-light blending for GIMP's newer modes, tiled GEGL buffers for huge images, plug-ins (Script-Fu / Python), tablet layout
+4. **More**: linear-light blending for GIMP's newer modes, tiled GEGL buffers for huge images, plug-ins (Script-Fu / Python), tablet layout
 
 ## Install
 
