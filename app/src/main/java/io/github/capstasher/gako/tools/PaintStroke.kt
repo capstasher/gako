@@ -80,51 +80,35 @@ class PaintStroke(
         }
     }
 
-    // ---- Blur: a softened copy of the layer, worked out tile by tile as the brush reaches it.
+    // ---- Blur and Heal reveal a source worked out tile by tile as the brush reaches it, kept only
+    // for the tiles the stroke touches (a full-size copy of a big layer would cost ~100 MB).
+    private val tileSize = 128
+    private val tilesX = (bmp.width + tileSize - 1) / tileSize
+    private val sourceTiles = HashMap<Int, Bitmap>()
     private val blurLevels = 1 + (options.strength * 3.99f).toInt()          // halvings: 2×…16×
-    private val blurSource: Bitmap? = if (tool == Tool.Blur) Bitmap.createBitmap(bmp.width, bmp.height, Bitmap.Config.ARGB_8888) else null
-    private val blurTile = 128
-    private val blurTilesX = (bmp.width + blurTile - 1) / blurTile
-    private val blurDone: BooleanArray? = if (tool == Tool.Blur) BooleanArray(blurTilesX * ((bmp.height + blurTile - 1) / blurTile)) else null
 
-    private fun ensureBlurred(r: Rect) {
-        val src = blurSource ?: return
-        val done = blurDone ?: return
-        val k = 1 shl blurLevels
-        val pad = k * 4
-        val canvas = Canvas(src)
-        for (ty in max(0, r.top) / blurTile..(min(bmp.height, r.bottom) - 1) / blurTile) {
-            for (tx in max(0, r.left) / blurTile..(min(bmp.width, r.right) - 1) / blurTile) {
-                val i = ty * blurTilesX + tx
-                if (i !in done.indices || done[i]) continue
-                done[i] = true
-                val t = Rect(tx * blurTile, ty * blurTile, min(bmp.width, (tx + 1) * blurTile), min(bmp.height, (ty + 1) * blurTile))
-                val area = Rect(t).apply { inset(-pad, -pad); intersect(0, 0, bmp.width, bmp.height) }
-                var piece = Bitmap.createBitmap(before, area.left, area.top, area.width(), area.height())
-                // Halving with bilinear filtering averages 2×2 blocks: a box blur that tiles seamlessly.
-                repeat(blurLevels) {
-                    piece = Bitmap.createScaledBitmap(piece, max(1, piece.width / 2), max(1, piece.height / 2), true)
-                }
-                repeat(blurLevels) {
-                    piece = Bitmap.createScaledBitmap(piece, piece.width * 2, piece.height * 2, true)
-                }
-                canvas.save()
-                canvas.clipRect(t)
-                canvas.drawBitmap(piece, null, RectF(area), Paint().apply { isFilterBitmap = true; blendMode = BlendMode.SRC })
-                canvas.restore()
-            }
-        }
+    private fun tileRect(i: Int): Rect {
+        val tx = i % tilesX
+        val ty = i / tilesX
+        return Rect(tx * tileSize, ty * tileSize, min(bmp.width, (tx + 1) * tileSize), min(bmp.height, (ty + 1) * tileSize))
     }
 
-    // ---- Heal: the source's detail with the destination's own tone (GIMP's heal, approximately):
-    // result = source + blur(destination) − blur(source), worked out tile by tile.
-    private val healSource: Bitmap? = if (tool == Tool.Heal) Bitmap.createBitmap(bmp.width, bmp.height, Bitmap.Config.ARGB_8888) else null
-    private val healDone: BooleanArray? = if (tool == Tool.Heal) BooleanArray(blurTilesX * ((bmp.height + blurTile - 1) / blurTile)) else null
+    private fun tilesIn(r: Rect): List<Int> {
+        val out = ArrayList<Int>()
+        if (r.isEmpty) return out
+        for (ty in max(0, r.top) / tileSize..(min(bmp.height, r.bottom) - 1) / tileSize)
+            for (tx in max(0, r.left) / tileSize..(min(bmp.width, r.right) - 1) / tileSize) out += ty * tilesX + tx
+        return out
+    }
 
+    /** [before] over [r], with the layer's edge pixels repeated outside it (so blurs don't darken edges). */
     private fun region(r: Rect): Bitmap = Bitmaps.blank(r.width(), r.height()).also {
-        Canvas(it).drawBitmap(before, -r.left.toFloat(), -r.top.toFloat(), null)
+        val shader = android.graphics.BitmapShader(before, android.graphics.Shader.TileMode.CLAMP, android.graphics.Shader.TileMode.CLAMP)
+        shader.setLocalMatrix(android.graphics.Matrix().apply { setTranslate(-r.left.toFloat(), -r.top.toFloat()) })
+        Canvas(it).drawPaint(Paint().apply { this.shader = shader })
     }
 
+    /** A box blur by repeated 2× bilinear halving and doubling; exact when sizes divide by 2^levels. */
     private fun boxBlur(b: Bitmap, levels: Int): Bitmap {
         var p = b
         repeat(levels) { p = Bitmap.createScaledBitmap(p, max(1, p.width / 2), max(1, p.height / 2), true) }
@@ -132,39 +116,65 @@ class PaintStroke(
         return if (p.width == b.width && p.height == b.height) p else Bitmap.createScaledBitmap(p, b.width, b.height, true)
     }
 
-    private fun ensureHealed(r: Rect) {
-        val out = healSource ?: return
-        val done = healDone ?: return
-        val (ox, oy) = cloneOffset ?: return
+    /** [t] grown by [pad] and rounded up to a multiple of [unit], so every tile blurs on the same grid. */
+    private fun paddedArea(t: Rect, pad: Int, unit: Int): Rect {
+        val a = Rect(t).apply { inset(-pad, -pad) }
+        a.right = a.left + (a.width() + unit - 1) / unit * unit
+        a.bottom = a.top + (a.height() + unit - 1) / unit * unit
+        return a
+    }
+
+    private fun ensureSource(r: Rect) {
+        for (i in tilesIn(r)) {
+            if (sourceTiles.containsKey(i)) continue
+            val t = tileRect(i)
+            sourceTiles[i] = when (tool) {
+                Tool.Blur -> blurTile(t)
+                Tool.Heal -> healTile(t) ?: continue
+                else -> continue
+            }
+        }
+    }
+
+    private fun blurTile(t: Rect): Bitmap {
+        val k = 1 shl blurLevels
+        val area = paddedArea(t, k * 4, k)
+        val blurred = boxBlur(region(area), blurLevels)
+        return Bitmap.createBitmap(blurred, t.left - area.left, t.top - area.top, t.width(), t.height())
+    }
+
+    // Heal: the source's detail with the destination's own tone (GIMP's heal, approximately):
+    // result = source + blur(destination) − blur(source).
+    private fun healTile(t: Rect): Bitmap? {
+        val (ox, oy) = cloneOffset ?: return null
         val dx = ox.roundToInt()
         val dy = oy.roundToInt()
         val levels = 4                         // ~16 px: the scale of "tone" carried over
-        val pad = 64
-        for (ty in max(0, r.top) / blurTile..(min(bmp.height, r.bottom) - 1) / blurTile) {
-            for (tx in max(0, r.left) / blurTile..(min(bmp.width, r.right) - 1) / blurTile) {
-                val i = ty * blurTilesX + tx
-                if (i !in done.indices || done[i]) continue
-                done[i] = true
-                val t = Rect(tx * blurTile, ty * blurTile, min(bmp.width, (tx + 1) * blurTile), min(bmp.height, (ty + 1) * blurTile))
-                val w = t.width()
-                val h = t.height()
-                val area = Rect(t).apply { inset(-pad, -pad) }
-                val dstBlur = boxBlur(region(area), levels)
-                val srcBlur = boxBlur(region(Rect(area).apply { offset(dx, dy) }), levels)
-                val src = region(Rect(t).apply { offset(dx, dy) })
-                val a = IntArray(w * h); val bd = IntArray(w * h); val bs = IntArray(w * h)
-                src.getPixels(a, 0, w, 0, 0, w, h)
-                dstBlur.getPixels(bd, 0, w, pad, pad, w, h)
-                srcBlur.getPixels(bs, 0, w, pad, pad, w, h)
-                for (k in a.indices) {
-                    val s = a[k]; val d = bd[k]; val q = bs[k]
-                    val rr = (((s shr 16) and 0xFF) + ((d shr 16) and 0xFF) - ((q shr 16) and 0xFF)).coerceIn(0, 255)
-                    val gg = (((s shr 8) and 0xFF) + ((d shr 8) and 0xFF) - ((q shr 8) and 0xFF)).coerceIn(0, 255)
-                    val bb = ((s and 0xFF) + (d and 0xFF) - (q and 0xFF)).coerceIn(0, 255)
-                    a[k] = (s and 0xFF000000.toInt()) or (rr shl 16) or (gg shl 8) or bb
-                }
-                out.setPixels(a, 0, w, t.left, t.top, w, h)
-            }
+        val area = paddedArea(t, 64, 1 shl levels)
+        val w = t.width()
+        val h = t.height()
+        val dstBlur = boxBlur(region(area), levels)
+        val srcBlur = boxBlur(region(Rect(area).apply { offset(dx, dy) }), levels)
+        val src = region(Rect(t).apply { offset(dx, dy) })
+        val a = IntArray(w * h); val bd = IntArray(w * h); val bs = IntArray(w * h)
+        src.getPixels(a, 0, w, 0, 0, w, h)
+        dstBlur.getPixels(bd, 0, w, t.left - area.left, t.top - area.top, w, h)
+        srcBlur.getPixels(bs, 0, w, t.left - area.left, t.top - area.top, w, h)
+        for (k in a.indices) {
+            val s = a[k]; val d = bd[k]; val q = bs[k]
+            val rr = (((s shr 16) and 0xFF) + ((d shr 16) and 0xFF) - ((q shr 16) and 0xFF)).coerceIn(0, 255)
+            val gg = (((s shr 8) and 0xFF) + ((d shr 8) and 0xFF) - ((q shr 8) and 0xFF)).coerceIn(0, 255)
+            val bb = ((s and 0xFF) + (d and 0xFF) - (q and 0xFF)).coerceIn(0, 255)
+            a[k] = (s and 0xFF000000.toInt()) or (rr shl 16) or (gg shl 8) or bb
+        }
+        return Bitmaps.blank(w, h).also { it.setPixels(a, 0, w, 0, 0, w, h) }
+    }
+
+    private fun drawSource(c: Canvas, r: Rect) {
+        for (i in tilesIn(r)) {
+            val tile = sourceTiles[i] ?: continue
+            val t = tileRect(i)
+            c.drawBitmap(tile, t.left.toFloat(), t.top.toFloat(), null)
         }
     }
 
@@ -261,8 +271,7 @@ class PaintStroke(
     private fun render(dirty: Rect) {
         if (dirty.isEmpty || tool == Tool.Smudge) return
         total.union(dirty)
-        if (tool == Tool.Blur) ensureBlurred(dirty)
-        if (tool == Tool.Heal) ensureHealed(dirty)
+        if (tool == Tool.Blur || tool == Tool.Heal) ensureSource(dirty)
         val c = layerCanvas
         c.save()
         c.clipRect(dirty)
@@ -278,12 +287,8 @@ class PaintStroke(
                 c.drawBitmap(before, 0f, 0f, sourcePaint)
                 Bitmaps.maskIn(c, mask)
             }
-            Tool.Blur -> {
-                c.drawBitmap(blurSource!!, 0f, 0f, null)
-                Bitmaps.maskIn(c, mask)
-            }
-            Tool.Heal -> {
-                c.drawBitmap(healSource!!, 0f, 0f, null)
+            Tool.Blur, Tool.Heal -> {
+                drawSource(c, dirty)
                 Bitmaps.maskIn(c, mask)
             }
             else -> c.drawBitmap(mask, 0f, 0f, maskTint)

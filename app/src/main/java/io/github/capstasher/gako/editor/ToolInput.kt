@@ -361,7 +361,7 @@ class ToolInput(private val vm: EditorViewModel) {
         cloneSource = PointF(x, y)
         cloneOffset = null
         settingCloneSource = false
-        vm.say("Clone source set. Now paint where the copy should go.")
+        vm.say("Source set. Now paint where the ${if (tool == Tool.Heal) "fix" else "copy"} should go.")
     }
 
     private fun pick(d: DocState, x: Float, y: Float) {

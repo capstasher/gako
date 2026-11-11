@@ -222,7 +222,18 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
                     layer.bitmap.setHasMipMap(smooth)
                     val paint = Compositor.layerPaint(layer, smooth)
                     when {
-                        layer === active && preview != null && !comparing -> drawPreview(nc, layer, preview, d, paint, vm.editingMask)
+                        layer === active && preview != null && !comparing -> {
+                            val place = vm.previewPlacement
+                            if (place != null && !vm.editingMask && d.selection == null && layer.activeMask == null) {
+                                // A filter that grows the layer (drop shadow): draw the bigger preview where it lands.
+                                val (px0, py0, sc) = place
+                                val m = Matrix().apply {
+                                    setScale((1 / sc).toFloat(), (1 / sc).toFloat())
+                                    postTranslate(layer.x + (px0 / sc).toFloat(), layer.y + (py0 / sc).toFloat())
+                                }
+                                nc.drawBitmap(preview, m, paint.apply { isFilterBitmap = true })
+                            } else drawPreview(nc, layer, preview, d, paint, vm.editingMask)
+                        }
                         layer === active && moveDelta != null -> Compositor.drawLayer(nc, layer, paint,
                             Matrix().apply { setTranslate(layer.x + moveDelta.x, layer.y + moveDelta.y) })
                         layer === active && transform != null && transform.changed ->

@@ -81,6 +81,8 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         val layerId: Long,
         val draft: Proxy,
         val fine: Proxy,
+        /** Decided when the filter opened: it works on the layer's mask, not its pixels. */
+        val onMask: Boolean = false,
     ) {
         var values by mutableStateOf(values)
         var working by mutableStateOf(false)
@@ -106,6 +108,11 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var revision by mutableIntStateOf(0); private set
     /** The filter/curves preview of the active layer (a downscaled copy), or null. */
     var preview by mutableStateOf<Bitmap?>(null); internal set
+    /**
+     * Where a grown filter preview sits: its offset from the layer's corner in proxy pixels, and the
+     * proxy's scale. Null when the preview covers exactly the layer.
+     */
+    var previewPlacement by mutableStateOf<Triple<Int, Int, Double>?>(null); private set
     var documentName by mutableStateOf("Untitled"); private set
     var dirty by mutableStateOf(false); private set
     var busy by mutableStateOf<Busy?>(null); internal set
@@ -486,6 +493,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         resetHistory()
         doc = state
         preview = null
+        previewPlacement = null
         documentName = name
         dirty = false
         revision++
@@ -1108,11 +1116,13 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     fun selectAll() {
         val d = doc ?: return
+        if (blockedByBusy()) return
         input.reset()
         setSelection("Select All", Selections.all(d.width, d.height))
     }
 
     fun selectNone() {
+        if (blockedByBusy()) return
         input.reset()
         setSelection("Select None", null)
     }
@@ -1335,6 +1345,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         val onMask = editingMask
         curves = null
         preview = null
+        previewPlacement = null
         docJob(if (c.levels) "Levels" else "Curves") { state ->
             val result = Curves.apply(layer.bitmap, luts)
             val merged = Compositor.selectionFor(layer, state.selection)?.let { Compositor.mergeThroughMask(layer.bitmap, result, it) } ?: result
@@ -1349,6 +1360,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         curvesJob?.cancel()
         curves = null
         preview = null
+        previewPlacement = null
     }
 
     // ---------------------------------------------------------------- filters
@@ -1389,11 +1401,12 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         val (op, values) = lastFilter ?: run { say("No filter used yet"); return }
         val d = doc ?: return
         val layer = targetOf(d) ?: return
+        val onMask = editingMask
         if (blockedByBusy()) return
         endInteractions()
         viewModelScope.launch {
             val title = describe(op)?.title ?: op
-            runCommit(title, op, values, layer)
+            runCommit(title, op, values, layer, onMask)
         }
     }
 
@@ -1401,20 +1414,21 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     fun startFilter(operation: String) {
         val d = doc ?: run { say("Open an image first"); return }
         val layer = targetOf(d) ?: return
+        val onMask = editingMask
         if (blockedByBusy()) return
         endInteractions()
         viewModelScope.launch {
             val desc = describe(operation) ?: run { say("$operation isn't available"); return@launch }
             if (desc.params.isEmpty()) {
                 rememberFilter(operation, emptyMap())
-                runCommit(desc.title, operation, emptyMap(), layer)
+                runCommit(desc.title, operation, emptyMap(), layer, onMask)
                 return@launch
             }
             val src = layer.bitmap
             val fine = proxyOf(src, FINE_SIDE)
             val draft = if (fine.bitmap.width <= DRAFT_SIDE && fine.bitmap.height <= DRAFT_SIDE) fine
                         else proxyOf(fine.bitmap, DRAFT_SIDE).let { Proxy(it.bitmap, it.bitmap.width.toDouble() / src.width) }
-            session = FilterSession(desc, desc.defaults(), layer.id, draft, fine)
+            session = FilterSession(desc, desc.defaults(), layer.id, draft, fine, onMask)
             schedulePreview(immediate = true)
         }
     }
@@ -1472,13 +1486,13 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                 val quick = s.fineMs in 0..FAST_PREVIEW_MS
                 if (s.draft !== s.fine && !quick) {
                     val t0 = SystemClock.elapsedRealtime()
-                    if (!showPreview(s, gen, preview(s, s.draft))) return@launch
+                    if (!showPreview(s, gen, s.draft, preview(s, s.draft))) return@launch
                     val predicted = (SystemClock.elapsedRealtime() - t0) * (s.fine.pixels / s.draft.pixels)
                     val expected = if (s.fineMs >= 0) s.fineMs.toDouble() else predicted
                     if (expected > FINE_BUDGET_MS) return@launch   // heavy filter: the draft is the preview
                 }
                 val t1 = SystemClock.elapsedRealtime()
-                if (showPreview(s, gen, preview(s, s.fine))) s.fineMs = SystemClock.elapsedRealtime() - t1
+                if (showPreview(s, gen, s.fine, preview(s, s.fine))) s.fineMs = SystemClock.elapsedRealtime() - t1
             } finally {
                 indicator.cancel()
                 if (s.generation == gen) s.working = false
@@ -1486,13 +1500,25 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private suspend fun preview(s: FilterSession, proxy: Proxy) =
-        Engine.apply(s.op.name, scaled(s.values, s.op, proxy.scale), proxy.bitmap, tag = s)
+    private suspend fun preview(s: FilterSession, proxy: Proxy): Engine.Result {
+        // Grow the preview the same way Apply will, in proxy pixels.
+        val limit = doc?.layer(s.layerId)?.let { growLimit(it, s.onMask) }?.let { r ->
+            val k = proxy.scale
+            Rect((r.left * k).toInt(), (r.top * k).toInt(), kotlin.math.ceil(r.right * k).toInt(), kotlin.math.ceil(r.bottom * k).toInt())
+        }
+        return Engine.apply(s.op.name, scaled(s.values, s.op, proxy.scale), proxy.bitmap, tag = s, growWithin = limit)
+    }
 
-    private fun showPreview(s: FilterSession, gen: Int, result: Engine.Result): Boolean {
+    private fun showPreview(s: FilterSession, gen: Int, proxy: Proxy, result: Engine.Result): Boolean {
         if (s.generation != gen || session !== s) return false
         return when (result) {
-            is Engine.Result.Ok -> { preview = result.bitmap; s.error = null; true }
+            is Engine.Result.Ok -> {
+                previewPlacement = if (result.x == 0 && result.y == 0 && result.bitmap.width == proxy.bitmap.width &&
+                    result.bitmap.height == proxy.bitmap.height) null else Triple(result.x, result.y, proxy.scale)
+                preview = result.bitmap
+                s.error = null
+                true
+            }
             is Engine.Result.Failed -> { s.error = result.message; false }
             Engine.Result.Cancelled -> false
         }
@@ -1504,6 +1530,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         Engine.cancel(tag = s)
         session = null
         preview = null
+        previewPlacement = null
     }
 
     fun applySession() {
@@ -1514,34 +1541,46 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         Engine.cancel(tag = s)
         rememberFilter(s.op.name, s.values)
         viewModelScope.launch {
-            runCommit(s.op.title, s.op.name, s.values, layer)
+            runCommit(s.op.title, s.op.name, s.values, layer, s.onMask)
             if (session === s) {
                 session = null
                 preview = null
+                previewPlacement = null
             }
         }
     }
 
-    private suspend fun runCommit(title: String, operation: String, values: Map<String, Any?>, layer: Layer) {
-        val onMask = editingMask
+    /**
+     * Where a filter on [layer] may grow it to, in layer coordinates: the layer and the canvas, and
+     * only when no selection or mask pins its shape. Null means "don't grow".
+     */
+    private fun growLimit(layer: Layer, onMask: Boolean): Rect? {
+        val d = doc ?: return null
+        val real = d.layer(layer.id) ?: return null
+        if (onMask || real.mask != null || d.selection != null) return null
+        return Rect(0, 0, layer.width, layer.height).apply { union(-layer.x, -layer.y, d.width - layer.x, d.height - layer.y) }
+    }
+
+    private suspend fun runCommit(title: String, operation: String, values: Map<String, Any?>, layer: Layer, onMask: Boolean) {
         val tag = Any()
         commitTag = tag
         busy = Busy(title, null, cancellable = true)
         val src = layer.bitmap
-        // Like GIMP, a filter that draws past the layer (drop shadow, glow) grows it — unless a
-        // selection or a mask pins the layer's shape.
-        val grow = !onMask && layer.mask == null && doc?.selection == null
-        val result = Engine.apply(operation, values, src, tag, grow = grow) { p -> busy = busy?.copy(progress = p) }
+        // The selection is fixed when the filter starts; it's what the result is merged through.
+        val selMask = doc?.let { d -> d.layer(layer.id)?.let { Compositor.selectionFor(it, d.selection) } }
+        // Like GIMP, a filter that draws past the layer (drop shadow, glow) grows it, within the canvas.
+        val limit = if (selMask == null) growLimit(layer, onMask) else null
+        val result = Engine.apply(operation, values, src, tag, growWithin = limit) { p -> busy = busy?.copy(progress = p) }
         commitTag = null
         try {
             when (result) {
                 is Engine.Result.Ok -> {
-                    val d0 = doc ?: return
-                    val mask = d0.layer(layer.id)?.let { Compositor.selectionFor(it, d0.selection) }
-                    val merged = if (mask != null) withContext(Dispatchers.Default) {
-                        Compositor.mergeThroughMask(src, result.bitmap, mask)
+                    val grown = result.x != 0 || result.y != 0 || result.bitmap.width != src.width || result.bitmap.height != src.height
+                    val merged = if (selMask != null && !grown) withContext(Dispatchers.Default) {
+                        Compositor.mergeThroughMask(src, result.bitmap, selMask)
                     } else result.bitmap
                     preview = null
+                    previewPlacement = null
                     val d = doc ?: return
                     val current = d.layer(layer.id) ?: return
                     val out = Bitmaps.mutable(merged)

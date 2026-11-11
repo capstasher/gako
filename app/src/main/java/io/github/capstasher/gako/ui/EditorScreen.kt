@@ -31,6 +31,7 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.outlined.NoteAdd
 import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material3.AlertDialog
@@ -234,7 +235,7 @@ private fun Dock(vm: EditorViewModel, menu: MenuState, modifier: Modifier) {
         Box(Modifier.weight(1f).padding(horizontal = 6.dp), contentAlignment = Alignment.Center) {
             if (active != null) {
                 Row(
-                    pill.clickable {
+                    pill.clip(RoundedCornerShape(24.dp)).clickable {
                         if (menu.path.firstOrNull() == "layers") menu.close() else menu.openRoot("layers")
                     }.padding(horizontal = 12.dp, vertical = 9.dp),
                     verticalAlignment = Alignment.CenterVertically,

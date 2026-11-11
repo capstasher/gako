@@ -64,10 +64,10 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
-        if (event.action == android.view.KeyEvent.ACTION_DOWN && event.repeatCount == 0 &&
-            vm.onKey(event.keyCode, event.isCtrlPressed, event.isShiftPressed)) return true
-        return super.dispatchKeyEvent(event)
+    /** Shortcuts only see keys nothing on screen used, so typing in a text field never triggers them. */
+    override fun onKeyDown(keyCode: Int, event: android.view.KeyEvent): Boolean {
+        if (event.repeatCount == 0 && vm.onKey(keyCode, event.isCtrlPressed, event.isShiftPressed)) return true
+        return super.onKeyDown(keyCode, event)
     }
 
     override fun onStop() {
