@@ -48,7 +48,8 @@ native/bridge/          C bridge over GEGL: list/describe/apply operations, boun
 - **The canvas is GPU-composited** every frame (`ImageCanvas`), with each layer drawn through
   `Compositor.drawLayer`. In-place pixel edits bump `vm.revision` to trigger a redraw.
 - **Long work** goes through `vm.docJob` (background, busy pill, one undo step) or the filter
-  session (`startFilter` → previews on proxies → `runCommit`).
+  session (`startFilter` → previews on proxies → `runCommit`). Filters may grow the layer:
+  `gako_core_bounds` reports where an operation draws and `gako_core_apply_rect` renders that area.
 
 ## Gotchas
 
@@ -81,7 +82,7 @@ Stage 3 was tested on an Android 15 x86_64 emulator (Pixel 7 profile), driving i
 ## Known limits / next steps
 
 - Layer groups are flattened into their children on XCF import; no group UI.
-- Filter previews are clipped to the layer even when Apply grows it (drop shadow).
+- Filters that grow a layer (drop shadow…) grow it only within the canvas.
 - Very large layers re-upload a whole texture per brush move; tiling the display would help.
 - No paths tool, no guides, no brush shapes beyond round.
 - ORA bakes masks (the format has none); XCF keeps them.
