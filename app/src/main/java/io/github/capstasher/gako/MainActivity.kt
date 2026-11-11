@@ -86,7 +86,8 @@ class MainActivity : ComponentActivity() {
                     onPickFile = { asLayers ->
                         openAsLayers = asLayers
                         filePicker.launch(arrayOf("image/*", "application/octet-stream", "application/zip",
-                            "image/openraster", "image/x-xcf", "application/x-xcf"))
+                            "image/openraster", "image/x-xcf", "application/x-xcf", "image/vnd.adobe.photoshop",
+                            "application/x-photoshop", "image/x-photoshop"))
                     },
                     onTakePhoto = ::takePhoto,
                     onPickFont = {
