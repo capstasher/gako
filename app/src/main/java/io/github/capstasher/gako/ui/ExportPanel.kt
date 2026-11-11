@@ -106,6 +106,27 @@ fun ExportPanel(
             }
 
             FormatOptions(session)
+            val o = session.options
+            val d = vm.doc
+            if (!session.format.layered && d != null) {
+                Label("Size")
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf(100, 75, 50, 25).forEach { p ->
+                        val w = (d.width * p / 100).coerceAtLeast(1)
+                        val h = (d.height * p / 100).coerceAtLeast(1)
+                        Chip(if (p == 100) "Full · $w×$h" else "$p% · $w×$h", selected = o.scale == p) {
+                            session.options = o.copy(scale = p)
+                        }
+                    }
+                }
+            }
+            val meta = vm.metadata
+            if (meta != null && io.github.capstasher.gako.export.Metadata.supports(session.format)) {
+                Toggle("Keep photo info (camera, date, exposure)", o.keepMetadata) { session.options = o.copy(keepMetadata = it) }
+                if (o.keepMetadata && io.github.capstasher.gako.export.Metadata.hasLocation(meta)) {
+                    Toggle("Include location", o.keepLocation) { session.options = o.copy(keepLocation = it) }
+                }
+            }
             Spacer(Modifier.height(4.dp))
         }
     }
