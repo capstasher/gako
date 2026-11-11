@@ -259,6 +259,11 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------------------------------------------------------------- keyboard
 
+    /** The Size slider is open: the canvas shows the brush's size at its centre. */
+    var sizePreview by mutableStateOf(false)
+    /** Where a hovering pen is (screen pixels), for a brush outline. */
+    var hover by mutableStateOf<androidx.compose.ui.geometry.Offset?>(null)
+
     /** Once a pen has touched the canvas, fingers navigate and only the pen uses tools. */
     var stylusSeen by mutableStateOf(false)
 

@@ -24,6 +24,8 @@ private val sections = listOf(
     "Touch" to listOf(
         "One finger" to "Uses the current tool (or pans, with Navigate)",
         "Two fingers" to "Pan, pinch to zoom, twist to turn the view",
+        "Tap 2 / 3 fingers" to "Undo / redo",
+        "Long-press" to "With a brush, fill, gradient or text: pick a colour",
         "Zoom chip" to "Tap: fit ↔ 100% · resets a turned view",
         "Hold ◐" to "In filters and curves: see the original",
         "Pen" to "Pressure; eraser end erases; fingers then only navigate",
