@@ -18,12 +18,15 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -106,7 +109,10 @@ fun rememberMenuState(): MenuState {
 private fun runEntry(entry: MenuEntry, state: MenuState) {
     when (entry) {
         is MenuGroup -> state.push(entry.key)
-        is MenuAction -> if (entry.enabled) entry.onClick()
+        is MenuAction -> if (entry.enabled) {
+            entry.onClick()
+            if (entry.closesMenu) state.close()
+        }
     }
 }
 
@@ -116,7 +122,7 @@ private fun runEntry(entry: MenuEntry, state: MenuState) {
 class History(val canUndo: Boolean, val canRedo: Boolean, val undo: () -> Unit, val redo: () -> Unit)
 
 @Composable
-private fun HistoryButton(undo: Boolean, history: History) {
+fun HistoryButton(undo: Boolean, history: History) {
     val enabled = if (undo) history.canUndo else history.canRedo
     IconButton(onClick = if (undo) history.undo else history.redo, enabled = enabled) {
         Icon(
@@ -131,9 +137,9 @@ private fun HistoryButton(undo: Boolean, history: History) {
 fun BottomMenu(
     roots: List<MenuGroup>,
     state: MenuState,
-    history: History,
     onSearchPick: (OpInfo) -> Unit,
     modifier: Modifier = Modifier,
+    above: @Composable () -> Unit = {},
 ) {
     val trail = roots.resolve(state.path)
     val current = trail.lastOrNull()
@@ -147,7 +153,10 @@ fun BottomMenu(
             if (current != null) {
                 Column(Modifier.fillMaxWidth()) {
                     Breadcrumb(trail, state)
-                    if (state.searching) {
+                    val panel = current.panel
+                    if (panel != null) {
+                        Box(Modifier.fillMaxWidth().heightIn(max = 340.dp)) { panel() }
+                    } else if (state.searching) {
                         SearchPane(current.searchable, state, onSearchPick, Modifier.height(260.dp))
                     } else {
                         LazyRow(
@@ -165,22 +174,22 @@ fun BottomMenu(
                             }
                             items(current.children, key = { it.key }) { entry ->
                                 Tile(entry.label, entry.icon, entry is MenuGroup,
-                                    enabled = (entry as? MenuAction)?.enabled ?: true) { runEntry(entry, state) }
+                                    enabled = (entry as? MenuAction)?.enabled ?: true,
+                                    selected = (entry as? MenuAction)?.selected == true) { runEntry(entry, state) }
                             }
                         }
                     }
                 }
             }
         }
+        if (current == null) above()
         HorizontalDivider(color = Gako.GoldDim.copy(alpha = 0.35f))
-        Row(Modifier.fillMaxWidth().height(64.dp), verticalAlignment = Alignment.CenterVertically) {
-            HistoryButton(undo = true, history)
-            roots.forEach { root ->
+        Row(Modifier.fillMaxWidth().height(60.dp), verticalAlignment = Alignment.CenterVertically) {
+            roots.filter { it.inBar }.forEach { root ->
                 RootTab(root, selected = state.path.firstOrNull() == root.key, Modifier.weight(1f)) {
                     state.openRoot(root.key)
                 }
             }
-            HistoryButton(undo = false, history)
         }
     }
 }
@@ -210,7 +219,7 @@ private fun Breadcrumb(trail: List<MenuGroup>, state: MenuState) {
 
 @Composable
 private fun Tile(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, isGroup: Boolean,
-                 enabled: Boolean, onClick: () -> Unit) {
+                 enabled: Boolean, selected: Boolean = false, onClick: () -> Unit) {
     val alpha = if (enabled) 1f else 0.35f
     Column(
         Modifier
@@ -222,8 +231,8 @@ private fun Tile(label: String, icon: androidx.compose.ui.graphics.vector.ImageV
         Box(
             Modifier
                 .size(46.dp)
-                .background(Gako.InkHigh.copy(alpha = alpha), CircleShape)
-                .then(if (isGroup) Modifier.border(BorderStroke(1.dp, Gako.GoldDim), CircleShape) else Modifier),
+                .background((if (selected) Gako.Oxblood else Gako.InkHigh).copy(alpha = alpha), CircleShape)
+                .then(if (isGroup || selected) Modifier.border(BorderStroke(1.dp, if (selected) Gako.Gold else Gako.GoldDim), CircleShape) else Modifier),
             contentAlignment = Alignment.Center,
         ) {
             Icon(icon, contentDescription = null, tint = (if (isGroup) Gako.Gold else Gako.Parchment).copy(alpha = alpha))
@@ -253,15 +262,16 @@ private fun RootTab(root: MenuGroup, selected: Boolean, modifier: Modifier, onCl
     ) {
         Box(
             Modifier
-                .width(56.dp)
-                .height(28.dp)
-                .background(if (selected) Gako.Oxblood else Color.Transparent, RoundedCornerShape(14.dp)),
+                .width(48.dp)
+                .height(26.dp)
+                .background(if (selected) Gako.Oxblood else Color.Transparent, RoundedCornerShape(13.dp)),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(root.icon, contentDescription = null, tint = tint)
+            Icon(root.icon, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp))
         }
         Spacer(Modifier.height(2.dp))
-        Text(root.label, style = MaterialTheme.typography.labelMedium, color = tint)
+        Text(root.label, style = MaterialTheme.typography.labelSmall, color = tint, maxLines = 1,
+            overflow = TextOverflow.Clip, softWrap = false)
     }
 }
 
@@ -318,20 +328,18 @@ fun SearchPane(
 // ---------------------------------------------------------------- wide (landscape, tablets, unfolded)
 
 @Composable
-fun SideRail(roots: List<MenuGroup>, state: MenuState, history: History, modifier: Modifier = Modifier) {
+fun SideRail(roots: List<MenuGroup>, state: MenuState, modifier: Modifier = Modifier) {
     Column(
-        modifier.width(84.dp).fillMaxHeight().background(Gako.InkRaised).padding(vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+        modifier.width(76.dp).fillMaxHeight().background(Gako.InkRaised).verticalScroll(rememberScrollState())
+            .padding(vertical = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         roots.forEach { root ->
-            RootTab(root, selected = state.path.firstOrNull() == root.key, Modifier.height(64.dp).fillMaxWidth()) {
+            RootTab(root, selected = state.path.firstOrNull() == root.key, Modifier.height(56.dp).fillMaxWidth()) {
                 state.openRoot(root.key)
             }
         }
-        Spacer(Modifier.weight(1f))
-        HistoryButton(undo = true, history)
-        HistoryButton(undo = false, history)
     }
 }
 
@@ -344,10 +352,13 @@ fun SideSubmenu(
 ) {
     val trail = roots.resolve(state.path)
     val current = trail.lastOrNull() ?: return
-    Column(modifier.width(260.dp).fillMaxHeight().background(Gako.Ink)) {
+    Column(modifier.width(300.dp).fillMaxHeight().background(Gako.Ink)) {
         Breadcrumb(trail, state)
         HorizontalDivider(color = Gako.GoldDim.copy(alpha = 0.35f))
-        if (state.searching) {
+        val panel = current.panel
+        if (panel != null) {
+            Box(Modifier.weight(1f)) { panel() }
+        } else if (state.searching) {
             SearchPane(current.searchable, state, onSearchPick, Modifier.weight(1f))
         } else {
             LazyColumn(Modifier.weight(1f)) {
@@ -358,7 +369,8 @@ fun SideSubmenu(
                 }
                 items(current.children, key = { it.key }) { entry ->
                     SideRow(entry.label, entry.icon, entry is MenuGroup,
-                        (entry as? MenuAction)?.enabled ?: true) { runEntry(entry, state) }
+                        (entry as? MenuAction)?.enabled ?: true,
+                        (entry as? MenuAction)?.selected == true) { runEntry(entry, state) }
                 }
             }
         }
@@ -367,10 +379,11 @@ fun SideSubmenu(
 
 @Composable
 private fun SideRow(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, isGroup: Boolean,
-                    enabled: Boolean, onClick: () -> Unit) {
+                    enabled: Boolean, selected: Boolean = false, onClick: () -> Unit) {
     val alpha = if (enabled) 1f else 0.35f
     Row(
-        Modifier.fillMaxWidth().clickable(enabled = enabled, onClick = onClick).padding(horizontal = 16.dp, vertical = 12.dp),
+        Modifier.fillMaxWidth().background(if (selected) Gako.Oxblood else Color.Transparent)
+            .clickable(enabled = enabled, onClick = onClick).padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(icon, null, tint = (if (isGroup) Gako.Gold else Gako.Parchment).copy(alpha = alpha))

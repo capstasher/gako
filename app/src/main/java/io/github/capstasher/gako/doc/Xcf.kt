@@ -1,0 +1,444 @@
+package io.github.capstasher.gako.doc
+
+import android.graphics.Bitmap
+import android.graphics.BlendMode
+import android.graphics.Canvas
+import android.graphics.Paint
+import java.io.File
+import java.io.InputStream
+import java.io.OutputStream
+import java.io.RandomAccessFile
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.nio.channels.FileChannel
+import java.util.zip.Deflater
+import java.util.zip.GZIPInputStream
+import java.util.zip.Inflater
+import kotlin.math.pow
+import kotlin.math.roundToInt
+
+/**
+ * GIMP's own XCF format. GAKO writes version 10 (GIMP 2.10 and later read it): 8-bit sRGB RGBA
+ * layers in zlib-compressed 64×64 tiles, with offsets, opacity, visibility, lock-alpha and mode.
+ * The reader takes any XCF from GIMP 1.x to 3.x: RGB/grey/indexed, every precision, RLE or zlib,
+ * layer masks and groups (flattened into their children).
+ */
+private object XcfProps {
+    const val END = 0
+    const val COLORMAP = 1
+    const val ACTIVE_LAYER = 2
+    const val OPACITY = 6
+    const val MODE = 7
+    const val VISIBLE = 8
+    const val LOCK_ALPHA = 10
+    const val APPLY_MASK = 11
+    const val OFFSETS = 15
+    const val COMPRESSION = 17
+    const val RESOLUTION = 19
+    const val GROUP_ITEM = 29
+    const val FLOAT_OPACITY = 33
+    const val TILE = 64
+
+    /** GIMP layer-mode numbers. GAKO writes the perceptual ("legacy") ones, which match its compositing. */
+    val write = mapOf(
+        LayerMode.Normal to 0, LayerMode.Multiply to 3, LayerMode.Screen to 4, LayerMode.Overlay to 23,
+        LayerMode.Difference to 6, LayerMode.Addition to 7, LayerMode.Darken to 9, LayerMode.Lighten to 10,
+        LayerMode.Hue to 11, LayerMode.Saturation to 12, LayerMode.Color to 13, LayerMode.Luminosity to 14,
+        LayerMode.Dodge to 16, LayerMode.Burn to 17, LayerMode.HardLight to 18, LayerMode.SoftLight to 19,
+        LayerMode.Exclusion to 52,
+    )
+
+    fun read(mode: Int): LayerMode = when (mode) {
+        3, 30 -> LayerMode.Multiply
+        4, 31 -> LayerMode.Screen
+        5, 23 -> LayerMode.Overlay
+        6, 32 -> LayerMode.Difference
+        7, 33 -> LayerMode.Addition
+        9, 35, 54 -> LayerMode.Darken
+        10, 36, 55 -> LayerMode.Lighten
+        11, 37, 24 -> LayerMode.Hue
+        12, 38, 25 -> LayerMode.Saturation
+        13, 39, 26 -> LayerMode.Color
+        14, 40, 27, 56 -> LayerMode.Luminosity
+        16, 42 -> LayerMode.Dodge
+        17, 43 -> LayerMode.Burn
+        18, 44 -> LayerMode.HardLight
+        19, 45 -> LayerMode.SoftLight
+        52 -> LayerMode.Exclusion
+        else -> LayerMode.Normal
+    }
+}
+
+object XcfWriter {
+
+    private class Buf {
+        var data = ByteArray(1 shl 16)
+        var size = 0
+        private fun ensure(n: Int) {
+            if (size + n > data.size) data = data.copyOf(maxOf(data.size * 2, size + n))
+        }
+        fun u8(v: Int) { ensure(1); data[size++] = v.toByte() }
+        fun u32(v: Int) { ensure(4); setU32(size, v); size += 4 }
+        fun f32(v: Float) = u32(java.lang.Float.floatToIntBits(v))
+        fun bytes(b: ByteArray, n: Int = b.size) { ensure(n); System.arraycopy(b, 0, data, size, n); size += n }
+        fun setU32(at: Int, v: Int) {
+            data[at] = (v ushr 24).toByte(); data[at + 1] = (v ushr 16).toByte()
+            data[at + 2] = (v ushr 8).toByte(); data[at + 3] = v.toByte()
+        }
+        fun string(s: String) {
+            val b = s.toByteArray(Charsets.UTF_8)
+            u32(b.size + 1); bytes(b); u8(0)
+        }
+        fun prop(type: Int, vararg ints: Int) {
+            u32(type); u32(ints.size * 4); ints.forEach { u32(it) }
+        }
+    }
+
+    fun write(doc: DocState, out: OutputStream) {
+        val b = Buf()
+        b.bytes("gimp xcf v010".toByteArray(Charsets.US_ASCII)); b.u8(0)
+        b.u32(doc.width); b.u32(doc.height); b.u32(0)     // RGB
+        b.u32(150)                                         // 8-bit non-linear integer
+        b.u32(XcfProps.COMPRESSION); b.u32(1); b.u8(2)     // zlib
+        b.u32(XcfProps.RESOLUTION); b.u32(8); b.f32(72f); b.f32(72f)
+        b.u32(XcfProps.END); b.u32(0)
+
+        val layers = doc.layers.asReversed()               // XCF lists the top layer first
+        val slots = IntArray(layers.size) { b.size.also { b.u32(0) } }
+        b.u32(0)                                           // end of layers
+        b.u32(0)                                           // no channels
+
+        val deflater = Deflater(6)
+        val tileBuf = ByteArray(XcfProps.TILE * XcfProps.TILE * 4)
+        val compressed = ByteArray(tileBuf.size * 2 + 64)
+        layers.forEachIndexed { i, l ->
+            b.setU32(slots[i], b.size)
+            b.u32(l.width); b.u32(l.height); b.u32(1)      // RGBA
+            b.string(l.name)
+            if (l.id == doc.activeId) b.prop(XcfProps.ACTIVE_LAYER)
+            b.prop(XcfProps.OPACITY, (l.opacity * 255).roundToInt().coerceIn(0, 255))
+            b.u32(XcfProps.FLOAT_OPACITY); b.u32(4); b.f32(l.opacity)
+            b.prop(XcfProps.VISIBLE, if (l.visible) 1 else 0)
+            b.prop(XcfProps.LOCK_ALPHA, if (l.lockAlpha) 1 else 0)
+            b.prop(XcfProps.OFFSETS, l.x, l.y)
+            b.prop(XcfProps.MODE, XcfProps.write[l.mode] ?: 0)
+            b.u32(XcfProps.END); b.u32(0)
+            val hierarchySlot = b.size; b.u32(0)
+            b.u32(0)                                       // no layer mask
+
+            b.setU32(hierarchySlot, b.size)
+            b.u32(l.width); b.u32(l.height); b.u32(4)
+            val levelSlot = b.size; b.u32(0)
+            b.u32(0)
+
+            b.setU32(levelSlot, b.size)
+            b.u32(l.width); b.u32(l.height)
+            val tilesX = (l.width + XcfProps.TILE - 1) / XcfProps.TILE
+            val tilesY = (l.height + XcfProps.TILE - 1) / XcfProps.TILE
+            val tileSlots = IntArray(tilesX * tilesY) { b.size.also { b.u32(0) } }
+            b.u32(0)
+
+            val row = IntArray(l.width * XcfProps.TILE)
+            for (ty in 0 until tilesY) {
+                val y0 = ty * XcfProps.TILE
+                val th = minOf(XcfProps.TILE, l.height - y0)
+                l.bitmap.getPixels(row, 0, l.width, 0, y0, l.width, th)
+                for (tx in 0 until tilesX) {
+                    val x0 = tx * XcfProps.TILE
+                    val tw = minOf(XcfProps.TILE, l.width - x0)
+                    var k = 0
+                    for (y in 0 until th) for (x in 0 until tw) {
+                        val p = row[y * l.width + x0 + x]
+                        tileBuf[k++] = (p shr 16).toByte(); tileBuf[k++] = (p shr 8).toByte()
+                        tileBuf[k++] = p.toByte(); tileBuf[k++] = (p ushr 24).toByte()
+                    }
+                    deflater.reset()
+                    deflater.setInput(tileBuf, 0, k)
+                    deflater.finish()
+                    var n = 0
+                    while (!deflater.finished()) n += deflater.deflate(compressed, n, compressed.size - n)
+                    b.setU32(tileSlots[ty * tilesX + tx], b.size)
+                    b.bytes(compressed, n)
+                }
+            }
+        }
+        deflater.end()
+        out.write(b.data, 0, b.size)
+        out.flush()
+    }
+}
+
+object XcfReader {
+
+    fun read(input: InputStream, scratch: File? = null): DocState {
+        val buffered = input.buffered(1 shl 16)
+        buffered.mark(4)
+        val magic = ByteArray(2).also { buffered.read(it) }
+        buffered.reset()
+        val stream = if (magic[0] == 0x1f.toByte() && magic[1] == 0x8b.toByte()) GZIPInputStream(buffered, 1 shl 16) else buffered
+        val tmp = File.createTempFile("open", ".xcf", scratch)
+        try {
+            tmp.outputStream().use { stream.copyTo(it, 1 shl 16) }
+            RandomAccessFile(tmp, "r").use { raf ->
+                val map = raf.channel.map(FileChannel.MapMode.READ_ONLY, 0, raf.length()).order(ByteOrder.BIG_ENDIAN)
+                return Parser(map).parse()
+            }
+        } finally {
+            tmp.delete()
+        }
+    }
+
+    private class LayerInfo(
+        val name: String, val w: Int, val h: Int, val type: Int, var x: Int = 0, var y: Int = 0,
+        var opacity: Float = 1f, var visible: Boolean = true, var mode: LayerMode = LayerMode.Normal,
+        var lockAlpha: Boolean = false, var active: Boolean = false, var group: Boolean = false,
+        var applyMask: Boolean = true,
+    )
+
+    private class Parser(val buf: ByteBuffer) {
+        var version = 0
+        var precision = 150
+        var compression = 0
+        var colormap: IntArray? = null
+        val wide get() = version >= 11
+
+        fun ptr(): Long = if (wide) buf.long else buf.int.toLong() and 0xFFFFFFFFL
+        fun u32() = buf.int
+        fun string(): String {
+            val n = u32()
+            if (n <= 0) return ""
+            val b = ByteArray(n)
+            buf.get(b)
+            return String(b, 0, (n - 1).coerceAtLeast(0), Charsets.UTF_8)
+        }
+
+        fun parse(): DocState {
+            val head = ByteArray(14).also { buf.get(it) }
+            val sig = String(head, 0, 9, Charsets.US_ASCII)
+            if (sig != "gimp xcf ") error("Not a GIMP XCF file")
+            val v = String(head, 9, 4, Charsets.US_ASCII)
+            version = if (v == "file") 0 else v.removePrefix("v").toIntOrNull() ?: error("Unknown XCF version $v")
+            val w = u32()
+            val h = u32()
+            val baseType = u32()
+            if (version >= 4) precision = u32()
+            if (version == 4) precision = when (precision) { 0 -> 150; 1 -> 250; 2 -> 300; 3 -> 500; else -> 600 }
+            else if (version in 5..6) precision = when (precision) { 400 -> 500; 450 -> 550; 500 -> 600; 550 -> 650; else -> precision }
+            else if (version < 4) precision = 150
+
+            // Image properties.
+            while (true) {
+                val type = u32()
+                val len = u32()
+                val start = buf.position()
+                when (type) {
+                    XcfProps.END -> break
+                    XcfProps.COMPRESSION -> compression = buf.get().toInt()
+                    XcfProps.COLORMAP -> {
+                        val n = u32()
+                        colormap = IntArray(n) {
+                            val r = buf.get().toInt() and 0xFF; val g = buf.get().toInt() and 0xFF; val b = buf.get().toInt() and 0xFF
+                            (r shl 16) or (g shl 8) or b
+                        }
+                    }
+                }
+                buf.position(start + len)
+            }
+            val layerPtrs = mutableListOf<Long>()
+            while (true) { val p = ptr(); if (p == 0L) break; layerPtrs += p }
+
+            val layers = mutableListOf<Pair<Layer, Boolean>>()
+            for (p in layerPtrs.asReversed()) {
+                val l = readLayer(p, baseType) ?: continue
+                layers += l
+            }
+            if (layers.isEmpty()) error("This XCF file has no layers GAKO can show")
+            val active = layers.lastOrNull { it.second }?.first ?: layers.last().first
+            return DocState(w, h, layers.map { it.first }, active.id)
+        }
+
+        fun readLayer(at: Long, baseType: Int): Pair<Layer, Boolean>? {
+            buf.position(at.toInt())
+            val w = u32(); val h = u32(); val type = u32()
+            val info = LayerInfo(string(), w, h, type)
+            var opacityFloat: Float? = null
+            while (true) {
+                val t = u32()
+                val len = u32()
+                val start = buf.position()
+                when (t) {
+                    XcfProps.END -> break
+                    XcfProps.ACTIVE_LAYER -> info.active = true
+                    XcfProps.OPACITY -> info.opacity = (u32() / 255f).coerceIn(0f, 1f)
+                    XcfProps.FLOAT_OPACITY -> opacityFloat = buf.float
+                    XcfProps.VISIBLE -> info.visible = u32() != 0
+                    XcfProps.MODE -> info.mode = XcfProps.read(u32())
+                    XcfProps.LOCK_ALPHA -> info.lockAlpha = u32() != 0
+                    XcfProps.OFFSETS -> { info.x = u32(); info.y = u32() }
+                    XcfProps.GROUP_ITEM -> info.group = true
+                    XcfProps.APPLY_MASK -> info.applyMask = u32() != 0
+                }
+                buf.position(start + len)
+            }
+            opacityFloat?.let { info.opacity = it.coerceIn(0f, 1f) }
+            val hierarchy = ptr()
+            val mask = ptr()
+            if (info.group || w <= 0 || h <= 0) return null
+            val bmp = readHierarchy(hierarchy, type, baseType) ?: return null
+            if (mask != 0L && info.applyMask) applyMask(bmp, mask)
+            return Layer(Layer.newId(), info.name.ifEmpty { "Layer" }, bmp, info.x, info.y, info.visible,
+                info.opacity, info.mode, info.lockAlpha) to info.active
+        }
+
+        fun applyMask(bmp: Bitmap, at: Long) {
+            buf.position(at.toInt())
+            u32(); u32()
+            string()
+            while (true) {
+                val t = u32(); val len = u32()
+                if (t == XcfProps.END) break
+                buf.position(buf.position() + len)
+            }
+            val hierarchy = ptr()
+            val m = readHierarchy(hierarchy, -1, 1) ?: return
+            // The mask is grey: use its brightness as alpha.
+            val alpha = m.extractAlpha().let { a ->
+                val px = IntArray(m.width * m.height)
+                m.getPixels(px, 0, m.width, 0, 0, m.width, m.height)
+                val bytes = ByteArray(px.size) { (px[it] and 0xFF).toByte() }
+                Selections.maskFromBytes(bytes, m.width, m.height).also { a.recycle() }
+            }
+            Canvas(bmp).drawBitmap(alpha, 0f, 0f, Paint().apply { blendMode = BlendMode.DST_IN })
+        }
+
+        /** Bytes per channel and whether values are linear light, from the precision. */
+        fun componentSize() = when (precision) { 100, 150 -> 1; 200, 250, 500, 550 -> 2; 700, 750 -> 8; else -> 4 }
+        fun isFloat() = precision in 500..799
+        fun isLinear() = precision % 100 == 0
+
+        fun readHierarchy(at: Long, layerType: Int, baseType: Int): Bitmap? {
+            buf.position(at.toInt())
+            val w = u32(); val h = u32(); val bpp = u32()
+            val level = ptr()
+            buf.position(level.toInt())
+            val lw = u32(); val lh = u32()
+            if (lw != w || lh != h) return null
+            val tilesX = (w + XcfProps.TILE - 1) / XcfProps.TILE
+            val tilesY = (h + XcfProps.TILE - 1) / XcfProps.TILE
+            val offsets = LongArray(tilesX * tilesY) { ptr() }
+            val cs = componentSize()
+            val channels = bpp / cs
+            // layerType -1 means a mask/channel: one grey component.
+            val type = if (layerType < 0) 2 else layerType
+            val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            val tile = ByteArray(XcfProps.TILE * XcfProps.TILE * bpp)
+            val px = IntArray(XcfProps.TILE * XcfProps.TILE)
+            val toSrgb = if (isLinear()) IntArray(4096) { linearToSrgb(it / 4095.0) } else null
+            val inflater = Inflater()
+            for (ty in 0 until tilesY) for (tx in 0 until tilesX) {
+                val i = ty * tilesX + tx
+                val tw = minOf(XcfProps.TILE, w - tx * XcfProps.TILE)
+                val th = minOf(XcfProps.TILE, h - ty * XcfProps.TILE)
+                val n = tw * th * bpp
+                val start = offsets[i].toInt()
+                val end = if (i + 1 < offsets.size && offsets[i + 1] > 0) offsets[i + 1].toInt() else minOf(buf.limit(), start + n * 2 + 1024)
+                when (compression) {
+                    0 -> { buf.position(start); buf.get(tile, 0, n) }
+                    1 -> rle(start, tile, tw * th, bpp)
+                    2 -> {
+                        val src = ByteArray((end - start).coerceAtLeast(0))
+                        buf.position(start); buf.get(src)
+                        inflater.reset(); inflater.setInput(src)
+                        var got = 0
+                        while (got < n && !inflater.finished()) {
+                            val r = inflater.inflate(tile, got, n - got)
+                            if (r == 0 && (inflater.needsInput() || inflater.needsDictionary())) break
+                            got += r
+                        }
+                    }
+                    else -> error("Unsupported XCF compression $compression")
+                }
+                for (p in 0 until tw * th) {
+                    fun comp(c: Int): Int {
+                        val v = component(tile, p * bpp + c * cs, cs)
+                        return if (toSrgb != null && !(type % 2 == 1 && c == channels - 1)) toSrgb[(v * 4095).roundToInt().coerceIn(0, 4095)]
+                        else (v * 255).roundToInt().coerceIn(0, 255)
+                    }
+                    px[p] = when (type) {
+                        0 -> (0xFF shl 24) or (comp(0) shl 16) or (comp(1) shl 8) or comp(2)
+                        1 -> (comp(3) shl 24) or (comp(0) shl 16) or (comp(1) shl 8) or comp(2)
+                        2 -> { val g = comp(0); (0xFF shl 24) or (g shl 16) or (g shl 8) or g }
+                        3 -> { val g = comp(0); (comp(1) shl 24) or (g shl 16) or (g shl 8) or g }
+                        4, 5 -> {
+                            val idx = tile[p * bpp].toInt() and 0xFF
+                            val rgb = colormap?.getOrNull(idx) ?: 0
+                            val a = if (type == 5) tile[p * bpp + 1].toInt() and 0xFF else 0xFF
+                            (a shl 24) or rgb
+                        }
+                        else -> 0
+                    }
+                }
+                out.setPixels(px, 0, tw, tx * XcfProps.TILE, ty * XcfProps.TILE, tw, th)
+            }
+            inflater.end()
+            if (baseType < 0) Unit
+            return out
+        }
+
+        /** One component as 0..1. XCF stores multi-byte components big-endian. */
+        fun component(b: ByteArray, at: Int, size: Int): Double = when (size) {
+            1 -> (b[at].toInt() and 0xFF) / 255.0
+            2 -> {
+                val v = ((b[at].toInt() and 0xFF) shl 8) or (b[at + 1].toInt() and 0xFF)
+                if (isFloat()) halfToFloat(v).toDouble() else v / 65535.0
+            }
+            4 -> {
+                val v = ((b[at].toInt() and 0xFF) shl 24) or ((b[at + 1].toInt() and 0xFF) shl 16) or
+                    ((b[at + 2].toInt() and 0xFF) shl 8) or (b[at + 3].toInt() and 0xFF)
+                if (isFloat()) java.lang.Float.intBitsToFloat(v).toDouble() else (v.toLong() and 0xFFFFFFFFL) / 4294967295.0
+            }
+            else -> {
+                var v = 0L
+                for (k in 0 until 8) v = (v shl 8) or (b[at + k].toLong() and 0xFF)
+                java.lang.Double.longBitsToDouble(v)
+            }
+        }.coerceIn(0.0, 1.0)
+
+        /** XCF RLE: each byte of the pixel is its own run-length stream. */
+        fun rle(start: Int, out: ByteArray, pixels: Int, bpp: Int) {
+            buf.position(start)
+            for (c in 0 until bpp) {
+                var i = 0
+                while (i < pixels) {
+                    var n = buf.get().toInt() and 0xFF
+                    if (n >= 128) {
+                        val count = if (n == 128) buf.short.toInt() and 0xFFFF else 256 - n
+                        repeat(count) { if (i < pixels) out[(i++) * bpp + c] = buf.get() else buf.get() }
+                    } else {
+                        val count = if (n == 127) buf.short.toInt() and 0xFFFF else n + 1
+                        val v = buf.get()
+                        repeat(count) { if (i < pixels) out[(i++) * bpp + c] = v }
+                    }
+                    n = 0
+                }
+            }
+        }
+    }
+
+    private fun linearToSrgb(v: Double): Int {
+        val s = if (v <= 0.0031308) v * 12.92 else 1.055 * v.pow(1 / 2.4) - 0.055
+        return (s * 255).roundToInt().coerceIn(0, 255)
+    }
+
+    private fun halfToFloat(h: Int): Float {
+        val s = (h shr 15) and 1
+        val e = (h shr 10) and 0x1F
+        val m = h and 0x3FF
+        val v = when (e) {
+            0 -> m / 1024f * 2f.pow(-14)
+            31 -> if (m == 0) Float.POSITIVE_INFINITY else Float.NaN
+            else -> (1 + m / 1024f) * 2f.pow(e - 15)
+        }
+        return if (s == 1) -v else v
+    }
+}

@@ -2,7 +2,10 @@ package io.github.capstasher.gako.ui
 
 import android.net.Uri
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -14,15 +17,20 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.NoteAdd
+import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -30,6 +38,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
@@ -44,7 +53,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import io.github.capstasher.gako.editor.EditorViewModel
@@ -58,6 +67,7 @@ import kotlinx.coroutines.launch
 fun EditorScreen(
     vm: EditorViewModel,
     onPickImage: () -> Unit,
+    onPickFile: (asLayers: Boolean) -> Unit,
     onPickFolder: () -> Unit,
     onShare: (Uri) -> Unit,
 ) {
@@ -66,30 +76,36 @@ fun EditorScreen(
     val menu = rememberMenuState()
     var showAbout by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) { vm.messages.collect { snackbar.showSnackbar(it) } }
+    LaunchedEffect(Unit) {
+        vm.messages.collect {
+            snackbar.currentSnackbarData?.dismiss()
+            snackbar.showSnackbar(it)
+        }
+    }
 
     val roots = buildMenus(vm, MenuCallbacks(
         openImage = onPickImage,
+        openFile = onPickFile,
         share = { scope.launch { vm.shareableUri()?.let(onShare) } },
         about = { showAbout = true },
+        layersPanel = { LayersPanel(vm) },
     ))
-    val idle = vm.session == null && vm.busy == null
-    val history = History(
-        canUndo = vm.canUndo && idle,
-        canRedo = vm.canRedo && idle,
-        undo = vm::undo,
-        redo = vm::redo,
-    )
     val session = vm.session
     val export = vm.exportSession
+    val curves = vm.curves
+    val text = vm.text
+    val modal = session != null || export != null || curves != null || text != null
 
     val busyCancellable = vm.busy?.cancellable == true
-    BackHandler(enabled = busyCancellable || session != null || export != null || menu.path.isNotEmpty()) {
+    BackHandler(enabled = busyCancellable || modal || menu.path.isNotEmpty() || vm.input.hasPendingEdit()) {
         when {
             busyCancellable -> vm.cancelBusy()
             session != null -> vm.cancelSession()
             export != null -> vm.cancelExport()
-            else -> menu.pop()
+            curves != null -> vm.cancelCurves()
+            text != null -> vm.cancelText()
+            menu.path.isNotEmpty() -> menu.pop()
+            else -> vm.input.reset()
         }
     }
 
@@ -103,23 +119,34 @@ fun EditorScreen(
             Box(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
                 if (wide) {
                     Row(Modifier.fillMaxSize()) {
-                        SideRail(roots, menu, history)
-                        if (session == null && export == null && menu.path.isNotEmpty()) {
+                        SideRail(roots, menu)
+                        if (!modal && menu.path.isNotEmpty()) {
                             SideSubmenu(roots, menu, onSearchPick = { vm.startFilter(it.name) })
                         }
-                        CanvasArea(vm, onPickImage, Modifier.weight(1f).fillMaxHeight())
+                        Column(Modifier.weight(1f).fillMaxHeight()) {
+                            CanvasArea(vm, menu, onPickImage, Modifier.weight(1f))
+                            if (!modal && vm.doc != null) ToolOptionsBar(vm)
+                        }
+                        val side = Modifier.width(360.dp).fillMaxHeight()
                         when {
-                            session != null -> ParamPanel(session, vm, Modifier.width(360.dp).fillMaxHeight())
-                            export != null -> ExportPanel(export, vm, onPickFolder, Modifier.width(360.dp).fillMaxHeight())
+                            session != null -> ParamPanel(session, vm, side)
+                            export != null -> ExportPanel(export, vm, onPickFolder, side)
+                            curves != null -> CurvesPanel(curves, vm, side)
+                            text != null -> TextPanel(text, vm, side)
                         }
                     }
                 } else {
                     Column(Modifier.fillMaxSize()) {
-                        CanvasArea(vm, onPickImage, Modifier.weight(1f))
+                        CanvasArea(vm, menu, onPickImage, Modifier.weight(1f))
+                        val panel = Modifier.fillMaxWidth().heightIn(max = panelMax)
                         when {
-                            session != null -> ParamPanel(session, vm, Modifier.fillMaxWidth().heightIn(max = panelMax))
-                            export != null -> ExportPanel(export, vm, onPickFolder, Modifier.fillMaxWidth().heightIn(max = panelMax))
-                            else -> BottomMenu(roots, menu, history, onSearchPick = { vm.startFilter(it.name) })
+                            session != null -> ParamPanel(session, vm, panel)
+                            export != null -> ExportPanel(export, vm, onPickFolder, panel)
+                            curves != null -> CurvesPanel(curves, vm, panel)
+                            text != null -> TextPanel(text, vm, panel)
+                            else -> BottomMenu(roots, menu, onSearchPick = { vm.startFilter(it.name) }) {
+                                if (vm.doc != null) ToolOptionsBar(vm)
+                            }
                         }
                     }
                 }
@@ -130,31 +157,19 @@ fun EditorScreen(
         }
 
         if (showAbout) AboutDialog(vm) { showAbout = false }
+        vm.dialog?.let { DialogHost(vm, it) }
     }
 }
 
 @Composable
-private fun CanvasArea(vm: EditorViewModel, onPickImage: () -> Unit, modifier: Modifier) {
+private fun CanvasArea(vm: EditorViewModel, menu: MenuState, onPickImage: () -> Unit, modifier: Modifier) {
     Box(modifier.fillMaxWidth().background(Gako.CanvasSurround), contentAlignment = Alignment.Center) {
-        val img = vm.image
-        if (img == null) {
-            EmptyState(vm.engine, onPickImage)
+        val doc = vm.doc
+        if (doc == null) {
+            EmptyState(vm, onPickImage)
             return@Box
         }
-        val session = vm.session
-        val shown = if (vm.comparing) img else vm.preview ?: img
-        val marker = session?.point?.let { (px, py) ->
-            val x = (session.values[px.name] as? Number)?.toFloat() ?: return@let null
-            val y = (session.values[py.name] as? Number)?.toFloat() ?: return@let null
-            if (px.unit == "relative-coordinate") Offset(x * img.width, y * img.height) else Offset(x, y)
-        }
-        ImageCanvas(
-            bitmap = shown,
-            imageWidth = img.width,
-            imageHeight = img.height,
-            marker = marker,
-            onTap = if (session?.point != null) { p -> vm.tapImage(p.x, p.y) } else null,
-        )
+        ImageCanvas(vm, doc)
         if (vm.comparing) {
             Text(
                 "ORIGINAL", style = EngravedLabel,
@@ -163,16 +178,62 @@ private fun CanvasArea(vm: EditorViewModel, onPickImage: () -> Unit, modifier: M
                     .padding(horizontal = 10.dp, vertical = 3.dp),
             )
         }
+        val modal = vm.session != null || vm.curves != null || vm.text != null || vm.exportSession != null
+        if (!modal) Dock(vm, menu, Modifier.align(Alignment.BottomCenter))
+    }
+}
+
+/** Floating over the bottom of the canvas: the tool, the colours, and undo/redo. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun Dock(vm: EditorViewModel, menu: MenuState, modifier: Modifier) {
+    val pill = Modifier.background(Gako.Ink.copy(alpha = 0.82f), RoundedCornerShape(24.dp))
+    Row(modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(pill.padding(end = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            val toolsOpen = menu.path.firstOrNull() == "tools"
+            IconButton(onClick = { if (toolsOpen) menu.close() else menu.openRoot("tools") }) {
+                Box(
+                    Modifier.size(38.dp).background(if (toolsOpen) Gako.Oxblood else Gako.InkHigh, CircleShape)
+                        .border(1.dp, Gako.Gold, CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(vm.tool.icon, contentDescription = "Tool: ${vm.tool.label}", tint = Gako.Gold, modifier = Modifier.size(22.dp))
+                }
+            }
+            // GIMP's FG/BG swatches: tap to edit, ⇄ swaps, long-press resets to black and white.
+            Box(Modifier.size(width = 46.dp, height = 40.dp)) {
+                Box(
+                    Modifier.offset(x = 16.dp, y = 14.dp).size(26.dp).background(Color(vm.bg), RoundedCornerShape(4.dp))
+                        .border(1.dp, Gako.Muted, RoundedCornerShape(4.dp))
+                        .combinedClickable(onLongClick = vm::resetColors) { vm.dialog = io.github.capstasher.gako.editor.Dialog.PickColor(false) },
+                )
+                Box(
+                    Modifier.size(26.dp).background(Color(vm.fg), RoundedCornerShape(4.dp))
+                        .border(1.dp, Gako.Parchment, RoundedCornerShape(4.dp))
+                        .combinedClickable(onLongClick = vm::resetColors) { vm.dialog = io.github.capstasher.gako.editor.Dialog.PickColor(true) },
+                )
+            }
+            IconButton(onClick = vm::swapColors, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Outlined.SwapHoriz, contentDescription = "Swap colours", tint = Gako.Muted, modifier = Modifier.size(18.dp))
+            }
+        }
+        Spacer(Modifier.weight(1f))
+        val idle = vm.session == null && vm.busy == null
+        Row(pill) {
+            HistoryButton(true, History(vm.canUndo && idle, vm.canRedo && idle, vm::undo, vm::redo))
+            HistoryButton(false, History(vm.canUndo && idle, vm.canRedo && idle, vm::undo, vm::redo))
+        }
     }
 }
 
 @Composable
-private fun EmptyState(engine: EngineState, onPickImage: () -> Unit) {
+private fun EmptyState(vm: EditorViewModel, onPickImage: () -> Unit) {
     Column(
         Modifier.widthIn(max = 360.dp).padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        Text("GAKO", style = MaterialTheme.typography.headlineMedium, color = Gako.Gold)
         Button(
             onClick = onPickImage,
             colors = ButtonDefaults.buttonColors(containerColor = Gako.Oxblood, contentColor = Gako.Parchment),
@@ -182,6 +243,12 @@ private fun EmptyState(engine: EngineState, onPickImage: () -> Unit) {
             Spacer(Modifier.width(8.dp))
             Text("Open")
         }
+        OutlinedButton(onClick = { vm.dialog = io.github.capstasher.gako.editor.Dialog.NewImage }, shape = RoundedCornerShape(4.dp)) {
+            Icon(Icons.Outlined.NoteAdd, null, tint = Gako.Parchment)
+            Spacer(Modifier.width(8.dp))
+            Text("New image", color = Gako.Parchment)
+        }
+        val engine = vm.engine
         if (engine is EngineState.Failed) {
             Text("Engine failed to start: ${engine.message}",
                 style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error,
