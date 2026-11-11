@@ -57,6 +57,8 @@ class Warp(override val layerId: Long, val bmp: Bitmap) : LiveView {
     private var strokeStart: FloatArray? = null
     private var strokeMaxDisp = 0f
     private val strokeDirty = Rect()
+    /** Everything the session has changed, so the screen's tiles can be rebuilt for the next stroke. */
+    private val sessionDirty = Rect()
 
     private fun gridX(i: Int) = min(i * g, w.toFloat())
     private fun gridY(j: Int) = min(j * g, h.toFloat())
@@ -77,7 +79,15 @@ class Warp(override val layerId: Long, val bmp: Bitmap) : LiveView {
         strokeStart = pos.copyOf()
         strokeMaxDisp = maxDisp
         strokeDirty.setEmpty()
+        // The screen shows the original plus tiles of what differs from it.
+        if (!sessionDirty.isEmpty) refreshView(sessionDirty)
     }
+
+    /**
+     * The tiles only matter while a stroke is shown: drop them in between (the layer has the pixels).
+     * Not recycled: a frame on its way to the screen may still use them.
+     */
+    private fun dropTiles() = viewTiles.clear()
 
     /**
      * One dab of the brush at ([cx], [cy]) (layer pixels), [dx]/[dy] being how far the brush moved
@@ -149,6 +159,7 @@ class Warp(override val layerId: Long, val bmp: Bitmap) : LiveView {
         val r = Rect(floor(dirty.l).toInt() - 1, floor(dirty.t).toInt() - 1, ceil(dirty.r).toInt() + 1, ceil(dirty.b).toInt() + 1)
         if (!r.intersect(0, 0, w, h)) return
         strokeDirty.union(r)
+        sessionDirty.union(r)
         draw(canvas, r, pos, maxDisp, 0, 0)
         refreshView(r)
     }
@@ -157,6 +168,7 @@ class Warp(override val layerId: Long, val bmp: Bitmap) : LiveView {
     fun endStroke(label: String): Step.Patch? {
         val start = strokeStart ?: return null
         strokeStart = null
+        dropTiles()
         val r = Rect(strokeDirty)
         if (r.isEmpty) return null
         val before = Bitmaps.blank(r.width(), r.height())
@@ -169,10 +181,10 @@ class Warp(override val layerId: Long, val bmp: Bitmap) : LiveView {
         val start = strokeStart ?: return
         strokeStart = null
         start.copyInto(pos)
+        dropTiles()
         val r = Rect(strokeDirty)
         if (r.isEmpty) return
         draw(canvas, r, pos, max(strokeMaxDisp, maxDisp), 0, 0)
-        refreshView(r)
     }
 
     /**

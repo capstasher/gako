@@ -138,8 +138,11 @@ class VectorPath(val name: String, val strokes: List<PathStroke>) {
     fun mapped(m: android.graphics.Matrix) = VectorPath(name, strokes.map { it.mapped(m) })
 }
 
-/** Paths moved by [m] (crop, scale, rotate…), or the same list when there are none. */
-fun List<VectorPath>.mapped(m: android.graphics.Matrix) = if (isEmpty()) this else map { it.mapped(m) }
+/**
+ * Paths moved by [m] (crop, scale, rotate…). Always a new list, even when empty, so undo can tell
+ * the step changed where paths go (and doesn't carry later paths into the old geometry).
+ */
+fun List<VectorPath>.mapped(m: android.graphics.Matrix): List<VectorPath> = if (isEmpty()) ArrayList() else map { it.mapped(m) }
 
 /**
  * Layer groups in the flat, bottom-to-top layer list: a group sits directly above its children

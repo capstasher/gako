@@ -107,6 +107,11 @@ class MainActivity : ComponentActivity() {
         return super.onKeyDown(keyCode, event)
     }
 
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) vm.input.trimMemory()
+    }
+
     override fun onStop() {
         super.onStop()
         vm.autosave()
