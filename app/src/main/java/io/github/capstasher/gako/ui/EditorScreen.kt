@@ -31,6 +31,8 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.outlined.NoteAdd
 import androidx.compose.material.icons.outlined.PhotoCamera
@@ -233,12 +235,16 @@ private fun Dock(vm: EditorViewModel, menu: MenuState, modifier: Modifier) {
                 Box(
                     Modifier.offset(x = 16.dp, y = 14.dp).size(26.dp).background(Color(vm.bg), RoundedCornerShape(4.dp))
                         .border(1.dp, Gako.Muted, RoundedCornerShape(4.dp))
-                        .combinedClickable(onLongClick = vm::resetColors) { vm.dialog = io.github.capstasher.gako.editor.Dialog.PickColor(false) },
+                        .combinedClickable(onClickLabel = "Pick the background colour", onLongClickLabel = "Reset to black and white",
+                            onLongClick = vm::resetColors) { vm.dialog = io.github.capstasher.gako.editor.Dialog.PickColor(false) }
+                        .semantics { contentDescription = "Background colour #%06x".format(vm.bg and 0xFFFFFF) },
                 )
                 Box(
                     Modifier.size(26.dp).background(Color(vm.fg), RoundedCornerShape(4.dp))
                         .border(1.dp, Gako.Parchment, RoundedCornerShape(4.dp))
-                        .combinedClickable(onLongClick = vm::resetColors) { vm.dialog = io.github.capstasher.gako.editor.Dialog.PickColor(true) },
+                        .combinedClickable(onClickLabel = "Pick the foreground colour", onLongClickLabel = "Reset to black and white",
+                            onLongClick = vm::resetColors) { vm.dialog = io.github.capstasher.gako.editor.Dialog.PickColor(true) }
+                        .semantics { contentDescription = "Foreground colour #%06x".format(vm.fg and 0xFFFFFF) },
                 )
             }
             IconButton(onClick = vm::swapColors, modifier = Modifier.size(32.dp)) {

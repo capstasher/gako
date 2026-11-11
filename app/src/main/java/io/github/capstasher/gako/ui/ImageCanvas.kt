@@ -34,6 +34,8 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
@@ -88,6 +90,7 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
         Modifier
             .fillMaxSize()
             .onSizeChanged { viewSize = it }
+            .semantics { contentDescription = "Image, ${doc.width} by ${doc.height} pixels; ${vm.tool.label}" }
             // Keyed on the canvas size: the view state is recreated when it changes (crop, resize),
             // and the gesture handler must write to the new one.
             // A hovering pen shows the brush's outline where it would paint.
