@@ -229,13 +229,34 @@ private fun ModePicker(mode: LayerMode, group: Boolean, onPick: (LayerMode) -> U
 @Composable
 private fun MoreLayerActions(vm: EditorViewModel) {
     var open by remember { mutableStateOf(false) }
+    // A second page of the menu: "transform" or "stack" (null: the main list).
+    var page by remember { mutableStateOf<String?>(null) }
     Box {
-        IconButton(onClick = { open = true }, modifier = Modifier.size(40.dp)) { Icon(Icons.Outlined.MoreVert, "More layer actions") }
+        IconButton(onClick = { open = true; page = null }, modifier = Modifier.size(40.dp)) { Icon(Icons.Outlined.MoreVert, "More layer actions") }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             fun item(label: String, action: () -> Unit) = @Composable {
                 DropdownMenuItem(text = { Text(label) }, onClick = { open = false; action() })
             }
+            fun sub(label: String, to: String) = @Composable {
+                DropdownMenuItem(text = { Text("$label  ›") }, onClick = { page = to })
+            }
+            if (page != null) {
+                DropdownMenuItem(text = { Text("‹  Back", color = Gako.Muted) }, onClick = { page = null })
+                if (page == "transform") {
+                    io.github.capstasher.gako.doc.DocOps.LayerTurn.entries.forEach { t ->
+                        item(t.label.removePrefix("Flip Layer ").removePrefix("Rotate Layer ").let {
+                            if (t.name.startsWith("Flip")) "Flip $it" else "Rotate $it"
+                        }) { vm.transformLayer(t) }()
+                    }
+                } else {
+                    item("Raise to Top") { vm.restack(top = true) }()
+                    item("Lower to Bottom") { vm.restack(top = false) }()
+                }
+                return@DropdownMenu
+            }
             item("Rename…") { vm.doc?.activeId?.let { vm.dialog = Dialog.RenameLayer(it) } }()
+            sub("Transform", "transform")()
+            sub("Stack", "stack")()
             item("New Layer Group") { vm.newGroup() }()
             item("Put in New Group") { vm.groupActive() }()
             val a = vm.doc?.active
@@ -255,6 +276,7 @@ private fun MoreLayerActions(vm: EditorViewModel) {
             }
             item("Scale Layer…") { vm.dialog = Dialog.ScaleLayer }()
             item("Layer to Image Size") { vm.layerToImageSize() }()
+            if (vm.doc?.selection != null) item("Crop to Selection") { vm.cropLayerToSelection() }()
             item("Crop to Content") { vm.cropLayerToContent() }()
             item("Alpha to Selection") { vm.alphaToSelection() }()
             item("New from Visible") { vm.newFromVisible() }()

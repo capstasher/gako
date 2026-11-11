@@ -83,6 +83,73 @@ object DocOps {
         return crop(mapAll(doc, m, nw, nh), Rect(0, 0, nw, nh))
     }
 
+    enum class LayerTurn(val label: String) {
+        FlipH("Flip Layer Horizontally"), FlipV("Flip Layer Vertically"),
+        Cw("Rotate Layer 90° ⟳"), Ccw("Rotate Layer 90° ⟲"), Half("Rotate Layer 180°"),
+    }
+
+    /**
+     * Layer > Transform: flips or turns one layer about its own centre (a group: everything in it,
+     * about the middle of its contents). Text layers become ordinary ones.
+     */
+    fun transformLayer(doc: DocState, id: Long, turn: LayerTurn): DocState? {
+        val l = doc.layer(id) ?: return null
+        val byId = Tree.byId(doc.layers)
+        val targets = if (l.group) doc.layers.filter { !it.group && Tree.isInside(it, id, byId) } else listOf(l)
+        if (targets.isEmpty()) return null
+        val box = RectF(targets[0].bounds).also { r -> targets.forEach { r.union(RectF(it.bounds)) } }
+        val cx = box.centerX()
+        val cy = box.centerY()
+        val m = Matrix().apply {
+            when (turn) {
+                LayerTurn.FlipH -> postScale(-1f, 1f, cx, cy)
+                LayerTurn.FlipV -> postScale(1f, -1f, cx, cy)
+                LayerTurn.Cw -> postRotate(90f, cx, cy)
+                LayerTurn.Ccw -> postRotate(-90f, cx, cy)
+                LayerTurn.Half -> postRotate(180f, cx, cy)
+            }
+        }
+        val ids = targets.map { it.id }.toSet()
+        return doc.copy(layers = doc.layers.map { if (it.id in ids) mapLayer(it, m).copy(text = null) else it })
+    }
+
+    /** Layer > Stack > Raise to Top / Lower to Bottom, within the layer's own group. Null if it's already there. */
+    fun restack(doc: DocState, id: Long, top: Boolean): DocState? {
+        val l = doc.layer(id) ?: return null
+        val range = Tree.range(doc.layers, id)
+        if (range.isEmpty()) return null
+        val block = doc.layers.subList(range.first, range.last + 1).toList()
+        val rest = doc.layers.toMutableList().apply { subList(range.first, range.last + 1).clear() }
+        val at = when (val p = l.parent) {
+            null -> if (top) rest.size else 0
+            // A group sits right above its contents: the top of it is just below the group.
+            else -> Tree.range(rest, p).let { if (it.isEmpty()) return null else if (top) it.last else it.first }
+        }
+        rest.addAll(at, block)
+        return if (rest.map { it.id } == doc.layers.map { it.id }) null else doc.copy(layers = rest)
+    }
+
+    /** Layer > Crop to Selection: the layer cut down to the selection's bounding box. */
+    fun cropLayerToSelection(doc: DocState, id: Long): DocState? {
+        val l = doc.layer(id)?.takeIf { !it.group } ?: return null
+        val sel = doc.selection ?: return null
+        val keep = Rect(sel.bounds)
+        if (!keep.intersect(l.bounds)) return null
+        if (keep == l.bounds) return null
+        val local = Rect(keep).apply { offset(-l.x, -l.y) }
+        return doc.replace(l.copy(bitmap = Bitmaps.mutable(Bitmaps.crop(l.bitmap, local)),
+            mask = l.mask?.let { Bitmaps.mutable(Bitmaps.crop(it, local)) }, x = keep.left, y = keep.top, text = null))
+    }
+
+    /** Image > Fit Canvas to Layers: the canvas becomes the box around every layer. */
+    fun fitCanvasToLayers(doc: DocState): DocState? {
+        val pixels = doc.layers.filter { !it.group }
+        if (pixels.isEmpty()) return null
+        val box = Rect(pixels[0].bounds).also { r -> pixels.forEach { r.union(it.bounds) } }
+        if (box == Rect(0, 0, doc.width, doc.height)) return null
+        return canvasSize(doc, box.width(), box.height(), -box.left, -box.top, resizeLayers = false)
+    }
+
     fun flip(doc: DocState, horizontal: Boolean): DocState {
         val m = Matrix().apply {
             if (horizontal) { postScale(-1f, 1f); postTranslate(doc.width.toFloat(), 0f) }
@@ -91,16 +158,18 @@ object DocOps {
         return mapAll(doc, m, doc.width, doc.height)
     }
 
+    /** One pixel layer through a canvas-space matrix: its bitmap and mask redrawn, its offset moved. */
+    private fun mapLayer(l: Layer, m: Matrix): Layer {
+        val r = RectF(l.bounds)
+        m.mapRect(r)
+        // Per-layer matrix: layer space -> canvas space -> new canvas.
+        val lm = Matrix().apply { postTranslate(l.x.toFloat(), l.y.toFloat()); postConcat(m) }
+        return l.copy(bitmap = transformed(l.bitmap, lm), mask = l.mask?.let { transformed(it, lm) },
+            x = r.left.roundToInt(), y = r.top.roundToInt())
+    }
+
     private fun mapAll(doc: DocState, m: Matrix, nw: Int, nh: Int): DocState {
-        val layers = doc.layers.map { l ->
-            if (l.group) return@map l
-            val r = RectF(l.bounds)
-            m.mapRect(r)
-            // Per-layer matrix: layer space -> canvas space -> new canvas.
-            val lm = Matrix().apply { postTranslate(l.x.toFloat(), l.y.toFloat()); postConcat(m) }
-            l.copy(bitmap = transformed(l.bitmap, lm), mask = l.mask?.let { transformed(it, lm) },
-                x = r.left.roundToInt(), y = r.top.roundToInt())
-        }
+        val layers = doc.layers.map { l -> if (l.group) l else mapLayer(l, m) }
         val sel = doc.selection?.let { Selections.make(transformedMask(it.mask, m, nw, nh)) }
         return doc.copy(width = nw, height = nh, layers = layers, selection = sel, paths = doc.paths.mapped(m))
     }
