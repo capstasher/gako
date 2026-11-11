@@ -79,6 +79,8 @@ class UiTest {
     private fun fresh(w: Int = 400, h: Int = 300, draw: (Canvas) -> Unit = {}) {
         rule.waitUntil(30_000) { vm.busy == null && vm.engine is EditorViewModel.EngineState.Ready }
         rule.runOnUiThread {
+            // A plain view (the grid is a saved preference, and something may have left it on).
+            while (vm.grid != EditorViewModel.Grid.Off) vm.cycleGrid()
             vm.newImageNow(w, h, Color.WHITE)
             draw(Canvas(vm.doc!!.layers[0].bitmap))
         }
@@ -221,7 +223,7 @@ class UiTest {
             vm.doc = d.copy(layers = d.layers + top, activeId = top.id)
         }
         projected()
-        assertTrue("shows GIMP's grey", near(Color.rgb(188, 188, 188), onScreen(100f, 100f)))
+        onScreen(100f, 100f).let { got -> assertTrue("shows GIMP's grey, not ${Integer.toHexString(got)}", near(Color.rgb(188, 188, 188), got)) }
         // Painting on it: once the stroke is done the screen shows GIMP's composite of the new pixels.
         tool(Tool.Paintbrush, size = 30f) { it.copy(opacity = 1f, brushShape = BrushShape.Round, symmetry = io.github.capstasher.gako.tools.Symmetry.Off) }
         rule.runOnUiThread { vm.setForeground(Color.RED) }
@@ -231,6 +233,12 @@ class UiTest {
         val want = Compositor.sample(vm.doc!!, 200, 200)
         assertTrue("the stroke as GIMP draws it", want != Color.rgb(188, 188, 188) && near(want, onScreen(200f, 200f)))
         assertTrue("and the rest unchanged", near(Color.rgb(188, 188, 188), onScreen(100f, 100f)))
+        // Only the stroke's area is composited again after Undo, and a selection changes nothing on screen.
+        rule.runOnUiThread { vm.undo(); vm.selectAll() }
+        idle()
+        projected()
+        assertTrue("undone", near(Color.rgb(188, 188, 188), onScreen(200f, 200f)))
+        assertTrue(near(Color.rgb(188, 188, 188), onScreen(100f, 100f)))
     }
 
     @Test fun pathsListNewDeleteUndo() {

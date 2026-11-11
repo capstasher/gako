@@ -110,8 +110,16 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     var doc by mutableStateOf<DocState?>(null); internal set
     /** Bumped whenever pixels change in place, so the canvas redraws. */
     var revision by mutableIntStateOf(0); private set
+    /** Where pixels changed in place, so the canvas's exact composite is refreshed just there. */
+    internal val pixelChanges = PixelChanges()
     /** GIMP's exact composite for the canvas, kept up to date in the background (see [Projection]). */
-    val projection = Projection()
+    val projection = Projection(pixelChanges)
+
+    /** Logs a patch's area (it's in its layer's coordinates) for [projection]. */
+    private fun logPatch(step: Step.Patch) {
+        val l = doc?.layer(step.layerId) ?: return
+        pixelChanges.add(l.id, Rect(step.rect).apply { offset(l.x, l.y) })
+    }
 
     /** Whether a layer is changing live right now (a stroke, a move, a filter preview, text…). */
     val editingLive: Boolean get() {
@@ -461,6 +469,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     private var autosaveJob: Job? = null
 
     internal fun record(step: Step) {
+        if (step is Step.Patch) logPatch(step)
         // Also keep a recovery copy a little while after the last edit, in case the app crashes.
         autosaveJob?.cancel()
         autosaveJob = viewModelScope.launch {
@@ -532,7 +541,10 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                     step = Step.Snapshot(step.label, step.before, step.after.copy(paths = cur.paths))
                 restore(step.before, step.after)
             }
-            is Step.Patch -> doc?.layer(step.layerId)?.let { l -> step.target(l)?.let { Bitmaps.put(it, step.before, step.rect.left, step.rect.top) } }
+            is Step.Patch -> {
+                doc?.layer(step.layerId)?.let { l -> step.target(l)?.let { Bitmaps.put(it, step.before, step.rect.left, step.rect.top) } }
+                logPatch(step)
+            }
         }
         redoStack.addLast(step)
         revision++
@@ -554,7 +566,10 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
                     step = Step.Snapshot(step.label, step.before.copy(paths = cur.paths), step.after)
                 restore(step.after, step.before)
             }
-            is Step.Patch -> doc?.layer(step.layerId)?.let { l -> step.target(l)?.let { Bitmaps.put(it, step.after, step.rect.left, step.rect.top) } }
+            is Step.Patch -> {
+                doc?.layer(step.layerId)?.let { l -> step.target(l)?.let { Bitmaps.put(it, step.after, step.rect.left, step.rect.top) } }
+                logPatch(step)
+            }
         }
         undoStack.addLast(step)
         revision++
