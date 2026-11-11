@@ -153,7 +153,10 @@ private class Curated(val label: String, val icon: ImageVector, val ops: List<Pa
 /** GIMP's Colours menu, mapped onto GEGL operations. Items that aren't available are hidden. */
 private val colourShelves = listOf(
     Curated("Adjust", Icons.Outlined.Tune, listOf(
-        "gegl:brightness-contrast" to "Brightness-Contrast",
+        "gimp:brightness-contrast" to "Brightness-Contrast",
+        "gimp:hue-saturation" to "Hue-Saturation",
+        "gimp:color-balance" to "Color Balance",
+        "gimp:colorize" to "Colorize",
         "gegl:exposure" to "Exposure",
         "gegl:shadows-highlights" to "Shadows-Highlights",
         "gegl:hue-chroma" to "Hue-Chroma",
@@ -172,11 +175,11 @@ private val colourShelves = listOf(
         "gegl:value-invert" to "Value Invert",
     )),
     Curated("Monochrome", Icons.Outlined.FilterBAndW, listOf(
-        "gegl:gray" to "Desaturate",
+        "gimp:desaturate" to "Desaturate",
         "gegl:mono-mixer" to "Mono Mixer",
         "gegl:sepia" to "Sepia",
-        "gegl:threshold" to "Threshold",
-        "gegl:posterize" to "Posterize",
+        "gimp:threshold" to "Threshold",
+        "gimp:posterize" to "Posterize",
         "gegl:dither" to "Dither",
     )),
     Curated("Components", Icons.Outlined.Colorize, listOf(
@@ -287,8 +290,12 @@ fun buildMenus(vm: EditorViewModel, callbacks: MenuCallbacks): List<MenuGroup> {
 
     // ---- Colours
     val curatedNames = colourShelves.flatMap { s -> s.ops.map { it.first } }.toSet()
+    // GIMP's own colour tools (ported, not GEGL): always there once the engine is.
+    val gimpOps = if (hasImage && vm.operations.isNotEmpty()) io.github.capstasher.gako.doc.GimpOps.dialogs.mapValues { (n, d) ->
+        OpInfo(n, d.title, d.description, listOf("color"), OpKind.Filter)
+    } else emptyMap()
     val colourGroups = colourShelves.mapNotNull { shelf ->
-        val items = shelf.ops.mapNotNull { (name, label) -> byName[name]?.let { opAction(it, label) } }
+        val items = shelf.ops.mapNotNull { (name, label) -> (byName[name] ?: gimpOps[name])?.let { opAction(it, label) } }
         val extra = when (shelf.label) {
             "Adjust" -> listOf(
                 act("curves", "Curves…", Icons.Outlined.ShowChart) { vm.startCurves() },

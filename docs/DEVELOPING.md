@@ -187,3 +187,7 @@ Stage 3 was tested on an Android 15 x86_64 emulator (Pixel 7 profile), driving i
   Desaturate), are ported in `doc/GimpOps.kt`, each in the colour space GIMP uses for it, reading the
   settings GIMP serializes ("(brightness 0.2)…"; Curves keeps its sampled curve, so no spline is
   needed). A layer whose effects use anything else GAKO lacks shows without them, and the user is told.
+  The same ports are the Colours menu's Brightness-Contrast, Hue-Saturation, Color Balance, Colorize,
+  Threshold, Posterize and Desaturate (`GimpOps.dialogs`: their settings in GIMP's units; `Engine.describe`
+  and `Engine.apply` hand `gimp:` operations to them, so previews, Repeat Last and the Filter Brush work).
+  GEGL's versions stay under Colours > More.

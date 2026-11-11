@@ -119,9 +119,8 @@ object Engine {
         }
     }
 
-    suspend fun describe(operation: String): OpDescription? = withContext(Dispatchers.Default) {
-        lock.withLock { nativeDescribe(operation)?.let { OpDescription.parse(it) } }
-    }
+    suspend fun describe(operation: String): OpDescription? = io.github.capstasher.gako.doc.GimpOps.dialogs[operation]
+        ?: withContext(Dispatchers.Default) { lock.withLock { nativeDescribe(operation)?.let { OpDescription.parse(it) } } }
 
     /** What the engine is busy with right now, so a cancel only stops the job it was meant for. */
     @Volatile private var runningTag: Any? = null
@@ -142,6 +141,11 @@ object Engine {
         growWithin: android.graphics.Rect? = null,
         onProgress: (Float) -> Unit = {},
     ): Result = withContext(Dispatchers.Default) {
+        // GIMP's own colour tools aren't GEGL's: GAKO's port of them.
+        if (operation in io.github.capstasher.gako.doc.GimpOps.dialogs) {
+            return@withContext io.github.capstasher.gako.doc.GimpOps.applyDialog(operation, params, src)?.let { Result.Ok(it) }
+                ?: Result.Failed("$operation couldn't run")
+        }
         lock.withLock {
             ensureActive()
             val json = JSONObject().apply { params.forEach { (k, v) -> if (v != null) put(k, v) } }.toString()

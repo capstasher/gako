@@ -10,7 +10,9 @@ operation) for Android, and puts a touch interface on top designed for one hand 
 
 **Engine**
 - babl 0.1.128 + GEGL 0.4.72 + glib, cross-compiled for Android 12+ (API 31), arm64 (and x86_64 for the emulator)
-- ~200 GEGL operations with auto-generated controls (sliders, toggles, choices, colours)
+- ~200 GEGL operations with auto-generated controls (sliders, toggles, choices, colours), plus GIMP's own
+  colour tools ported from GIMP 3 (Brightness-Contrast, Hue-Saturation, Color Balance, Colorize, Threshold,
+  Posterize, Desaturate) so the Colours menu behaves as GIMP's does
 - Live preview on a downscaled proxy, then full-resolution apply with progress and cancel
 
 **Images and layers**

@@ -98,6 +98,7 @@ class GimpModesTest {
         assertTrue("${failures.size} of ${files.size} differ from GIMP:\n" + failures.joinToString("\n"), failures.isEmpty())
     }
 
+
     /**
      * GIMP 3 layer effects (`assets/gimp/effects.xcf`, XCF 22): a Gaussian blur then a half-strength
      * Invert on one layer (at 80%), an unclipped drop shadow on a small one. GAKO reads them, applies
@@ -167,9 +168,26 @@ class GimpModesTest {
                 if (off > worst) { worst = off; where = "($x,$y) GIMP ${exp.subList(i, i + 4)} GAKO ${listOf((p shr 16) and 255, (p shr 8) and 255, p and 255, p ushr 24)}" }
             }
             if (worst > 0) failures += "$name: off by $worst more than allowed at $where"
+            // The Colours menu's dialogs (GIMP's units) give the same as the effect.
+            dialogFor[name]?.let { values ->
+                val op = doc.layers.single().effects.single().operation
+                val fromDialog = io.github.capstasher.gako.doc.GimpOps.applyDialog(op, values, doc.layers.single().bitmap)!!
+                val layer = out.doc.layers.single().bitmap
+                if (TestImages.maxDiff(layer, fromDialog) > 1) failures += "$name: the dialog's result differs from the effect's (${doc.layers.single().effects.single().args})"
+            }
         }
         assertTrue("${failures.size} of ${files.size} differ from GIMP:\n" + failures.joinToString("\n"), failures.isEmpty())
     }
+
+    /** The same settings as some of the oracle's cases, as the Colours menu's dialogs take them. */
+    private val dialogFor = mapOf(
+        "bc_up" to mapOf("brightness" to 0.2 * 127, "contrast" to 0.3 * 127),
+        "colorize" to mapOf("hue" to 180.0, "saturation" to 50.0, "lightness" to 0.0),     // its defaults (see the script)
+        "threshold" to mapOf("channel" to "value", "low" to 102.0, "high" to 204.0),
+        "posterize" to mapOf("levels" to 4),
+        "desaturate_luma" to mapOf("mode" to "luma"),
+        "balance_plain" to mapOf("range" to "highlights", "yellow-blue" to -60.0, "preserve-luminosity" to false),
+    )
 
     @Test fun xcfKeepsModesAndBlendSettings() {
         for ((name, xcf) in cases()) {

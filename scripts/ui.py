@@ -292,7 +292,8 @@ def cmd(args):
         w, h = struct.unpack_from("<II", raw, 0)
         head = len(raw) - w * h * 4            # 12 or 16 bytes, by Android version
         for i in range(0, len(rest) - 1, 2):
-            sx, sy = (int(round(v)) for v in f(float(rest[i]), float(rest[i + 1])))
+            # The pixel's centre (its corner is where the pixel grid draws when zoomed in).
+            sx, sy = (int(round(v)) for v in f(float(rest[i]) + 0.5, float(rest[i + 1]) + 0.5))
             if not (0 <= sx < w and 0 <= sy < h):
                 print(f"{rest[i]},{rest[i + 1]}: off screen")
                 continue
