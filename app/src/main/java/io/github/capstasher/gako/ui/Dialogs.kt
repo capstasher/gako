@@ -231,7 +231,8 @@ private fun CanvasSizeDialog(vm: EditorViewModel, w0: Int, h0: Int, close: () ->
                             for (c in 0..2) {
                                 val i = r * 3 + c
                                 Box(Modifier.size(26.dp)
-                                    .background(if (anchor == i) Gako.Gold else Gako.InkHigh, RoundedCornerShape(3.dp))
+                                    .background(if (anchor == i) Gako.Gold else Gako.Muted.copy(alpha = 0.25f), RoundedCornerShape(3.dp))
+                                    .border(1.dp, Gako.GoldDim, RoundedCornerShape(3.dp))
                                     .clickable { anchor = i })
                             }
                         }
