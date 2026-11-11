@@ -92,7 +92,7 @@ fun ToolOptionsBar(vm: EditorViewModel) {
     val shaped = tool.paints && tool != Tool.Smudge && tool != Tool.Blur && tool != Tool.Heal && tool != Tool.Clone &&
         o.brushShape != io.github.capstasher.gako.tools.BrushShape.Round
     val base: List<NumOption> = when (tool) {
-        Tool.Paintbrush, Tool.Eraser, Tool.Clone, Tool.Heal -> listOf(size, opacity, hardness)
+        Tool.Paintbrush, Tool.Eraser, Tool.Clone, Tool.Heal, Tool.FilterBrush -> listOf(size, opacity, hardness)
         Tool.Pencil -> listOf(size, opacity)
         Tool.Airbrush -> listOf(size, opacity, rate)
         Tool.DodgeBurn -> listOf(size, exposure, hardness)
@@ -130,7 +130,7 @@ fun ToolOptionsBar(vm: EditorViewModel) {
                     expanded = if (expanded == n.key) null else n.key
                 }
             }
-            if (tool.paints && tool != Tool.Smudge && tool != Tool.Blur && tool != Tool.Heal && tool != Tool.Clone) {
+            if (tool.paints && tool != Tool.Smudge && tool != Tool.Blur && tool != Tool.Heal && tool != Tool.Clone && tool != Tool.FilterBrush) {
                 io.github.capstasher.gako.tools.BrushShape.entries.forEach { b ->
                     OptChip(b.label, o.brushShape == b) { set { it.copy(brushShape = b) } }
                 }
@@ -163,6 +163,8 @@ fun ToolOptionsBar(vm: EditorViewModel) {
                     GradientColors.entries.forEach { g -> OptChip(g.label, o.gradientColors == g) { set { it.copy(gradientColors = g) } } }
                 }
                 Tool.ColorPicker -> OptChip("Sample merged", o.sampleMerged) { set { it.copy(sampleMerged = !it.sampleMerged) } }
+                Tool.FilterBrush -> Text(vm.filterBrush?.let { "Painting: ${it.title}" } ?: "Open a filter, then tap its brush button",
+                    style = MaterialTheme.typography.labelMedium, color = Gako.Gold)
                 Tool.Paths -> {
                     val p = vm.input.path
                     OptChip("To selection", false) { vm.input.pathToSelection() }

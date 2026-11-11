@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Brush
 import androidx.compose.material.icons.outlined.Casino
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
@@ -101,7 +102,10 @@ fun ParamPanel(session: EditorViewModel.FilterSession, vm: EditorViewModel, modi
                 Icon(Icons.Outlined.Compare, contentDescription = "Hold to compare",
                     tint = if (vm.comparing) Gako.Gold else Gako.Muted)
             }
-            Spacer(Modifier.width(4.dp))
+            // Paint the effect on with the Filter Brush instead of applying it everywhere.
+            IconButton(onClick = vm::paintSession, enabled = vm.busy == null && !session.onMask) {
+                Icon(Icons.Outlined.Brush, contentDescription = "Paint it on", tint = Gako.Gold)
+            }
             FilledIconButton(
                 onClick = vm::applySession,
                 enabled = vm.busy == null,
