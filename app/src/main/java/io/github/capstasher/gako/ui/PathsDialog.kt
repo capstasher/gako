@@ -46,7 +46,8 @@ import io.github.capstasher.gako.ui.theme.Gako
 @Composable
 fun PathsDialog(vm: EditorViewModel, onDismiss: () -> Unit) {
     val paths = vm.doc?.paths.orEmpty()
-    var renaming by remember { mutableStateOf<Int?>(null) }
+    // The path being renamed (by identity, so other rows' Delete or Move can't redirect it).
+    var renaming by remember { mutableStateOf<io.github.capstasher.gako.doc.VectorPath?>(null) }
     var name by remember { mutableStateOf(androidx.compose.ui.text.input.TextFieldValue("")) }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -57,11 +58,11 @@ fun PathsDialog(vm: EditorViewModel, onDismiss: () -> Unit) {
                     style = MaterialTheme.typography.bodySmall, color = Gako.Muted, modifier = Modifier.padding(bottom = 8.dp))
                 paths.forEachIndexed { i, p ->
                     val active = i == vm.pathIndex
-                    if (renaming == i) {
+                    if (renaming === p) {
                         val focus = remember { androidx.compose.ui.focus.FocusRequester() }
                         OutlinedTextField(name, { name = it }, singleLine = true, label = { Text("Name") },
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                            keyboardActions = KeyboardActions(onDone = { vm.renamePath(i, name.text); renaming = null }),
+                            keyboardActions = KeyboardActions(onDone = { vm.renamePath(paths.indexOf(p), name.text); renaming = null }),
                             modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).focusRequester(focus))
                         androidx.compose.runtime.LaunchedEffect(Unit) { focus.requestFocus() }
                         return@forEachIndexed
@@ -86,7 +87,7 @@ fun PathsDialog(vm: EditorViewModel, onDismiss: () -> Unit) {
                                 DropdownMenuItem({ Text("Rename…") }, {
                                     menu = false
                                     name = androidx.compose.ui.text.input.TextFieldValue(p.name, androidx.compose.ui.text.TextRange(0, p.name.length))
-                                    renaming = i
+                                    renaming = p
                                 })
                                 DropdownMenuItem({ Text("Duplicate") }, { menu = false; vm.duplicatePath(i) })
                                 if (i < paths.lastIndex) DropdownMenuItem({ Text("Move down") }, { menu = false; vm.movePath(i, 1) })
@@ -115,7 +116,7 @@ fun PathsDialog(vm: EditorViewModel, onDismiss: () -> Unit) {
             }
         },
         confirmButton = {
-            if (renaming != null) TextButton(onClick = { vm.renamePath(renaming!!, name.text); renaming = null }) { Text("Rename") }
+            if (renaming != null) TextButton(onClick = { vm.renamePath(paths.indexOf(renaming), name.text); renaming = null }) { Text("Rename") }
             else TextButton(onClick = onDismiss) { Text("Close") }
         },
         dismissButton = if (renaming != null) ({ TextButton(onClick = { renaming = null }) { Text("Cancel") } }) else null,
