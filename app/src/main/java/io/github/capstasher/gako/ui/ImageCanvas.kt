@@ -94,7 +94,11 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
                     val textSession = vm.text
                     val tool = vm.tool
                     val modal = session != null || vm.curves != null || textSession != null
-                    val toolDrags = !modal && tool != Tool.Navigate && tool !in tapTools && vm.busy == null
+                    // With a pen around, fingers navigate and only the pen paints (palm rejection).
+                    val isPen = first.type == PointerType.Stylus || first.type == PointerType.Eraser
+                    if (isPen) vm.stylusSeen = true
+                    val fingerOnly = vm.stylusSeen && !isPen
+                    val toolDrags = !modal && !fingerOnly && tool != Tool.Navigate && tool !in tapTools && vm.busy == null
                     val downPos = first.position
                     val downTime = first.uptimeMillis
                     val slop = viewConfiguration.touchSlop
@@ -115,7 +119,7 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
                                     session != null -> if (session.point != null) vm.tapImage(p.x, p.y)
                                     textSession != null -> { textSession.x = p.x.toInt(); textSession.y = p.y.toInt() }
                                     vm.curves != null -> Unit
-                                    tool == Tool.Navigate || vm.busy != null -> {
+                                    tool == Tool.Navigate || vm.busy != null || (fingerOnly && tool !in tapTools) -> {
                                         // Double-tap toggles fit / close-up.
                                         val (t0, p0) = lastTap
                                         if (first.uptimeMillis - t0 < 320 && (downPos - p0).getDistance() < slop * 3) {
@@ -157,7 +161,7 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
                         if (multi) continue   // after a pinch, wait for every finger to lift
                         val ch = pressed[0]
                         if (!moved && (ch.position - downPos).getDistance() > slop) moved = true
-                        val pressure = if (ch.type == PointerType.Stylus) ch.pressure.coerceIn(0.05f, 1.5f) else 1f
+                        val pressure = if (isPen) ch.pressure.coerceIn(0.05f, 1.5f) else 1f
                         when {
                             textSession != null -> if (moved) {
                                 val start = textStart ?: (textSession.x to textSession.y).also { textStart = it }
