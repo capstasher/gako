@@ -2,6 +2,8 @@ package io.github.capstasher.gako.tools
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AutoFixNormal
+import androidx.compose.material.icons.outlined.BlurOn
+import androidx.compose.material.icons.outlined.Fingerprint
 import androidx.compose.material.icons.outlined.Brush
 import androidx.compose.material.icons.outlined.Colorize
 import androidx.compose.material.icons.outlined.ContentCopy
@@ -40,6 +42,8 @@ enum class Tool(val label: String, val icon: ImageVector, val group: ToolGroup, 
     Eraser("Eraser", Icons.Outlined.CropFree, ToolGroup.Paint, "Erase to transparency"),
     Clone("Clone", Icons.Outlined.ContentCopy, ToolGroup.Paint, "Set a source, then paint a copy of it"),
     DodgeBurn("Dodge / Burn", Icons.Outlined.Tonality, ToolGroup.Paint, "Lighten or darken where you paint"),
+    Smudge("Smudge", Icons.Outlined.Fingerprint, ToolGroup.Paint, "Smear colours along the stroke"),
+    Blur("Blur", Icons.Outlined.BlurOn, ToolGroup.Paint, "Soften where you paint"),
     BucketFill("Bucket Fill", Icons.Outlined.FormatColorFill, ToolGroup.Paint, "Tap to fill"),
     Gradient("Gradient", Icons.Outlined.Gradient, ToolGroup.Paint, "Drag from start to end colour"),
     Text("Text", Icons.Outlined.TextFields, ToolGroup.Paint, "Tap to place text"),
@@ -60,7 +64,7 @@ enum class Tool(val label: String, val icon: ImageVector, val group: ToolGroup, 
         else -> label
     }
 
-    val paints get() = this in setOf(Paintbrush, Pencil, Airbrush, Eraser, Clone, DodgeBurn)
+    val paints get() = this in setOf(Paintbrush, Pencil, Airbrush, Eraser, Clone, DodgeBurn, Smudge, Blur)
     val selects get() = group == ToolGroup.Select
 }
 
@@ -92,4 +96,6 @@ data class ToolOptions(
     val burn: Boolean = false,
     val exposure: Float = 0.5f,
     val cloneAligned: Boolean = true,
+    /** Smudge: how far colour is carried; Blur: how strongly it softens. */
+    val strength: Float = 0.5f,
 )

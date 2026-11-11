@@ -62,7 +62,7 @@ class PaintStroke(
         alpha = (options.opacity * 255).roundToInt().coerceIn(0, 255)
         blendMode = when {
             tool == Tool.Eraser -> if (layer.lockAlpha) BlendMode.SRC_ATOP else BlendMode.DST_OUT
-            tool == Tool.DodgeBurn || layer.lockAlpha -> BlendMode.SRC_ATOP
+            tool == Tool.DodgeBurn || tool == Tool.Blur || layer.lockAlpha -> BlendMode.SRC_ATOP
             else -> BlendMode.SRC_OVER
         }
     }
@@ -77,6 +77,79 @@ class PaintStroke(
         if (tool == Tool.Eraser && layer.lockAlpha) {
             // Locked alpha: "erase" to the background colour instead.
             colorFilter = null
+        }
+    }
+
+    // ---- Blur: a softened copy of the layer, worked out tile by tile as the brush reaches it.
+    private val blurLevels = 1 + (options.strength * 3.99f).toInt()          // halvings: 2×…16×
+    private val blurSource: Bitmap? = if (tool == Tool.Blur) Bitmap.createBitmap(bmp.width, bmp.height, Bitmap.Config.ARGB_8888) else null
+    private val blurTile = 128
+    private val blurTilesX = (bmp.width + blurTile - 1) / blurTile
+    private val blurDone: BooleanArray? = if (tool == Tool.Blur) BooleanArray(blurTilesX * ((bmp.height + blurTile - 1) / blurTile)) else null
+
+    private fun ensureBlurred(r: Rect) {
+        val src = blurSource ?: return
+        val done = blurDone ?: return
+        val k = 1 shl blurLevels
+        val pad = k * 4
+        val canvas = Canvas(src)
+        for (ty in max(0, r.top) / blurTile..(min(bmp.height, r.bottom) - 1) / blurTile) {
+            for (tx in max(0, r.left) / blurTile..(min(bmp.width, r.right) - 1) / blurTile) {
+                val i = ty * blurTilesX + tx
+                if (i !in done.indices || done[i]) continue
+                done[i] = true
+                val t = Rect(tx * blurTile, ty * blurTile, min(bmp.width, (tx + 1) * blurTile), min(bmp.height, (ty + 1) * blurTile))
+                val area = Rect(t).apply { inset(-pad, -pad); intersect(0, 0, bmp.width, bmp.height) }
+                var piece = Bitmap.createBitmap(before, area.left, area.top, area.width(), area.height())
+                // Halving with bilinear filtering averages 2×2 blocks: a box blur that tiles seamlessly.
+                repeat(blurLevels) {
+                    piece = Bitmap.createScaledBitmap(piece, max(1, piece.width / 2), max(1, piece.height / 2), true)
+                }
+                repeat(blurLevels) {
+                    piece = Bitmap.createScaledBitmap(piece, piece.width * 2, piece.height * 2, true)
+                }
+                canvas.save()
+                canvas.clipRect(t)
+                canvas.drawBitmap(piece, null, RectF(area), Paint().apply { isFilterBitmap = true; blendMode = BlendMode.SRC })
+                canvas.restore()
+            }
+        }
+    }
+
+    // ---- Smudge: carry the colour under the brush along the stroke.
+    private var accum: Bitmap? = null
+    private val smudgeRate = 0.3f + options.strength * 0.65f
+
+    private fun smudgeDab(x: Float, y: Float, dirty: Rect) {
+        val d = ceil(baseSize).toInt().coerceAtLeast(2)
+        val left = (x - d / 2f).roundToInt()
+        val top = (y - d / 2f).roundToInt()
+        val box = Rect(left, top, left + d, top + d)
+        val acc = accum
+        if (acc == null) {
+            accum = Bitmap.createBitmap(d, d, Bitmap.Config.ARGB_8888).also {
+                Canvas(it).drawBitmap(bmp, -left.toFloat(), -top.toFloat(), null)
+            }
+            return
+        }
+        val c = layerCanvas
+        val boxF = RectF(box)
+        val save = c.saveLayer(boxF, layerPaint)
+        c.drawBitmap(acc, left.toFloat(), top.toFloat(), null)
+        val shape = android.graphics.BitmapShader(dab!!, android.graphics.Shader.TileMode.DECAL, android.graphics.Shader.TileMode.DECAL).apply {
+            setLocalMatrix(android.graphics.Matrix().apply {
+                setScale(d.toFloat() / dab.width, d.toFloat() / dab.height)
+                postTranslate(left.toFloat(), top.toFloat())
+            })
+        }
+        c.drawRect(boxF, Paint().apply { shader = shape; blendMode = BlendMode.DST_IN })
+        selection?.let { Bitmaps.maskIn(c, it) }
+        c.restoreToCount(save)
+        // Pick up some of what's there now for the next dab.
+        Canvas(acc).drawBitmap(bmp, -left.toFloat(), -top.toFloat(), Paint().apply { alpha = ((1 - smudgeRate) * 255).roundToInt() })
+        if (box.intersect(0, 0, bmp.width, bmp.height)) {
+            dirty.union(box)
+            total.union(box)
         }
     }
 
@@ -119,6 +192,7 @@ class PaintStroke(
     }
 
     private fun stamp(x: Float, y: Float, pressure: Float, dirty: Rect) {
+        if (tool == Tool.Smudge) { smudgeDab(x, y, dirty); return }
         val size = baseSize * pressure.coerceIn(0.1f, 2f)
         val r = size / 2f
         val box = Rect(floor(x - r - 1).toInt(), floor(y - r - 1).toInt(), ceil(x + r + 1).toInt(), ceil(y + r + 1).toInt())
@@ -133,8 +207,9 @@ class PaintStroke(
     }
 
     private fun render(dirty: Rect) {
-        if (dirty.isEmpty) return
+        if (dirty.isEmpty || tool == Tool.Smudge) return
         total.union(dirty)
+        if (tool == Tool.Blur) ensureBlurred(dirty)
         val c = layerCanvas
         c.save()
         c.clipRect(dirty)
@@ -148,6 +223,10 @@ class PaintStroke(
             }
             Tool.DodgeBurn -> {
                 c.drawBitmap(before, 0f, 0f, sourcePaint)
+                Bitmaps.maskIn(c, mask)
+            }
+            Tool.Blur -> {
+                c.drawBitmap(blurSource!!, 0f, 0f, null)
                 Bitmaps.maskIn(c, mask)
             }
             else -> c.drawBitmap(mask, 0f, 0f, maskTint)
