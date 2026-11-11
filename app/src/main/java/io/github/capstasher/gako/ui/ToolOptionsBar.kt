@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
@@ -98,6 +99,7 @@ fun ToolOptionsBar(vm: EditorViewModel) {
         Tool.DodgeBurn -> listOf(size, exposure, hardness)
         Tool.Smudge, Tool.Blur -> listOf(size, strength, hardness)
         Tool.RectSelect -> listOf(feather, corners)
+        Tool.SelectBrush -> listOf(size, hardness, feather)
         Tool.EllipseSelect, Tool.FreeSelect -> listOf(feather)
         Tool.FuzzySelect, Tool.ColorSelect -> listOf(threshold, feather)
         Tool.BucketFill -> if (o.fillArea == FillArea.Similar) listOf(threshold, opacity) else listOf(opacity)
@@ -142,7 +144,7 @@ fun ToolOptionsBar(vm: EditorViewModel) {
                 }
             }
             when (tool) {
-                Tool.RectSelect, Tool.EllipseSelect, Tool.FreeSelect, Tool.FuzzySelect, Tool.ColorSelect -> {
+                Tool.RectSelect, Tool.EllipseSelect, Tool.FreeSelect, Tool.FuzzySelect, Tool.ColorSelect, Tool.SelectBrush -> {
                     SelectMode.entries.forEach { m ->
                         OptChip(m.label, o.selectMode == m) { set { it.copy(selectMode = m) } }
                     }
@@ -233,7 +235,8 @@ fun ToolOptionsBar(vm: EditorViewModel) {
                 else -> Unit
             }
             if (numbers.isEmpty() && tool !in setOf(Tool.Crop, Tool.Transform, Tool.RectSelect, Tool.EllipseSelect,
-                    Tool.FreeSelect, Tool.FuzzySelect, Tool.ColorSelect, Tool.BucketFill, Tool.Gradient, Tool.ColorPicker, Tool.Paths)) {
+                    Tool.FreeSelect, Tool.FuzzySelect, Tool.ColorSelect, Tool.BucketFill, Tool.Gradient, Tool.ColorPicker, Tool.Paths,
+                    Tool.SelectBrush)) {
                 Text(tool.hint, style = MaterialTheme.typography.labelMedium, color = Gako.Muted)
             }
         }
@@ -269,7 +272,7 @@ fun OptChip(text: String, selected: Boolean, onClick: () -> Unit) {
 @Composable
 fun ToolPalette(vm: EditorViewModel, onPicked: () -> Unit) {
     androidx.compose.foundation.layout.FlowRow(
-        Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 4.dp),
+        Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 6.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.SpaceEvenly,
     ) {
         Tool.entries.sortedBy { it.group.ordinal }.forEach { t ->

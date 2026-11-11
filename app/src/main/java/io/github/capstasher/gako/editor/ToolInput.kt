@@ -104,6 +104,12 @@ class ToolInput(private val vm: EditorViewModel) {
     /** The Paths tool's path; it stays while other tools are used, until cleared or a new image. */
     val path = io.github.capstasher.gako.tools.PathEditor()
 
+    /** The Selection Brush's stroke so far (canvas-sized ALPHA_8), shown over the image. */
+    var selStroke by mutableStateOf<Bitmap?>(null); private set
+    var selStrokeRevision by mutableIntStateOf(0); private set
+    private var selCanvas: Canvas? = null
+    private var selLast: PointF? = null
+
     var dragRect by mutableStateOf<RectF?>(null); private set
     var lasso by mutableStateOf<Path?>(null); private set
     var lassoRevision by mutableIntStateOf(0); private set
@@ -230,6 +236,8 @@ class ToolInput(private val vm: EditorViewModel) {
         lasso = null
         gradient = null
         moveDelta = null
+        selStroke = null
+        selCanvas = null
         cropState = null
         transformState = null
         mode = Drag.None
@@ -268,8 +276,37 @@ class ToolInput(private val vm: EditorViewModel) {
                 mode = hitTransform(t, x, y, tol)
             }
             Tool.Paths -> path.down(x, y, tol)
+            Tool.SelectBrush -> {
+                val m = try { Bitmap.createBitmap(d.width, d.height, Bitmap.Config.ALPHA_8) } catch (e: OutOfMemoryError) { return }
+                selStroke = m
+                selCanvas = Canvas(m)
+                selLast = null
+                selDab(x, y)
+            }
             else -> Unit
         }
+    }
+
+    /** Selection Brush dabs, spaced along the finger's path. */
+    private fun selDab(x: Float, y: Float) {
+        val c = selCanvas ?: return
+        val r = options.size.coerceAtLeast(1f) / 2f
+        val dab = PaintStroke.dabBitmap(r * 2, options.hardness)
+        val paint = Paint().apply { isFilterBitmap = true }
+        val from = selLast ?: PointF(x, y)
+        val dist = hypot(x - from.x, y - from.y)
+        val step = max(1f, r * 0.25f)
+        var t = if (selLast == null) 0f else step
+        while (t <= dist || (selLast == null && t == 0f)) {
+            val f = if (dist > 0f) t / dist else 0f
+            val px = from.x + (x - from.x) * f
+            val py = from.y + (y - from.y) * f
+            c.drawBitmap(dab, null, RectF(px - r, py - r, px + r, py + r), paint)
+            if (selLast == null) break
+            t += step
+        }
+        selLast = PointF(x, y)
+        selStrokeRevision++
     }
 
     fun move(x: Float, y: Float, pressure: Float) {
@@ -303,6 +340,7 @@ class ToolInput(private val vm: EditorViewModel) {
             Tool.Crop -> dragCrop(d, x, y)
             Tool.Transform -> dragTransform(x, y)
             Tool.Paths -> path.move(x, y)
+            Tool.SelectBrush -> selDab(x, y)
             else -> Unit
         }
     }
@@ -359,6 +397,14 @@ class ToolInput(private val vm: EditorViewModel) {
                 applyGradient(a, b)
             }
             Tool.Paths -> path.up()
+            Tool.SelectBrush -> {
+                val m = selStroke ?: return
+                selStroke = null
+                selCanvas = null
+                // Like GIMP's Paint Select, strokes add up (Replace acts as Add; Select › None starts over).
+                val mode = if (options.selectMode == SelectMode.Replace) SelectMode.Add else options.selectMode
+                select(d, "Selection Brush", mode) { m }
+            }
             Tool.Move -> {
                 val delta = moveDelta ?: return
                 moveDelta = null
@@ -389,6 +435,8 @@ class ToolInput(private val vm: EditorViewModel) {
         gradient = null
         moveDelta = null
         if (tool == Tool.Paths) path.cancel()
+        selStroke = null
+        selCanvas = null
         if (tool == Tool.Crop && mode != Drag.None) doc?.let { cropState = (it.width to it.height) to cropAtDown }
         if (tool == Tool.Transform && mode != Drag.None) transformState = transformAtDown
         mode = Drag.None
@@ -407,6 +455,7 @@ class ToolInput(private val vm: EditorViewModel) {
                 else { beginStroke(d, x, y, 1f); up() }
             }
             Tool.RectSelect, Tool.EllipseSelect, Tool.FreeSelect -> tapSelect()
+            Tool.SelectBrush -> { down(x, y, 1f, tol); up() }
             Tool.FuzzySelect, Tool.ColorSelect -> colourSelect(d, x, y)
             Tool.BucketFill -> bucketFill(d, x, y)
             Tool.ColorPicker -> pick(d, x, y)
@@ -506,8 +555,8 @@ class ToolInput(private val vm: EditorViewModel) {
         r.right.roundToInt().toFloat(), r.bottom.roundToInt().toFloat())
 
     /** Builds a shape mask off the main thread, feathers it, then combines it with the selection. */
-    private fun select(d: DocState, label: String, shape: () -> Bitmap) {
-        val mode = options.selectMode
+    private fun select(d: DocState, label: String, modeOverride: SelectMode? = null, shape: () -> Bitmap) {
+        val mode = modeOverride ?: options.selectMode
         val feather = options.feather
         vm.viewModelScope.launch {
             vm.busy = EditorViewModel.Busy(label)

@@ -354,6 +354,11 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
                 nc.drawPath(sel.outline, ink)
                 nc.drawPath(sel.outline, dash)
             }
+            // The Selection Brush's stroke, tinted while it's being painted.
+            input.selStroke?.let { m ->
+                @Suppress("UNUSED_VARIABLE") val sr = input.selStrokeRevision
+                nc.drawBitmap(m, 0f, 0f, Paint().apply { color = android.graphics.Color.argb(110, 210, 168, 78); isFilterBitmap = true })
+            }
             input.dragRect?.let { r ->
                 if (tool == Tool.EllipseSelect) { nc.drawOval(r, ink); nc.drawOval(r, dash) }
                 else { nc.drawRect(r, ink); nc.drawRect(r, dash) }
