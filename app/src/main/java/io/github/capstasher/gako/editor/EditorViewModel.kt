@@ -693,7 +693,15 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 val name = displayName(uri) ?: "Untitled"
-                val (state, note) = withContext(Dispatchers.IO) { load(uri, name) }
+                val (loaded, loadNote) = withContext(Dispatchers.IO) { load(uri, name) }
+                // GIMP 3's layer effects: drawn into their layers, as GIMP shows them.
+                val (state, note) = if (loaded.layers.any { it.effects.isNotEmpty() }) {
+                    busy = Busy("Applying layer effects")
+                    Engine.start(getApplication())
+                    val ops = Engine.operations().map { it.name }.toSet()
+                    val outcome = io.github.capstasher.gako.engine.Effects.apply(loaded, ops)
+                    outcome.doc to listOfNotNull(loadNote, outcome.note).joinToString("\n").ifEmpty { null }
+                } else loaded to loadNote
                 val d = doc
                 if (asLayers && d != null) {
                     // Each opened layer goes in centred above the active one.

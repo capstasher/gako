@@ -101,7 +101,8 @@ engine for the emulator; then `gradle :app:assembleDebug -Pgako.abis=x86_64`.
 Instrumented tests (`app/src/androidTest`) run on a device or emulator: XCF/PSD/ORA round trips
 (structure, pixels, masks, paths, kept GIMP modes), Warp, Straighten, layer transforms, `GimpModesTest`
 (127 small XCFs made by GIMP 3.2 itself, every mode legacy and linear, groups, masks, spaces, each drawn by
-GAKO and compared with GIMP's own render; `scripts/gimp_modes_oracle.py` remakes them), and `UiTest`,
+GAKO and compared with GIMP's own render; `scripts/gimp_modes_oracle.py` remakes them; plus a file with
+GIMP 3 layer effects, drawn within one level of GIMP), and `UiTest`,
 which drives the real screens (buttons found by label, the canvas touched at image pixels through
 `EditorViewModel.docToView`, the editor's state checked directly). Use a host-GPU emulator
 (`-gpu host`); the SwiftShader one can crash.
@@ -176,4 +177,9 @@ Stage 3 was tested on an Android 15 x86_64 emulator (Pixel 7 profile), driving i
   and item parasites (comment, ICC profile, metadata, grid, GIMP text layers), colour tags, locks,
   tattoos, item sets. Whole-image transforms move guides, sample points and channels with the layers.
   A GIMP text layer whose pixels GAKO changes is saved marked modified, so GIMP keeps the pixels.
-  Not kept yet: GIMP 3's layer effects (non-destructive filters), which the layers show without.
+  GIMP 3's layer effects (non-destructive filters, XCF 20+) are read and applied when the file opens
+  (`engine/Effects.kt`): each GEGL operation with its saved arguments, blended back with the effect's
+  mode and opacity through its mask, clipped or not, as GIMP draws them; they become part of the
+  layer (GAKO has no non-destructive filters yet). A layer whose effects use a GIMP-only operation
+  (curves, levels… from GIMP's own code, not GEGL) or a gradient/config argument shows without them,
+  and the user is told.
