@@ -78,7 +78,9 @@ native/bridge/          C bridge over GEGL: list/describe/apply operations, boun
 - **The canvas** (`ImageCanvas`) draws plain images (only sRGB Normal layers, no masks:
   `Compositor.canvasIsExact`) on the GPU every frame, each layer through `Compositor.drawLayer`.
   Others show `Projection`: GIMP's composite, made in the background ~30 ms after the last change
-  (a stroke in progress waits); while a layer is being edited (stroke, filter preview, move, text),
+  (a stroke in progress waits), and only where pixels changed: `PixelChanges` logs each patch's area
+  (strokes, fills, Undo/Redo), so a stroke recomposites its rectangle and a selection, path or guide
+  change recomposites nothing; while a layer is being edited (stroke, filter preview, move, text),
   the exact composite of everything below it plus that layer and those above drawn live on the GPU
   (approximate modes, for the length of the edit). In-place pixel edits bump `vm.revision` to
   trigger a redraw and a refresh.

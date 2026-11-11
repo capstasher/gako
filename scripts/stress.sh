@@ -29,7 +29,8 @@ for i in "${!devices[@]}"; do
       --pct-touch 55 --pct-motion 32 --pct-pinchzoom 8 --pct-majornav 5 \
       --pct-rotation 0 --pct-flip 0 --pct-appswitch 0 --pct-syskeys 0 --pct-nav 0 --pct-anyevent 0 --pct-trackball 0 \
       "$events" > "$tmp/$i.monkey" 2>&1
-    adb -s "$d" shell cmd statusbar collapse >/dev/null 2>&1
+    # The monkey can pull the notification shade down: swipe it away (collapse doesn't always).
+    adb -s "$d" shell 'input keyevent KEYCODE_WAKEUP; if dumpsys window | grep -q "mCurrentFocus=.*NotificationShade"; then s=$(wm size | grep -o "[0-9]*x[0-9]*" | tail -1); w=${s%x*}; h=${s#*x}; input swipe $((w / 2)) $((h * 5 / 6)) $((w / 2)) $((h / 8)) 150; fi' </dev/null >/dev/null 2>&1
     # Only GAKO's own crashes (the monkey can also upset the launcher in the background).
     adb -s "$d" logcat -d | grep -E -A 25 "FATAL EXCEPTION|ANR in $pkg" | grep -B2 -A25 -E "Process: $pkg|ANR in $pkg" |
       grep -E "FATAL|ANR|Exception|Error|at io\.github" | head -30 > "$tmp/$i.problems"

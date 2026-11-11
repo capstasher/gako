@@ -76,6 +76,9 @@ for d in "${devices[@]}"; do
   install_if_changed "$d" "$APP_APK" "$APP" &
   install_if_changed "$d" "$TEST_APK" "$APP.test" &
   adb -s "$d" logcat -c >/dev/null 2>&1 &
+  # Nothing over the app: a notification shade left open (the monkey opens it) would hide the
+  # screen from tests that look at it. Only a swipe closes it reliably.
+  adb -s "$d" shell 'input keyevent KEYCODE_WAKEUP; if dumpsys window | grep -q "mCurrentFocus=.*NotificationShade"; then s=$(wm size | grep -o "[0-9]*x[0-9]*" | tail -1); w=${s%x*}; h=${s#*x}; input swipe $((w / 2)) $((h * 5 / 6)) $((w / 2)) $((h / 8)) 150; fi' </dev/null >/dev/null 2>&1 &
 done
 wait
 
