@@ -880,7 +880,7 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     // ---------------------------------------------------------------- edit
 
     private var clipboard: Pair<Bitmap, Rect>? = null
-    val hasClipboard get() = clipboard != null
+    val hasClipboard get() = true
 
     private fun copySelected(merged: Boolean): Pair<Bitmap, Rect>? {
         val d = doc ?: return null
@@ -898,17 +898,55 @@ class EditorViewModel(app: Application) : AndroidViewModel(app) {
     fun copy(merged: Boolean = false) {
         if (blockedByBusy()) return
         clipboard = copySelected(merged) ?: run { say("Nothing to copy"); return }
+        publishClipboard()
         say(if (merged) "Copied the visible image" else "Copied")
     }
 
     fun cut() {
         if (blockedByBusy()) return
         clipboard = copySelected(false) ?: return
+        publishClipboard()
         clear("Cut")
     }
 
+    private val clipboardManager get() = getApplication<Application>().getSystemService(android.content.ClipboardManager::class.java)
+    private var publishedClip: Uri? = null
+
+    /** Puts the copy on Android's clipboard too, as a PNG other apps can paste. */
+    private fun publishClipboard() {
+        val (b, _) = clipboard ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                val app = getApplication<Application>()
+                val dir = File(app.cacheDir, "clipboard").apply { mkdirs() }
+                dir.listFiles()?.forEach { it.delete() }
+                val file = File(dir, "gako-${System.currentTimeMillis()}.png")
+                file.outputStream().buffered().use { b.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                val uri = FileProvider.getUriForFile(app, "${app.packageName}.files", file)
+                publishedClip = uri
+                withContext(Dispatchers.Main) {
+                    clipboardManager.setPrimaryClip(android.content.ClipData.newUri(resolver, "GAKO", uri))
+                }
+            }
+        }
+    }
+
+    /** An image another app put on the clipboard (not GAKO's own copy), if there is one. */
+    private fun systemClipboardImage(): Uri? = runCatching {
+        val clip = clipboardManager.primaryClip ?: return null
+        if (clip.itemCount == 0) return null
+        val uri = clip.getItemAt(0).uri ?: return null
+        if (uri == publishedClip) return null
+        val type = resolver.getType(uri) ?: return null
+        if (type.startsWith("image/")) uri else null
+    }.getOrNull()
+
     fun paste(asNewImage: Boolean = false) {
         if (blockedByBusy()) return
+        systemClipboardImage()?.let { uri ->
+            if (asNewImage || doc == null) open(uri) else open(uri, asLayers = true)
+            return
+        }
         val (b, r) = clipboard ?: run { say("The clipboard is empty"); return }
         if (asNewImage) {
             newDocument(DocOps.fromBitmap(Bitmaps.copy(b), "Pasted"), "Pasted")

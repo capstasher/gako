@@ -69,6 +69,8 @@ android {
     // must be extracted to disk rather than mapped straight out of the APK.
     packaging { jniLibs { useLegacyPackaging = true } }
 
+    testOptions { unitTests.isReturnDefaultValues = true }
+
     lint {
         checkReleaseBuilds = false
         abortOnError = false
@@ -88,4 +90,6 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+
+    testImplementation("junit:junit:4.13.2")
 }

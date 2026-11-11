@@ -36,6 +36,11 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.padding
+import kotlin.math.roundToInt
 import io.github.capstasher.gako.doc.Compositor
 import io.github.capstasher.gako.doc.DocState
 import io.github.capstasher.gako.doc.Layer
@@ -67,10 +72,13 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
 
     fun fit(w: Float, h: Float) = min(w / docState.width, h / docState.height) * 0.94f
     fun effective(w: Float, h: Float) = if (scale > 0f) scale else fit(w, h)
+    var viewSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
 
+    androidx.compose.foundation.layout.Box(modifier.fillMaxSize()) {
     Canvas(
-        modifier
+        Modifier
             .fillMaxSize()
+            .onSizeChanged { viewSize = it }
             .pointerInput(Unit) {
                 fun toDoc(p: Offset): Offset {
                     val w = size.width.toFloat()
@@ -305,6 +313,24 @@ fun ImageCanvas(vm: EditorViewModel, doc: DocState, modifier: Modifier = Modifie
                 nc.drawLine(m.x, m.y + 8 * px, m.x, m.y + 24 * px, gold)
             }
             nc.restore()
+        }
+    }
+        // Zoom level; tap to switch between fitting the screen and 100%.
+        if (viewSize.width > 0) {
+            val w = viewSize.width.toFloat()
+            val h = viewSize.height.toFloat()
+            val pct = (effective(w, h) * 100).roundToInt()
+            androidx.compose.material3.Text(
+                if (scale == 0f) "Fit · $pct%" else "$pct%",
+                style = androidx.compose.material3.MaterialTheme.typography.labelMedium,
+                color = Gako.Parchment,
+                modifier = Modifier.align(androidx.compose.ui.Alignment.TopEnd).padding(10.dp)
+                    .background(Gako.Ink.copy(alpha = 0.7f), androidx.compose.foundation.shape.RoundedCornerShape(12.dp))
+                    .clickable {
+                        if (scale == 0f) { scale = 1f; pan = Offset.Zero } else { scale = 0f; pan = Offset.Zero }
+                    }
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
+            )
         }
     }
 }
