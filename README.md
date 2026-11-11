@@ -47,8 +47,9 @@ operation) for Android, and puts a touch interface on top designed for one hand 
 **Files**
 - Save projects as **XCF** (GIMP's own format; GIMP 2.10/3.x open them with layers and masks) or OpenRaster;
   File > Save overwrites the project file, and New/Open ask before discarding unsaved work
-- Open XCF from any GIMP version (all precisions, RLE/zlib, masks, groups), Photoshop PSD/PSB with layers
-  (8/16-bit RGB or grey, masks, blend modes), ORA, and every image Android decodes
+- Open XCF from any GIMP version (all precisions, RLE/zlib, masks, groups, paths), Photoshop PSD/PSB with layers
+  (8/16-bit RGB or grey, masks, blend modes), ORA, and every image Android decodes; an XCF saved back keeps
+  each layer's GIMP mode (GAKO draws GIMP 2.10+'s linear-light modes in sRGB, and says so when it shows)
 - Export PNG, JPEG, WebP, HEIF, TIFF, GIF, BMP, TGA, ICO, PPM, ORA and layered PSD, at full size or smaller;
   share; "Open with GAKO"
 - Take a photo straight into GAKO; a photo's EXIF (camera, date, exposure) carries over to JPEG/PNG/WebP
@@ -94,7 +95,7 @@ For the x86_64 emulator, build and stage `android-x86_64` / `x86_64` too and pas
 ANDROID_NDK_HOME=/path/to/ndk native/build-native.sh android-x86_64
 ANDROID_NDK_HOME=/path/to/ndk native/stage-jnilibs.sh android-x86_64 x86_64
 gradle :app:assembleDebug -Pgako.abis=x86_64        # or arm64-v8a,x86_64
-gradle :app:testDebugUnitTest                         # JVM tests (curves, selections)
+gradle :app:testDebugUnitTest                         # JVM tests (curves, flood fill, layer-tree moves)
 ```
 
 See [docs/DEVELOPING.md](docs/DEVELOPING.md) for a map of the code and how it was tested.
@@ -107,7 +108,8 @@ See [docs/DEVELOPING.md](docs/DEVELOPING.md) for a map of the code and how it wa
 The editor keeps a `DocState` (canvas size, layers bottom to top, active layer, selection). Layers
 are immutable values holding mutable ARGB bitmaps; an edit either swaps a layer's bitmap (filters,
 transforms) or paints into it and records a patch of just the changed rectangle. The canvas
-composites the layers on the GPU every frame, so a brush stroke only re-uploads one texture.
+composites the layers on the GPU every frame; during a stroke or warp only the 256 px tiles that
+changed are re-uploaded.
 
 
 ```
