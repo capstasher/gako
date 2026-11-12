@@ -1,8 +1,10 @@
 name: Build APK
 
 # Pushes to main and pull requests build and test the APK (kept as a workflow artifact).
-# Pushing a tag like v0.3.0 builds the release: signed with the private release key only,
-# published on the Releases page with docs/releases/<tag>.md as its notes.
+#
+# Releases: add docs/releases/vX.Y.Z.md (the notes) on main. The first push to main that has notes
+# for a version not released yet builds that release, tags it and publishes it. Pushing a tag
+# vX.Y.Z does the same. Releases are signed with the private release key only.
 on:
   push:
     branches: [main]
@@ -25,9 +27,22 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Version
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
+          tag=""
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            echo "GAKO_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+            tag="$GITHUB_REF_NAME"
+          elif [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF" == refs/heads/main ]]; then
+            latest=$(ls docs/releases/v*.md 2>/dev/null | xargs -n1 basename | sed 's/\.md$//' | sort -V | tail -1)
+            if [ -n "$latest" ] && ! gh release view "$latest" >/dev/null 2>&1; then
+              tag="$latest"
+              echo "Notes for $latest are on main and it isn't released yet: this build is the release."
+            fi
+          fi
+          if [ -n "$tag" ]; then
+            echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+            echo "GAKO_VERSION=${tag#v}" >> "$GITHUB_ENV"
             echo "GAKO_RELEASE=1" >> "$GITHUB_ENV"
           fi
 
@@ -124,8 +139,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          notes="docs/releases/${GITHUB_REF_NAME}.md"
+          notes="docs/releases/${RELEASE_TAG}.md"
           [ -f "$notes" ] || { echo "::error::Missing release notes: $notes"; exit 1; }
           { cat "$notes"; printf '\n---\nSigning certificate SHA-256: `%s`\n' "$CERT_SHA256"; } > "$RUNNER_TEMP/notes.md"
-          gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --latest \
+          gh release create "$RELEASE_TAG" dist/* --target "$GITHUB_SHA" --latest \
             --title "GAKO $GAKO_VERSION" --notes-file "$RUNNER_TEMP/notes.md"
+          # The rolling "dev" pre-release from before proper releases; gone once one exists.
+          gh release delete dev --yes --cleanup-tag 2>/dev/null || true

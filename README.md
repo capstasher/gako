@@ -95,7 +95,8 @@ certificate; updates install over the previous release.
 Had one of the old **dev** builds? Uninstall it once first: releases are signed with a different key.
 
 Every push to `main` also builds an APK (the `gako-apk` artifact of the workflow run) for testing.
-To cut a release, add `docs/releases/vX.Y.Z.md` and push the tag `vX.Y.Z`.
+To cut a release, add its notes as `docs/releases/vX.Y.Z.md` on `main`: that build tags and
+publishes vX.Y.Z (pushing the tag `vX.Y.Z` works too).
 
 ## Building
 
