@@ -1,9 +1,10 @@
 # Signing
 
-`gako-dev.jks` is GAKO's **development** signing key. It's committed so every CI and local
-build is signed the same way and installs over the previous one without uninstalling.
+**Releases** are signed with GAKO's private release key. It isn't in this repo: CI reads it from
+the `GAKO_KEYSTORE_B64` and `GAKO_KEYSTORE_PASSWORD` repository secrets, and a tagged release
+fails rather than fall back to anything else. Its certificate's SHA-256 is printed at the bottom
+of every release's notes, so anyone can check an APK came from here.
 
-It is not a secret. Before publishing GAKO anywhere people install from (Play Store,
-F-Droid, public releases), make a new key, keep it out of the repo, and give it to CI as the
-`GAKO_KEYSTORE_B64` and `GAKO_KEYSTORE_PASSWORD` repository secrets. Builds then use that
-key instead. (Android treats a key change as a different app, so expect one reinstall.)
+`gako-dev.jks` is the **development** key. It's committed and public on purpose, so local builds
+and pull requests from forks (which can't see secrets) still produce an installable APK. Never use
+it for anything people install from: anyone can sign with it.

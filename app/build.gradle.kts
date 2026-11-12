@@ -25,7 +25,8 @@ android {
         minSdk = 31          // Android 12
         targetSdk = 35
         versionCode = buildNumber
-        versionName = "0.3.0-stage3+$buildNumber"
+        // Tagged releases are named by their tag (v0.3.0 -> 0.3.0); other builds say which run made them.
+        versionName = System.getenv("GAKO_VERSION") ?: "0.3.0-dev+$buildNumber"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Phones are arm64. Add x86_64 for the emulator with -Pgako.abis=arm64-v8a,x86_64
         val abis = (project.findProperty("gako.abis") as String?) ?: "arm64-v8a"

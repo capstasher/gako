@@ -88,8 +88,14 @@ operation) for Android, and puts a touch interface on top designed for one hand 
 
 ## Install
 
-Grab the APK from the latest **dev** pre-release (or the `gako-apk` artifact of a workflow run)
-and sideload it. Android 12 or newer, 64-bit ARM.
+Download `gako-<version>-arm64.apk` from the latest [release](https://github.com/capstasher/gako/releases/latest)
+and sideload it. Android 12 or newer, 64-bit ARM. Each release lists the SHA-256 of its signing
+certificate; updates install over the previous release.
+
+Had one of the old **dev** builds? Uninstall it once first: releases are signed with a different key.
+
+Every push to `main` also builds an APK (the `gako-apk` artifact of the workflow run) for testing.
+To cut a release, add `docs/releases/vX.Y.Z.md` and push the tag `vX.Y.Z`.
 
 ## Building
 
