@@ -25,8 +25,11 @@ android {
         minSdk = 31          // Android 12
         targetSdk = 35
         versionCode = buildNumber
-        versionName = "0.1.2-stage1+$buildNumber"
-        ndk { abiFilters += listOf("arm64-v8a") }
+        versionName = "0.3.0-stage3+$buildNumber"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // Phones are arm64. Add x86_64 for the emulator with -Pgako.abis=arm64-v8a,x86_64
+        val abis = (project.findProperty("gako.abis") as String?) ?: "arm64-v8a"
+        ndk { abiFilters += abis.split(',').map { it.trim() }.filter { it.isNotEmpty() } }
     }
 
     signingConfigs {
@@ -67,6 +70,8 @@ android {
     // must be extracted to disk rather than mapped straight out of the APK.
     packaging { jniLibs { useLegacyPackaging = true } }
 
+    testOptions { unitTests.isReturnDefaultValues = true }
+
     lint {
         checkReleaseBuilds = false
         abortOnError = false
@@ -83,7 +88,16 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.heifwriter:heifwriter:1.0.0")
+    implementation("androidx.exifinterface:exifinterface:1.3.7")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+
+    testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    // UI tests that drive the real screens (find buttons by label, touch the canvas, check the editor's state).
+    androidTestImplementation(composeBom)
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 }

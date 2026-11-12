@@ -1,0 +1,349 @@
+package io.github.capstasher.gako
+
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.test.TouchInjectionScope
+import androidx.compose.ui.test.click
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isDialog
+import androidx.compose.ui.test.isPopup
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTouchInput
+import androidx.lifecycle.ViewModelProvider
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import io.github.capstasher.gako.TestImages.maxDiff
+import io.github.capstasher.gako.doc.Bitmaps
+import io.github.capstasher.gako.doc.Compositor
+import io.github.capstasher.gako.doc.Layer
+import io.github.capstasher.gako.editor.EditorViewModel
+import io.github.capstasher.gako.tools.BrushShape
+import io.github.capstasher.gako.tools.Tool
+import io.github.capstasher.gako.tools.WarpMode
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.sin
+
+/**
+ * End-to-end tests of the real screens: buttons are found by their labels, the canvas is touched
+ * at image pixels, and the editor's state is checked directly. Run them quickly with
+ * `scripts/devtest.sh UiTest` (or one: `scripts/devtest.sh UiTest#foregroundSelectFindsTheCircle`).
+ */
+@RunWith(AndroidJUnit4::class)
+class UiTest {
+
+    val rule = createAndroidComposeRule<MainActivity>()
+
+    /**
+     * Each test starts from a clean app: drop the image the previous test's app autosaved, which
+     * the new one would otherwise restore (and draw) before the test replaces it.
+     */
+    @get:Rule val chain: org.junit.rules.RuleChain = org.junit.rules.RuleChain
+        .outerRule(object : org.junit.rules.ExternalResource() {
+            override fun before() {
+                val files = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext.filesDir
+                java.io.File(files, "recovery.xcf").delete()
+                java.io.File(files, "recovery.name").delete()
+            }
+        })
+        .around(rule)
+
+    private val vm: EditorViewModel get() = ViewModelProvider(rule.activity)[EditorViewModel::class.java]
+
+    private fun idle() {
+        rule.waitUntil(30_000) { vm.busy == null }
+        rule.waitForIdle()
+    }
+
+    /** Waits for start-up (engine, any restore), then opens a fresh white image and lets [draw] paint on it. */
+    private fun fresh(w: Int = 400, h: Int = 300, draw: (Canvas) -> Unit = {}) {
+        rule.waitUntil(30_000) { vm.busy == null && vm.engine is EditorViewModel.EngineState.Ready }
+        rule.runOnUiThread {
+            // A plain view (the grid is a saved preference, and something may have left it on).
+            while (vm.grid != EditorViewModel.Grid.Off) vm.cycleGrid()
+            vm.newImageNow(w, h, Color.WHITE)
+            draw(Canvas(vm.doc!!.layers[0].bitmap))
+        }
+        rule.waitForIdle()
+    }
+
+    private fun tool(t: Tool, size: Float? = null, f: (io.github.capstasher.gako.tools.ToolOptions) -> io.github.capstasher.gako.tools.ToolOptions = { it }) {
+        rule.runOnUiThread {
+            vm.selectTool(t)
+            vm.updateOptions(f(if (size != null) vm.options.copy(size = size) else vm.options))
+        }
+        rule.waitForIdle()
+    }
+
+    private val canvas get() = rule.onNodeWithContentDescription("Image, ", substring = true)
+
+    /** A button or row inside the open dialog (the strip or menus may have the same label). */
+    private fun inDialog(text: String) = rule.onNode(hasText(text) and hasAnyAncestor(isDialog()))
+
+    /** A chip in the tool options strip. */
+    private fun chip(text: String) = rule.onNode(hasText(text) and SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Checkbox))
+
+    /** An image pixel, where it is in the canvas node. */
+    private fun at(x: Float, y: Float): Offset = vm.docToView(x, y)
+
+    private fun TouchInjectionScope.stroke(points: List<Pair<Float, Float>>) {
+        down(at(points[0].first, points[0].second))
+        for (p in points.drop(1)) { advanceEventTime(16); moveTo(at(p.first, p.second)) }
+        advanceEventTime(16)
+        up()
+    }
+
+    private fun line(x1: Float, y1: Float, x2: Float, y2: Float, steps: Int = 12) =
+        (0..steps).map { x1 + (x2 - x1) * it / steps to y1 + (y2 - y1) * it / steps }
+
+    /** The colour the screen shows at image pixel ([x], [y]). */
+    private fun onScreen(x: Float, y: Float): Int {
+        val shot = rule.onRoot().captureToImage().asAndroidBitmap()
+        val node = canvas.fetchSemanticsNode().boundsInRoot
+        val p = at(x, y)
+        return shot.getPixel((node.left + p.x).toInt(), (node.top + p.y).toInt())
+    }
+
+    /** Waits until the canvas's exact composite (see Projection) is of the image as it is now. */
+    private fun projected() {
+        rule.waitUntil(10_000) { vm.projection.frame?.let { it.doc === vm.doc && it.revision == vm.revision } == true }
+        rule.waitForIdle()
+    }
+
+    private fun near(want: Int, got: Int, tolerance: Int = 2) =
+        listOf(16, 8, 0).all { abs(((want shr it) and 255) - ((got shr it) and 255)) <= tolerance }
+
+    // ------------------------------------------------------------------ tests
+
+    @Test fun quickMaskPaintsTheSelection() {
+        fresh()
+        // A GIMP 2.10+ layer as well, so the canvas shows GIMP's composite (and must add the tint to it).
+        rule.runOnUiThread {
+            val d = vm.doc!!
+            val haze = Layer(Layer.newId(), "Haze", Bitmaps.blank(d.width, d.height, Color.BLACK), opacity = 0.2f, legacy = false)
+            vm.doc = d.copy(layers = d.layers + haze, activeId = haze.id)
+        }
+        projected()
+        val plain = onScreen(200f, 150f)
+        rule.runOnUiThread { vm.selectAll(); vm.toggleQuickMask() }
+        idle()
+        assertTrue(vm.quickMaskOn)
+        assertEquals(null, vm.doc!!.selection)
+        // Paint black (not selected) across the middle: shown as GIMP's red tint, never in the image.
+        tool(Tool.Paintbrush, size = 40f) { it.copy(opacity = 1f, brushShape = BrushShape.Round, symmetry = io.github.capstasher.gako.tools.Symmetry.Off) }
+        rule.runOnUiThread { vm.setForeground(Color.BLACK) }
+        canvas.performTouchInput { stroke(line(50f, 150f, 350f, 150f)) }
+        idle()
+        projected()
+        val tint = onScreen(200f, 150f)
+        assertTrue("red tint where not selected", Color.red(tint) > Color.green(tint) + 60)
+        assertTrue("no tint where selected", near(plain, onScreen(200f, 50f)))
+        assertEquals("the image itself is untouched", Compositor.flatten(vm.doc!!.forFiles()).getPixel(200, 150),
+            Compositor.flatten(vm.doc!!).getPixel(200, 150))
+        rule.runOnUiThread { vm.toggleQuickMask() }
+        idle()
+        assertTrue(!vm.quickMaskOn)
+        val sel = vm.doc!!.selection!!
+        val bytes = io.github.capstasher.gako.doc.Selections.bytesOf(sel.mask)
+        assertEquals("the stroke is out of the selection", 0, bytes[150 * 400 + 200].toInt() and 255)
+        assertEquals("the rest is in", 255, bytes[50 * 400 + 200].toInt() and 255)
+        // Saved to a channel and back (GIMP's Save to Channel, Channel to Selection).
+        rule.runOnUiThread { vm.saveSelectionToChannel(); vm.selectNone() }
+        idle()
+        assertEquals(null, vm.doc!!.selection)
+        rule.runOnUiThread { vm.channelToSelection(0, io.github.capstasher.gako.doc.SelectMode.Replace) }
+        idle()
+        assertTrue("the channel gives the selection back",
+            bytes.contentEquals(io.github.capstasher.gako.doc.Selections.bytesOf(vm.doc!!.selection!!.mask)))
+        rule.runOnUiThread { vm.undo(); vm.undo(); vm.undo() }    // back to just after Quick Mask Off
+        // Undo goes back into Quick Mask, stroke and all.
+        rule.runOnUiThread { vm.undo() }
+        idle()
+        assertTrue(vm.quickMaskOn)
+        assertEquals(Color.BLACK, vm.doc!!.quickMask!!.bitmap.getPixel(200, 150))
+    }
+
+    @Test fun guidesSnapSelectionsAndMoves() {
+        fresh()
+        rule.runOnUiThread {
+            vm.addGuide(horizontal = false, position = 100)
+            vm.addGuide(horizontal = true, position = 80)
+        }
+        tool(Tool.RectSelect)
+        rule.runOnUiThread {
+            // A drag from near both guides, within reach (tolerance 10 → 5 px), to well away.
+            vm.input.down(103f, 77f, 1f, 10f)
+            vm.input.move(250f, 200f, 1f)
+            vm.input.up()
+        }
+        idle()
+        assertEquals(android.graphics.Rect(100, 80, 250, 200), vm.doc!!.selection!!.bounds)
+        // A layer moved so its left edge comes within reach of the guide lands on it.
+        rule.runOnUiThread {
+            vm.selectNone()
+            val d = vm.doc!!
+            val l = Layer(Layer.newId(), "Box", Bitmaps.blank(40, 30, Color.RED), x = 10, y = 10)
+            vm.doc = d.copy(layers = d.layers + l, activeId = l.id)
+            vm.selectTool(Tool.Move)
+            vm.input.down(20f, 20f, 1f, 10f)
+            vm.input.move(108f, 20f, 1f)              // left edge at 98: snaps to 100
+            vm.input.up()
+        }
+        idle()
+        assertEquals(100, vm.doc!!.active!!.x)
+        assertEquals(10, vm.doc!!.active!!.y)
+    }
+
+    @Test fun canvasShowsWhatGimpDraws() {
+        fresh()
+        // A GIMP 2.10+ (linear light) layer: black at 50% over white is 188 in GIMP (127 blended in sRGB).
+        rule.runOnUiThread {
+            val d = vm.doc!!
+            val top = Layer(Layer.newId(), "Black", Bitmaps.blank(d.width, d.height, Color.BLACK), opacity = 0.5f, legacy = false)
+            vm.doc = d.copy(layers = d.layers + top, activeId = top.id)
+        }
+        projected()
+        onScreen(100f, 100f).let { got -> assertTrue("shows GIMP's grey, not ${Integer.toHexString(got)}", near(Color.rgb(188, 188, 188), got)) }
+        // Painting on it: once the stroke is done the screen shows GIMP's composite of the new pixels.
+        tool(Tool.Paintbrush, size = 30f) { it.copy(opacity = 1f, brushShape = BrushShape.Round, symmetry = io.github.capstasher.gako.tools.Symmetry.Off) }
+        rule.runOnUiThread { vm.setForeground(Color.RED) }
+        canvas.performTouchInput { stroke(line(50f, 200f, 350f, 200f)) }
+        idle()
+        projected()
+        val want = Compositor.sample(vm.doc!!, 200, 200)
+        assertTrue("the stroke as GIMP draws it", want != Color.rgb(188, 188, 188) && near(want, onScreen(200f, 200f)))
+        assertTrue("and the rest unchanged", near(Color.rgb(188, 188, 188), onScreen(100f, 100f)))
+        // Only the stroke's area is composited again after Undo, and a selection changes nothing on screen.
+        rule.runOnUiThread { vm.undo(); vm.selectAll() }
+        idle()
+        projected()
+        assertTrue("undone", near(Color.rgb(188, 188, 188), onScreen(200f, 200f)))
+        assertTrue(near(Color.rgb(188, 188, 188), onScreen(100f, 100f)))
+    }
+
+    @Test fun pathsListNewDeleteUndo() {
+        fresh()
+        tool(Tool.Paths)
+        for ((x, y) in listOf(50f to 50f, 150f to 60f, 100f to 150f)) canvas.performTouchInput { click(at(x, y)) }
+        rule.waitForIdle()
+        assertEquals(3, vm.doc!!.paths.single().strokes.single().anchors)
+
+        rule.onNodeWithText("Path 1", substring = true).performClick()
+        inDialog("＋ New path").performClick()
+        for ((x, y) in listOf(250f to 200f, 350f to 210f, 300f to 280f)) canvas.performTouchInput { click(at(x, y)) }
+        rule.waitForIdle()
+        assertEquals(listOf("Path 1", "Path 2"), vm.doc!!.paths.map { it.name })
+
+        rule.onNodeWithText("Path 2", substring = true).performClick()
+        rule.onAllNodesWithContentDescription("Path options")[0].performClick()
+        rule.onNode(hasText("Delete") and hasAnyAncestor(isPopup())).performClick()
+        rule.waitForIdle()
+        assertEquals(listOf("Path 2"), vm.doc!!.paths.map { it.name })
+        inDialog("Close").performClick()
+        rule.onNodeWithContentDescription("Undo").performClick()
+        rule.waitForIdle()
+        assertEquals(listOf("Path 1", "Path 2"), vm.doc!!.paths.map { it.name })
+    }
+
+    @Test fun brushPresetSetsTheBrush() {
+        fresh()
+        tool(Tool.Paintbrush)
+        rule.onNodeWithText("★ Brushes").performClick()
+        inDialog("Calligraphy").performClick()
+        rule.waitForIdle()
+        assertEquals(BrushShape.Calligraphy, vm.options.brushShape)
+        assertEquals(36f, vm.options.size)
+    }
+
+    @Test fun paintThenTwoFingerTapUndoes() {
+        fresh()
+        tool(Tool.Paintbrush, size = 20f) { it.copy(opacity = 1f, brushShape = BrushShape.Round, symmetry = io.github.capstasher.gako.tools.Symmetry.Off) }
+        rule.runOnUiThread { vm.setForeground(Color.BLACK) }
+        canvas.performTouchInput { stroke(line(50f, 150f, 350f, 150f)) }
+        idle()
+        assertEquals(Color.BLACK, vm.doc!!.layers[0].bitmap.getPixel(200, 150))
+        canvas.performTouchInput {
+            down(0, at(150f, 100f)); down(1, at(250f, 100f))
+            advanceEventTime(60)
+            up(0); up(1)
+        }
+        idle()
+        assertEquals(Color.WHITE, vm.doc!!.layers[0].bitmap.getPixel(200, 150))
+    }
+
+    @Test fun foregroundSelectFindsTheCircle() {
+        fresh { c -> c.drawCircle(200f, 150f, 60f, Paint().apply { color = Color.rgb(230, 120, 30); isAntiAlias = true }) }
+        tool(Tool.ForegroundSelect, size = 30f) { it.copy(feather = 0f, selectMode = io.github.capstasher.gako.doc.SelectMode.Replace) }
+        // Roughly around it…
+        val ring = (0..36).map { 200f + 95f * cos(it * Math.PI / 18).toFloat() to 150f + 95f * sin(it * Math.PI / 18).toFloat() }
+        canvas.performTouchInput { stroke(ring) }
+        rule.waitForIdle()
+        assertNotNull(vm.input.fgOutline)
+        // …then over it.
+        canvas.performTouchInput { stroke(line(170f, 150f, 230f, 150f)) }
+        canvas.performTouchInput { stroke(line(200f, 120f, 200f, 180f)) }
+        chip("Select").performClick()
+        idle()
+        val b = vm.doc!!.selection!!.bounds
+        for ((got, want) in listOf(b.left to 140, b.top to 90, b.right to 260, b.bottom to 210))
+            assertTrue("selection $b, expected about [140,90][260,210]", abs(got - want) <= 4)
+    }
+
+    @Test fun warpStrokeAndUndo() {
+        fresh { c -> val p = Paint().apply { color = Color.BLACK }; for (x in 0 until 400 step 20) c.drawRect(x.toFloat(), 0f, x + 10f, 300f, p) }
+        val before = Bitmaps.copy(vm.doc!!.layers[0].bitmap)
+        tool(Tool.Warp, size = 120f) { it.copy(warpMode = WarpMode.Move, strength = 1f, hardness = 0.5f) }
+        canvas.performTouchInput { stroke(line(150f, 150f, 250f, 150f, 20)) }
+        idle()
+        assertTrue("the warp moved pixels", maxDiff(before, vm.doc!!.layers[0].bitmap) > 100)
+        rule.onNodeWithContentDescription("Undo").performClick()
+        idle()
+        assertTrue("undo restored them", maxDiff(before, vm.doc!!.layers[0].bitmap) <= 1)
+    }
+
+    @Test fun measureAndStraighten() {
+        fresh()
+        tool(Tool.Measure)
+        canvas.performTouchInput { stroke(line(40f, 200f, 360f, 170f)) }
+        rule.waitForIdle()
+        assertNotNull(vm.input.measure)
+        chip("Straighten & crop").performClick()
+        idle()
+        val d = vm.doc!!
+        assertTrue("cropped smaller: ${d.width}×${d.height}", d.width < 400 && d.height < 300)
+        assertEquals(4f / 3f, d.width.toFloat() / d.height, 0.02f)
+    }
+
+    @Test fun textTooBigForALayerStaysOpen() {
+        fresh()
+        tool(Tool.Text)
+        canvas.performTouchInput { click(at(20f, 20f)) }
+        rule.waitForIdle()
+        rule.onNode(hasSetTextAction()).performTextInput("W".repeat(60))
+        rule.runOnUiThread { vm.text!!.info = vm.text!!.info.copy(size = 900f) }
+        rule.onNodeWithContentDescription("Done").performClick()
+        rule.waitForIdle()
+        assertNotNull("still editing", vm.text)
+        assertEquals(1, vm.doc!!.layers.size)
+    }
+}

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Builds GAKO's native engine and bridge.
 #
-#   native/build-native.sh android-arm64   # cross-compile with the Android NDK
+#   native/build-native.sh android-arm64   # cross-compile with the Android NDK (phones)
+#   native/build-native.sh android-x86_64  # same, for the x86_64 emulator
 #   native/build-native.sh host            # build for this Linux machine (for testing the bridge)
 #
 # Output: build/native/<target>/prefix  (headers, libs, GEGL ops, babl extensions)
@@ -15,7 +16,7 @@ REPO="$(cd "$HERE/.." && pwd)"
 # shellcheck source=versions.env
 source "$HERE/versions.env"
 
-TARGET="${1:?usage: build-native.sh <android-arm64|host>}"
+TARGET="${1:?usage: build-native.sh <android-arm64|android-x86_64|host>}"
 ROOT="${GAKO_NATIVE_ROOT:-$REPO/build/native}"
 SRC="$ROOT/src"
 BLD="$ROOT/$TARGET/build"
@@ -46,17 +47,22 @@ CMAKE_ARGS=(-G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$PREFIX"
             -DCMAKE_PREFIX_PATH="$PREFIX")
 
 case "$TARGET" in
-  android-arm64)
+  android-arm64|android-x86_64)
+    if [ "$TARGET" = android-arm64 ]; then
+      TRIPLE=aarch64-linux-android; CPU=aarch64; ABI=arm64-v8a
+    else
+      TRIPLE=x86_64-linux-android; CPU=x86_64; ABI=x86_64
+    fi
     NDK="${ANDROID_NDK_HOME:-${ANDROID_NDK_LATEST_HOME:-}}"
     [ -d "$NDK" ] || { echo "Set ANDROID_NDK_HOME to an Android NDK" >&2; exit 1; }
     TC="$NDK/toolchains/llvm/prebuilt/linux-x86_64"
     log "NDK $(grep -m1 Pkg.Revision "$NDK/source.properties" | cut -d= -f2 | tr -d ' ') — API $ANDROID_API"
-    CROSS="$BLD/android-arm64.cross"
+    CROSS="$BLD/$TARGET.cross"
     mkdir -p "$BLD"
     cat > "$CROSS" <<EOF
 [binaries]
-c = '$TC/bin/aarch64-linux-android$ANDROID_API-clang'
-cpp = '$TC/bin/aarch64-linux-android$ANDROID_API-clang++'
+c = '$TC/bin/$TRIPLE$ANDROID_API-clang'
+cpp = '$TC/bin/$TRIPLE$ANDROID_API-clang++'
 ar = '$TC/bin/llvm-ar'
 strip = '$TC/bin/llvm-strip'
 ranlib = '$TC/bin/llvm-ranlib'
@@ -76,13 +82,13 @@ pkg_config_libdir = ['$PREFIX/lib/pkgconfig']
 system = 'android'
 subsystem = 'android'
 kernel = 'linux'
-cpu_family = 'aarch64'
-cpu = 'aarch64'
+cpu_family = '$CPU'
+cpu = '$CPU'
 endian = 'little'
 EOF
     MESON_ARGS+=(--cross-file "$CROSS")
     CMAKE_ARGS+=(-DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake"
-                 -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM="android-$ANDROID_API"
+                 -DANDROID_ABI=$ABI -DANDROID_PLATFORM="android-$ANDROID_API"
                  -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-z,max-page-size=16384"
                  -DCMAKE_FIND_ROOT_PATH="$PREFIX")
     export PKG_CONFIG_LIBDIR="$PREFIX/lib/pkgconfig"

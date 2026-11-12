@@ -6,7 +6,11 @@ import androidx.heifwriter.HeifWriter
 import io.github.capstasher.gako.export.encoders.BmpEncoder
 import io.github.capstasher.gako.export.encoders.GifEncoder
 import io.github.capstasher.gako.export.encoders.IcoEncoder
-import io.github.capstasher.gako.export.encoders.OraEncoder
+import io.github.capstasher.gako.doc.Compositor
+import io.github.capstasher.gako.doc.DocOps
+import io.github.capstasher.gako.doc.DocState
+import io.github.capstasher.gako.doc.OraFile
+import io.github.capstasher.gako.doc.XcfWriter
 import io.github.capstasher.gako.export.encoders.PixelSource
 import io.github.capstasher.gako.export.encoders.PnmEncoder
 import io.github.capstasher.gako.export.encoders.TgaEncoder
@@ -28,12 +32,17 @@ enum class ExportFormat(val label: String, val extensions: List<String>, val mim
     Tga("TGA", listOf("tga"), "image/x-tga"),
     Ico("ICO", listOf("ico"), "image/x-icon"),
     Ppm("PPM", listOf("ppm", "pnm"), "image/x-portable-pixmap"),
-    Ora("ORA", listOf("ora"), "image/openraster");
+    Ora("ORA", listOf("ora"), "image/openraster"),
+    Psd("PSD", listOf("psd"), "image/vnd.adobe.photoshop"),
+    Xcf("XCF", listOf("xcf"), "image/x-xcf");
 
     val ext: String get() = extensions.first()
 
     /** Types the platform doesn't know; saved as plain files so nothing renames them. */
-    val opaqueToSystem: Boolean get() = this == Tga || this == Ora
+    val opaqueToSystem: Boolean get() = this == Tga || this == Ora || this == Xcf || this == Psd
+
+    /** Formats that keep layers (GAKO's project formats). */
+    val layered: Boolean get() = this == Ora || this == Xcf
 
     companion object {
         fun forFileName(name: String): ExportFormat? {
@@ -49,10 +58,35 @@ data class ExportOptions(
     val gifDither: Boolean = true,
     val tiffDeflate: Boolean = true,
     val tgaRle: Boolean = true,
+    /** Export at this percentage of the image's size (flat formats). */
+    val scale: Int = 100,
+    /** Carry the photo's EXIF over (JPEG, PNG, WebP), and its location only if asked. */
+    val keepMetadata: Boolean = true,
+    val keepLocation: Boolean = false,
 )
 
 /** Encodes a bitmap in any [ExportFormat]. Runs on a background thread. */
 object Exporter {
+
+    fun encode(doc: DocState, format: ExportFormat, options: ExportOptions, out: OutputStream, scratch: File) {
+        scratch.mkdirs()
+        when (format) {
+            ExportFormat.Ora -> { OraFile.write(doc, out); return }
+            ExportFormat.Xcf -> { XcfWriter.write(doc, out); return }
+            ExportFormat.Psd -> {
+                val sized = if (options.scale in 1..99) DocOps.scale(doc,
+                    (doc.width * options.scale / 100).coerceAtLeast(1), (doc.height * options.scale / 100).coerceAtLeast(1)) else doc
+                io.github.capstasher.gako.doc.PsdWriter.write(sized, out, scratch)
+                return
+            }
+            else -> {
+                val flat = Compositor.flatten(doc)
+                val sized = if (options.scale in 1..99) DocOps.scaled(flat,
+                    (flat.width * options.scale / 100).coerceAtLeast(1), (flat.height * options.scale / 100).coerceAtLeast(1)) else flat
+                encode(sized, format, options, out, scratch)
+            }
+        }
+    }
 
     fun encode(bitmap: Bitmap, format: ExportFormat, options: ExportOptions, out: OutputStream, scratch: File) {
         scratch.mkdirs()
@@ -99,12 +133,9 @@ object Exporter {
                 val icon = fitWithin(bitmap, 256)
                 IcoEncoder.write(pngBytes(icon), icon.width, icon.height, buffered)
             }
-            ExportFormat.Ora -> {
-                val layer = File(scratch, "layer0.png").apply { delete() }
-                layer.outputStream().buffered().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
-                OraEncoder.write(layer, pngBytes(fitWithin(bitmap, 256)), bitmap.width, bitmap.height, "Background", buffered)
-                layer.delete()
-            }
+            ExportFormat.Ora -> OraFile.write(DocOps.fromBitmap(bitmap), buffered)
+            ExportFormat.Xcf -> XcfWriter.write(DocOps.fromBitmap(bitmap), buffered)
+            ExportFormat.Psd -> io.github.capstasher.gako.doc.PsdWriter.write(DocOps.fromBitmap(bitmap), buffered)
         }
         buffered.flush()
     }

@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
+import androidx.activity.addCallback
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.PickVisualMediaRequest
@@ -23,6 +24,43 @@ class MainActivity : ComponentActivity() {
         uri?.let(vm::open)
     }
 
+    private var openAsLayers = false
+
+    /** Any file: photos, but also .ora and .xcf projects, which the photo picker hides. */
+    private val filePicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let { vm.open(it, asLayers = openAsLayers) }
+    }
+
+    /** Where the camera app writes the photo it takes for us. */
+    private var cameraUri: Uri? = null
+    private val camera = registerForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
+        val uri = cameraUri
+        if (ok && uri != null) vm.open(uri)
+    }
+
+    private fun takePhoto() {
+        val dir = java.io.File(cacheDir, "camera").apply { mkdirs() }
+        // Keep the last few photos in case they're open; drop older ones.
+        dir.listFiles()?.sortedByDescending { it.lastModified() }?.drop(3)?.forEach { it.delete() }
+        val file = java.io.File(dir, "photo-${System.currentTimeMillis()}.jpg")
+        val uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.files", file)
+        cameraUri = uri
+        try {
+            camera.launch(uri)
+        } catch (e: android.content.ActivityNotFoundException) {
+            android.widget.Toast.makeText(this, "No camera app found", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        cameraUri?.let { outState.putParcelable("cameraUri", it) }
+    }
+
+    private val fontPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let(vm::importFont)
+    }
+
     private val folderPicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let(vm::setExportFolder)
     }
@@ -33,7 +71,10 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
         )
         super.onCreate(savedInstanceState)
+        cameraUri = savedInstanceState?.let { androidx.core.os.BundleCompat.getParcelable(it, "cameraUri", Uri::class.java) }
         if (savedInstanceState == null) handleIntent(intent)
+        // Back on the editor itself leaves the app running (and the image open) rather than closing it.
+        onBackPressedDispatcher.addCallback(this) { moveTaskToBack(true) }
 
         setContent {
             GakoTheme {
@@ -42,11 +83,38 @@ class MainActivity : ComponentActivity() {
                     onPickImage = {
                         picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                     },
+                    onPickFile = { asLayers ->
+                        openAsLayers = asLayers
+                        filePicker.launch(arrayOf("image/*", "application/octet-stream", "application/zip",
+                            "image/openraster", "image/x-xcf", "application/x-xcf", "image/vnd.adobe.photoshop",
+                            "application/x-photoshop", "image/x-photoshop"))
+                    },
+                    onTakePhoto = ::takePhoto,
+                    onPickFont = {
+                        fontPicker.launch(arrayOf("font/*", "application/x-font-ttf", "application/x-font-otf",
+                            "application/font-sfnt", "application/vnd.ms-opentype", "application/octet-stream"))
+                    },
                     onPickFolder = { folderPicker.launch(null) },
                     onShare = ::share,
                 )
             }
         }
+    }
+
+    /** Shortcuts only see keys nothing on screen used, so typing in a text field never triggers them. */
+    override fun onKeyDown(keyCode: Int, event: android.view.KeyEvent): Boolean {
+        if (event.repeatCount == 0 && vm.onKey(keyCode, event.isCtrlPressed, event.isShiftPressed)) return true
+        return super.onKeyDown(keyCode, event)
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) { vm.input.trimMemory(); vm.projection.trimMemory() }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        vm.autosave()
     }
 
     override fun onNewIntent(intent: Intent) {

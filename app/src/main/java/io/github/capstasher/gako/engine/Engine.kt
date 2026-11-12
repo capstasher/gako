@@ -33,7 +33,8 @@ object Engine {
     }
 
     sealed interface Result {
-        data class Ok(val bitmap: Bitmap) : Result
+        /** [x], [y]: where the result sits relative to the input (negative when a filter grew it). */
+        data class Ok(val bitmap: Bitmap, val x: Int = 0, val y: Int = 0) : Result
         data object Cancelled : Result
         data class Failed(val message: String) : Result
     }
@@ -44,10 +45,26 @@ object Engine {
     @JvmStatic private external fun nativeListOperations(): String
     @JvmStatic private external fun nativeDescribe(operation: String): String?
     @JvmStatic private external fun nativeApply(
-        operation: String, params: String, src: Bitmap, dst: Bitmap, listener: ProgressListener?,
+        operation: String, params: String, src: Bitmap, dst: Bitmap, outX: Int, outY: Int, listener: ProgressListener?,
+    ): Int
+    @JvmStatic private external fun nativeBounds(operation: String, params: String, width: Int, height: Int): IntArray?
+    @JvmStatic private external fun nativeMatting(src: Bitmap, trimap: ByteArray, iterations: Int, alpha: ByteArray): Int
+    @JvmStatic private external fun nativeComposite(
+        pixels: Array<Bitmap?>, masks: Array<Bitmap?>, ints: IntArray, opacity: FloatArray,
+        out: Bitmap, outX: Int, outY: Int, threads: Int, hasBackground: Boolean, background: Int,
     ): Int
     @JvmStatic private external fun nativeCancel()
     @JvmStatic private external fun nativeLastError(): String?
+
+    /**
+     * Composites a layer stack with GIMP's layer modes (no GEGL needed, so this works before
+     * [start]). See [io.github.capstasher.gako.doc.Compositor.composite] for the arguments.
+     */
+    fun composite(
+        pixels: Array<Bitmap?>, masks: Array<Bitmap?>, ints: IntArray, opacity: FloatArray,
+        out: Bitmap, outX: Int, outY: Int, threads: Int, background: Int? = null,
+    ): Boolean = nativeComposite(pixels, masks, ints, opacity, out, outX, outY, threads,
+        background != null, background ?: 0) == 0
 
     /** Starts GEGL. Returns null on success or an error message. */
     suspend fun start(context: Context): String? = withContext(Dispatchers.IO) {
@@ -102,9 +119,8 @@ object Engine {
         }
     }
 
-    suspend fun describe(operation: String): OpDescription? = withContext(Dispatchers.Default) {
-        lock.withLock { nativeDescribe(operation)?.let { OpDescription.parse(it) } }
-    }
+    suspend fun describe(operation: String): OpDescription? = io.github.capstasher.gako.doc.GimpOps.dialogs[operation]
+        ?: withContext(Dispatchers.Default) { lock.withLock { nativeDescribe(operation)?.let { OpDescription.parse(it) } } }
 
     /** What the engine is busy with right now, so a cancel only stops the job it was meant for. */
     @Volatile private var runningTag: Any? = null
@@ -118,25 +134,85 @@ object Engine {
         params: Map<String, Any?>,
         src: Bitmap,
         tag: Any? = null,
+        /**
+         * Let the result be bigger than [src] when the filter draws past its edges (drop shadow…),
+         * but no further than this rectangle (in [src]'s coordinates). Null: same size as [src].
+         */
+        growWithin: android.graphics.Rect? = null,
         onProgress: (Float) -> Unit = {},
     ): Result = withContext(Dispatchers.Default) {
+        // GIMP's own colour tools aren't GEGL's: GAKO's port of them.
+        if (operation in io.github.capstasher.gako.doc.GimpOps.dialogs) {
+            return@withContext io.github.capstasher.gako.doc.GimpOps.applyDialog(operation, params, src)?.let { Result.Ok(it) }
+                ?: Result.Failed("$operation couldn't run")
+        }
         lock.withLock {
             ensureActive()
-            val dst = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
-            val json = JSONObject().apply { params.forEach { (k, v) -> if (v != null) put(k, v) } }
+            val json = JSONObject().apply { params.forEach { (k, v) -> if (v != null) put(k, v) } }.toString()
+            var ox = 0
+            var oy = 0
+            var ow = src.width
+            var oh = src.height
+            if (growWithin != null) {
+                nativeBounds(operation, json, src.width, src.height)?.let { b ->
+                    // Some operations draw an infinite plane: those stay the input's size.
+                    if (b[2] > 0 && b[3] > 0 && b[0] >= -MAX_GROW && b[1] >= -MAX_GROW &&
+                        b[0].toLong() + b[2] <= src.width + MAX_GROW && b[1].toLong() + b[3] <= src.height + MAX_GROW) {
+                        val left = minOf(0, maxOf(b[0], growWithin.left))
+                        val top = minOf(0, maxOf(b[1], growWithin.top))
+                        val right = maxOf(src.width, minOf(b[0] + b[2], growWithin.right))
+                        val bottom = maxOf(src.height, minOf(b[1] + b[3], growWithin.bottom))
+                        // Stay under what Android can draw (~100 MB per bitmap).
+                        if ((right - left).toLong() * (bottom - top) <= MAX_GROWN_PIXELS) {
+                            ox = left; oy = top; ow = right - left; oh = bottom - top
+                        }
+                    }
+                }
+            }
+            val dst = try {
+                Bitmap.createBitmap(ow, oh, Bitmap.Config.ARGB_8888)
+            } catch (e: OutOfMemoryError) {
+                ox = 0; oy = 0
+                Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
+            }
             runningTag = tag
             val rc = try {
-                nativeApply(operation, json.toString(), src, dst, ProgressListener { onProgress(it) })
+                nativeApply(operation, json, src, dst, ox, oy, ProgressListener { onProgress(it) })
             } finally {
                 runningTag = null
             }
             when (rc) {
-                0 -> Result.Ok(dst)
+                0 -> Result.Ok(dst, ox, oy)
                 1 -> { dst.recycle(); Result.Cancelled }
                 else -> { dst.recycle(); Result.Failed(nativeLastError() ?: "Unknown engine error") }
             }
         }
     }
+
+    /**
+     * Foreground matting (GIMP's Foreground Select): the foreground's alpha for [src] given a
+     * trimap of the same size (0 background, 255 foreground, anything else unknown).
+     */
+    suspend fun matting(src: Bitmap, trimap: ByteArray, iterations: Int = 10): Result2 = withContext(Dispatchers.Default) {
+        lock.withLock {
+            ensureActive()
+            val alpha = ByteArray(src.width * src.height)
+            when (nativeMatting(src, trimap, iterations, alpha)) {
+                0 -> Result2.Ok(alpha)
+                1 -> Result2.Cancelled
+                else -> Result2.Failed(nativeLastError() ?: "Unknown engine error")
+            }
+        }
+    }
+
+    sealed interface Result2 {
+        class Ok(val alpha: ByteArray) : Result2
+        data object Cancelled : Result2
+        class Failed(val message: String) : Result2
+    }
+
+    private const val MAX_GROW = 2048
+    private const val MAX_GROWN_PIXELS = 24_000_000L
 
     /** Stops the running job at its next chunk, if it's the one tagged [tag] (or any job if null). */
     fun cancel(tag: Any? = null) {
