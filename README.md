@@ -1,6 +1,20 @@
-# GAKO
+<p align="center"><img src="docs/images/icon.svg" width="112" alt="GAKO icon"></p>
 
-**GIMP Android Kanvas Operator**: a phone-first image editor built on GIMP's own engine.
+<h1 align="center">GAKO</h1>
+
+<p align="center"><b>GIMP Android Kanvas Operator</b>: a phone-first image editor built on GIMP's own engine.</p>
+
+<p align="center">
+  <img src="docs/images/editor.png" width="250" alt="The editor">
+  <img src="docs/images/layers.png" width="250" alt="Layers with GIMP's layer modes">
+  <img src="docs/images/filters.png" width="250" alt="A GEGL filter with live preview">
+</p>
+<p align="center">
+  <img src="docs/images/layer-modes.png" width="250" alt="Every GIMP layer mode">
+  <img src="docs/images/curves.png" width="250" alt="Curves, one of GIMP's colour tools">
+  <img src="docs/images/tools.png" width="250" alt="The tools">
+</p>
+<p align="center"><sub>Everything on the canvas was made in GAKO with its own filters: Sinus, Kaleidoscopic Mirroring, Supernova and Vignette, then a copy of the layer in Overlay mode.</sub></p>
 
 GAKO doesn't run desktop GIMP behind an X server. It cross-compiles the parts of GIMP that do
 the actual image work (**babl** for pixel formats and colour, **GEGL** for every filter and
